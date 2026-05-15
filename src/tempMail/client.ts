@@ -375,46 +375,18 @@ export class MailTmClient implements IEmailClient {
 // ────────────────────────────────────────────────────────────────────────────────
 
 export class TempMailCClient implements IEmailClient {
-  private readonly baseUrl = 'https://tempmailc.com';
+  // URL correta conforme documentação privada
+  private readonly baseUrl = 'https://private.tempmailc.com';
   private readonly apiCode: string;
   private readonly fixedDomain: string | undefined;
-  /** Cache do domínio resolvido — evita chamada extra por ciclo */
-  private cachedDomain: string | null = null;
 
   constructor(apiCode: string, fixedDomain?: string) {
     this.apiCode = apiCode;
     this.fixedDomain = fixedDomain;
   }
 
-  /**
-   * Resolve o domínio a usar.
-   * Prioridade: 1) fixedDomain (config) 2) cachedDomain 3) busca /api/v1/domains
-   * O primeiro domínio retornado pela API é sempre o principal da conta.
-   */
-  private async resolveDomain(): Promise<string> {
-    if (this.fixedDomain) return this.fixedDomain;
-    if (this.cachedDomain) return this.cachedDomain;
-
-    globalState.addLog('info', '📧 [tempmailc] Buscando domínios autorizados via API...');
-    const url = `${this.baseUrl}/api/v1/domains?code=${encodeURIComponent(this.apiCode)}`;
-    const res = await safeFetch(url, { method: 'GET' });
-    if (!res) throw new Error('[tempmailc] fetchDomains: erro de rede/timeout');
-    if (!res.ok) {
-      const text = await res.text().catch(() => String(res.status));
-      throw new Error(`[tempmailc] fetchDomains ${res.status}: ${text}`);
-    }
-    const body = JSON.parse(await res.text()) as { ok: boolean; domains: string[] };
-    if (!body.ok || !body.domains?.length) throw new Error('[tempmailc] Nenhum domínio disponível na conta');
-
-    // Usa sempre o primeiro — é o domínio principal da conta
-    this.cachedDomain = body.domains[0];
-    globalState.addLog('info', `📧 [tempmailc] Domínios disponíveis: ${body.domains.join(', ')}`);
-    globalState.addLog('info', `📧 [tempmailc] Usando domínio: ${this.cachedDomain}`);
-    return this.cachedDomain;
-  }
-
   async createRandomEmail(): Promise<EmailAccount> {
-    const domain = await withRetry('tempmailc resolveDomain', () => this.resolveDomain());
+    const domain = this.fixedDomain ?? 'kaamoolzy.it.com';
     const localPart = 'user' + Math.random().toString(36).slice(2, 10);
     const email = `${localPart}@${domain}`;
     globalState.addLog('info', `✅ [tempmailc] Email gerado: ${email}`);
