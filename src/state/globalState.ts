@@ -197,6 +197,25 @@ class GlobalState {
     this.kycByCycle = {};
   }
 
+  // ─── Counter API (FIX C) ──────────────────────────────────────────────────────
+
+  /**
+   * Registra uma conta criada com sucesso.
+   * Incrementa cyclesCompleted e loga como 'success'.
+   */
+  incrementSuccess(cycle?: number): void {
+    this.state.cyclesCompleted += 1;
+    this.addLog('success', `✅ Conta criada com sucesso (total: ${this.state.cyclesCompleted})`, cycle);
+  }
+
+  /**
+   * Registra uma falha (KYC, erro, timeout).
+   * Loga como 'error' sem incrementar cyclesCompleted.
+   */
+  incrementFailure(reason: string, cycle?: number): void {
+    this.addLog('error', `❌ Ciclo encerrado por falha: ${reason}`, cycle);
+  }
+
   // ─── Core API ────────────────────────────────────────────────────────────────
 
   setExecutor(fn: CycleExecutor): void {
