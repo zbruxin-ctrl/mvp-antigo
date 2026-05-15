@@ -22,8 +22,8 @@ globalState.setExecutor(async (config, cycle) => {
       tempMailApiKey:  config.tempMailApiKey  ?? '',
       tempmailcDomain: config.tempmailcDomain,
       otpTimeout:      config.otpTimeout,
-      extraDelay:     config.extraDelay,
-      inviteCode:     config.inviteCode,
+      extraDelay:      config.extraDelay,
+      inviteCode:      config.inviteCode,
     },
     cycle
   );
@@ -89,15 +89,14 @@ app.post('/api/start', requireAuth, async (req, res) => {
   }
 
   const body = req.body as { cycles?: number; loop?: boolean };
-  const cycles = Number(body.cycles ?? 1);
-  const loop   = Boolean(body.loop ?? false);
+  const loop = Boolean(body.loop ?? false);
 
-  if (!Number.isInteger(cycles) || cycles < 1) {
-    res.status(400).json({ ok: false, error: 'cycles deve ser inteiro >= 1' });
-    return;
+  if (loop) {
+    await globalState.startLoop();
+  } else {
+    await globalState.startOnce();
   }
 
-  globalState.start(cycles, loop);
   res.json({ ok: true });
 });
 
