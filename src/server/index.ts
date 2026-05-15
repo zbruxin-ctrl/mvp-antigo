@@ -37,12 +37,14 @@ function requireAuth(req: Request, res: Response, next: NextFunction): void {
   next();
 }
 
+const VALID_EMAIL_PROVIDERS = ['temp-mail.io', 'mail.tm', 'tempmailc'] as const;
+
 function validateConfig(body: Partial<Config>): { ok: true; data: Partial<Config> } | { ok: false; error: string } {
   const errors: string[] = [];
 
   if ('emailProvider' in body) {
-    if (body.emailProvider !== 'temp-mail.io' && body.emailProvider !== 'mail.tm') {
-      errors.push('emailProvider deve ser "temp-mail.io" ou "mail.tm"');
+    if (!VALID_EMAIL_PROVIDERS.includes(body.emailProvider as any)) {
+      errors.push(`emailProvider deve ser um de: ${VALID_EMAIL_PROVIDERS.join(', ')}`);
     }
   }
   if ('otpTimeout' in body) {
