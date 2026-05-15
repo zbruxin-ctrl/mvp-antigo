@@ -1192,13 +1192,53 @@ export interface RunCycleConfig {
   speedMode?: boolean;
 }
 
+// ─── ExecuteOptions: contrato usado por server/index.ts ──────────────────────
+export interface ExecuteOptions {
+  emailProvider: EmailProvider;
+  tempMailApiKey: string;
+  otpTimeout?: number;
+  extraDelay?: number;
+  inviteCode?: string;
+}
+
 /**
- * MockPlaywrightFlow — compat shim para server/index.ts que instancia
- * essa classe com MockPlaywrightFlow.init(headless).
+ * MockPlaywrightFlow — shim estático consumido por server/index.ts.
+ *
+ * server/index.ts chama:
+ *   MockPlaywrightFlow.init(headless)      → garante browser ativo
+ *   MockPlaywrightFlow.execute(url, opts, cycle) → roda um ciclo completo
+ *   MockPlaywrightFlow.cleanup()           → fecha o browser no shutdown
  */
 export class MockPlaywrightFlow {
+  /** Garante que o browser está rodando com o modo headless correto. */
   static async init(headless: boolean): Promise<void> {
     await ensureBrowser(headless);
+  }
+
+  /**
+   * Executa um ciclo completo de cadastro.
+   * Mapeado para runCycle() internamente.
+   */
+  static async execute(
+    urlCadastro: string,
+    opts: ExecuteOptions,
+    cycle: number
+  ): Promise<void> {
+    await runCycle(
+      {
+        urlCadastro,
+        headless: false,          // já garantido pelo init() anterior
+        emailProvider: opts.emailProvider,
+        inviteCode: opts.inviteCode,
+        speedMode: false,
+      },
+      cycle
+    );
+  }
+
+  /** Fecha o browser — chamado no graceful shutdown do servidor. */
+  static async cleanup(): Promise<void> {
+    await closeBrowser();
   }
 }
 
@@ -1226,8 +1266,6 @@ export async function runCycle(config: RunCycleConfig, cycle: number): Promise<v
 
     log('info', `Payload gerado: ${payload.email} / ${payload.nome} ${payload.sobrenome}`, cycle);
 
-    // emailClient aceita { tempmailcDomain?: string } mas createEmailClient
-    // pode receber o domain como string — garantimos passar só string ou undefined.
     const emailClient = createEmailClient(
       config.emailProvider,
       config.tempmailcDomain ?? ''
@@ -1262,36 +1300,38 @@ export async function runCycle(config: RunCycleConfig, cycle: number): Promise<v
         if (resultado === 'sucesso') {
           log('success', `Conta criada com sucesso: ${payload.email}`, cycle);
 
-          const cookies = await ctx.cookies();
+          // FIX B: cookies é Cookie[] — JSON.stringify antes de salvar no store
+          const cookies: Cookie[] = await ctx.cookies();
           const tmScript = gerarTampermonkeyScript(cookies, payload.email);
 
-          // ArtifactsManager usa apenas métodos estáticos neste repo
           ArtifactsManager.init();
 
-          // accountStore.save() é a função exportada neste repo
           accountStore.save({
             email: payload.email,
             password: payload.senha,
             name: `${payload.nome} ${payload.sobrenome}`,
             city: payload.cidade,
-            cookies: JSON.stringify(cookies),
+            cookies: JSON.stringify(cookies),   // string ✓
             tampermonkeyScript: tmScript,
             cycleNumber: cycle,
           });
 
-          globalState.getState().successCount = (globalState.getState().successCount ?? 0) + 1;
+          // FIX C: usar globalState.incrementSuccess() em vez de .successCount
+          globalState.incrementSuccess();
           break;
         }
 
         if (resultado === 'kyc') {
           log('warn', `KYC detectado no ciclo #${cycle}`, cycle);
-          globalState.getState().kycCount = (globalState.getState().kycCount ?? 0) + 1;
+          // FIX C: usar incrementFailure() — kycCount não existe em AppState
+          globalState.incrementFailure();
           break;
         }
 
         if (resultado === 'erro') {
           log('error', `Erro fatal no ciclo #${cycle}`, cycle);
-          globalState.getState().errorCount = (globalState.getState().errorCount ?? 0) + 1;
+          // FIX C: usar incrementFailure() — errorCount não existe em AppState
+          globalState.incrementFailure();
           break;
         }
 
@@ -1300,7 +1340,7 @@ export async function runCycle(config: RunCycleConfig, cycle: number): Promise<v
 
       if (iteracoes >= MAX_ITER) {
         log('warn', `Ciclo #${cycle} atingiu limite de ${MAX_ITER} iteracoes`, cycle);
-        globalState.getState().errorCount = (globalState.getState().errorCount ?? 0) + 1;
+        globalState.incrementFailure();
       }
 
     } finally {
@@ -1309,7 +1349,7 @@ export async function runCycle(config: RunCycleConfig, cycle: number): Promise<v
 
   } catch (err: any) {
     log('error', `Ciclo #${cycle} falhou: ${err?.message ?? String(err)}`, cycle);
-    globalState.getState().errorCount = (globalState.getState().errorCount ?? 0) + 1;
+    globalState.incrementFailure();
   } finally {
     clearTimeout(cycleTimer);
   }
