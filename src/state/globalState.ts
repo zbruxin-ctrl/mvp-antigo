@@ -197,6 +197,26 @@ class GlobalState {
     this.kycByCycle = {};
   }
 
+  // ─── Contadores públicos ──────────────────────────────────────────────────────
+
+  /**
+   * Registra uma conta criada com sucesso.
+   * Incrementa cyclesCompleted e emite log 'success'.
+   */
+  incrementSuccess(cycle?: number): void {
+    this.state.cyclesCompleted += 1;
+    this.addLog('success', `✅ Conta criada — total: ${this.state.cyclesCompleted}`, cycle);
+  }
+
+  /**
+   * Registra uma falha de ciclo (KYC, erro, timeout).
+   * Emite log 'error' sem incrementar cyclesCompleted.
+   */
+  incrementFailure(reason?: string, cycle?: number): void {
+    const msg = reason ? `❌ Falha no ciclo: ${reason}` : '❌ Falha no ciclo';
+    this.addLog('error', msg, cycle);
+  }
+
   // ─── Core API ────────────────────────────────────────────────────────────────
 
   setExecutor(fn: CycleExecutor): void {
@@ -223,23 +243,6 @@ class GlobalState {
   addLog(level: LogEntry['level'], message: string, cycle?: number): void {
     this.logs.unshift({ timestamp: new Date().toISOString(), level, message, cycle });
   }
-
-  // ─── Contadores públicos ──────────────────────────────────────────────────────
-
-  /** Incrementa cyclesCompleted e loga sucesso. */
-  incrementSuccess(cycle?: number): void {
-    this.state.cyclesCompleted += 1;
-    this.addLog('success', `✅ Conta criada com sucesso (total: ${this.state.cyclesCompleted})`, cycle);
-  }
-
-  /** Registra falha (KYC ou erro genérico) sem incrementar cyclesCompleted. */
-  incrementFailure(reason: 'kyc' | 'error' = 'error', cycle?: number): void {
-    const emoji = reason === 'kyc' ? '🔒' : '❌';
-    const label = reason === 'kyc' ? 'KYC detectado' : 'Falha no ciclo';
-    this.addLog('error', `${emoji} ${label} (ciclo #${cycle ?? '?'})`, cycle);
-  }
-
-  // ─── Flow control ─────────────────────────────────────────────────────────────
 
   stop(): void {
     if (this.state.status === 'RUNNING' || this.state.status === 'WAITING_OTP') {
