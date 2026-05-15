@@ -188,18 +188,6 @@ async function dispensarCookies(p: Page): Promise<void> {
 }
 
 // ─── Aceitar termos ───────────────────────────────────────────────────────────
-//
-// FIX B: O Uber exibe UMA tela com N checkboxes [data-testid="accept-terms"].
-// A versão anterior clicava apenas no PRIMEIRO container e avançava,
-// causando loop infinito porque os demais checkboxes obrigatórios ficavam
-// desmarcados e o forward-button nunca habilitava de verdade.
-//
-// Nova lógica:
-//   1. Coleta TODOS os containers [data-testid="accept-terms"] visíveis.
-//   2. Para cada um, clica no label filho (ou no container diretamente).
-//   3. Verifica se o checkbox interno ficou marcado; se não, força via nativeSet.
-//   4. Aguarda o forward-button habilitar SOMENTE após marcar TODOS.
-// ─────────────────────────────────────────────────────────────────────────────
 async function tentarAceitarTermos(p: Page, cycle?: number): Promise<boolean> {
   let marcouAlgum = false;
 
@@ -240,7 +228,6 @@ async function tentarAceitarTermos(p: Page, cycle?: number): Promise<boolean> {
     }
   }
 
-  // ── Passo 1: marcar TODOS os [data-testid="accept-terms"] visíveis ────────
   const containerTermos = p.locator('[data-testid="accept-terms"]');
   const containerCount = await containerTermos.count().catch(() => 0);
 
@@ -252,7 +239,6 @@ async function tentarAceitarTermos(p: Page, cycle?: number): Promise<boolean> {
       const visible = await container.isVisible({ timeout: 800 }).catch(() => false);
       if (!visible) continue;
 
-      // Verifica se o checkbox interno já está marcado
       const cbInterno = container.locator('input[type="checkbox"]').first();
       const cbCount = await cbInterno.count().catch(() => 0);
       if (cbCount > 0 && await estaChecked(cbInterno)) {
@@ -261,7 +247,6 @@ async function tentarAceitarTermos(p: Page, cycle?: number): Promise<boolean> {
         continue;
       }
 
-      // Tenta clicar via label filho primeiro
       const labelFilho = container.locator('label').first();
       const labelCount = await labelFilho.count().catch(() => 0);
 
@@ -275,7 +260,6 @@ async function tentarAceitarTermos(p: Page, cycle?: number): Promise<boolean> {
           if (cycle !== undefined) log('info', `[termos] Container #${i} — click no label filho`, cycle);
         }
       } else {
-        // Sem label filho — clica no próprio container
         const cbox = await container.boundingBox().catch(() => null);
         if (cbox && cbox.width > 0) {
           await humanMouseMove(p, cbox.x + cbox.width * randFloat(0.2, 0.5), cbox.y + cbox.height * randFloat(0.3, 0.7));
@@ -286,15 +270,12 @@ async function tentarAceitarTermos(p: Page, cycle?: number): Promise<boolean> {
         }
       }
 
-      // Confirma se ficou marcado; caso contrário força
       if (cbCount > 0 && !(await estaChecked(cbInterno))) {
         if (cycle !== undefined) log('warn', `[termos] Container #${i} não marcou — forçando via nativeSet`, cycle);
         await forcarCheckViaLabel(cbInterno, i);
       }
 
       marcouAlgum = true;
-
-      // Pequena pausa entre checkboxes para evitar debounce do React
       await humanPause(randInt(sp(60), sp(120)));
     }
 
@@ -305,16 +286,11 @@ async function tentarAceitarTermos(p: Page, cycle?: number): Promise<boolean> {
     }
   }
 
-  // ── Passo 2 (fallback): labels por texto ────────────────────────────────
   const labelTextoSels = [
-    'label:has-text("Concordo")',
-    'label:has-text("Agree")',
-    'label:has-text("aceito")',
-    'label:has-text("accept")',
-    'label:has-text("termos")',
-    'label:has-text("terms")',
-    'label:has-text("Li e aceito")',
-    'label:has-text("I agree")',
+    'label:has-text("Concordo")', 'label:has-text("Agree")',
+    'label:has-text("aceito")', 'label:has-text("accept")',
+    'label:has-text("termos")', 'label:has-text("terms")',
+    'label:has-text("Li e aceito")', 'label:has-text("I agree")',
   ];
 
   for (const sel of labelTextoSels) {
@@ -346,7 +322,6 @@ async function tentarAceitarTermos(p: Page, cycle?: number): Promise<boolean> {
     return true;
   }
 
-  // ── Passo 3 (fallback): checkboxes nativos ───────────────────────────────
   const nativos = p.locator('input[type="checkbox"]');
   const nCount = await nativos.count().catch(() => 0);
 
@@ -393,7 +368,6 @@ async function tentarAceitarTermos(p: Page, cycle?: number): Promise<boolean> {
     } catch { /* continua */ }
   }
 
-  // ── Passo 4 (fallback): role="checkbox" ─────────────────────────────────
   const roles = p.locator('[role="checkbox"]');
   const rCount = await roles.count().catch(() => 0);
   for (let i = 0; i < rCount; i++) {
@@ -424,7 +398,6 @@ async function tentarAceitarTermos(p: Page, cycle?: number): Promise<boolean> {
   return marcouAlgum;
 }
 
-/** Aguarda o forward-button habilitar após marcar termos (até 3s). */
 async function _aguardarForwardHabilitar(p: Page): Promise<void> {
   try {
     await p.locator('#forward-button, [data-testid="forward-button"]')
@@ -439,7 +412,7 @@ async function _aguardarForwardHabilitar(p: Page): Promise<void> {
   } catch { /* ignora */ }
 }
 
-// ─── Seleciona cidade + preenche invite code ──────────────────────────────────
+// ─── Seleciona cidade ─────────────────────────────────────────────────────────
 
 async function selecionarCidade(p: Page, cidade: string, cycle: number): Promise<void> {
   const INPUT_SEL = '[data-testid="flow-type-city-selector-v2-input"]';
@@ -706,7 +679,7 @@ async function tratarTelaSenhaFluxo(
   return true;
 }
 
-// ─── Tela de re-autenticação com username + password VISÍVEIS ─────────────────
+// ─── Tela de re-autenticação ──────────────────────────────────────────────────
 
 async function tratarTelaReAuth(
   p: Page,
@@ -721,7 +694,6 @@ async function tratarTelaReAuth(
 
   if (!temEmail || !temSenha) return false;
 
-  // FIX A: mesma guarda — se cidade visível, não é tela de re-auth
   const cidadeAindaVisivelReAuth = await p.locator(
     '[data-testid="flow-type-city-selector-v2-input"]'
   ).first().isVisible({ timeout: 300 }).catch(() => false);
@@ -760,15 +732,12 @@ async function tratarTelaReAuth(
   }).catch(() => {});
   await humanPause(randInt(sp(100), sp(200)));
 
-  log('info', `[re-auth] Email: "${await p.locator(emailSel).inputValue().catch(() => '')}"`, cycle);
-
   const senhaSels = ['#PASSWORD', 'input[autocomplete="new-password"]', 'input[autocomplete="current-password"]', 'input[type="password"]'];
   let senhaSel = '';
 
   for (const sel of senhaSels) {
     if (await p.locator(sel).first().isVisible({ timeout: 1000 }).catch(() => false)) {
       senhaSel = sel;
-
       await p.locator(sel).evaluate((el: HTMLInputElement) => {
         const nativeSet = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
         if (nativeSet) nativeSet.call(el, '');
@@ -777,40 +746,32 @@ async function tratarTelaReAuth(
         el.dispatchEvent(new Event('change', { bubbles: true }));
       }).catch(() => {});
       await humanPause(randInt(sp(40), sp(80)));
-
       await forcarValorReact(p, sel, senha);
       await humanPause(randInt(sp(50), sp(100)));
       await humanTypeForce(p, sel, senha);
-
       const senhaVal = await p.locator(sel).inputValue().catch(() => '');
       if (senhaVal !== senha) {
-        log('warn', '[re-auth] Senha incorreta apos digitacao — re-forcando', cycle);
+        log('warn', '[re-auth] Senha incorreta — re-forcando', cycle);
         await forcarValorReact(p, sel, senha);
         await humanPause(randInt(sp(100), sp(200)));
       }
-
       await p.locator(sel).evaluate((el) => {
         el.dispatchEvent(new FocusEvent('blur', { bubbles: true }));
       }).catch(() => {});
       await humanPause(randInt(sp(100), sp(200)));
-
       log('info', `[re-auth] Senha digitada (${sel})`, cycle);
       break;
     }
   }
 
   const fwdBtn = p.locator('#forward-button, [data-testid="forward-button"]').first();
-
   let habilitado = false;
   for (let tentativa = 1; tentativa <= 3; tentativa++) {
     habilitado = await fwdBtn.waitFor({ state: 'visible', timeout: 3000 })
       .then(() => fwdBtn.isEnabled({ timeout: 3000 }))
       .catch(() => false);
-
     if (habilitado) break;
-
-    log('warn', `[re-auth] forward-button ainda disabled (tentativa ${tentativa}/3) — re-forcando valores`, cycle);
-
+    log('warn', `[re-auth] forward-button disabled (tentativa ${tentativa}/3) — re-forcando`, cycle);
     await forcarValorReact(p, emailSel, email);
     if (senhaSel) {
       await forcarValorReact(p, senhaSel, senha);
@@ -821,20 +782,14 @@ async function tratarTelaReAuth(
     await humanPause(randInt(sp(200), sp(400)));
   }
 
-  if (!habilitado) {
-    log('warn', '[re-auth] forward-button nunca habilitou — tentando clicar de qualquer forma', cycle);
-  }
+  if (!habilitado) log('warn', '[re-auth] forward-button nunca habilitou — tentando clicar mesmo assim', cycle);
 
   await cogPause(150, 300);
 
   const submitSels = [
-    '#forward-button',
-    '[data-testid="forward-button"]',
-    'button[type="submit"]',
-    'button:has-text("Continuar")',
-    'button:has-text("Continue")',
-    'button:has-text("Entrar")',
-    'button:has-text("Sign in")',
+    '#forward-button', '[data-testid="forward-button"]',
+    'button[type="submit"]', 'button:has-text("Continuar")', 'button:has-text("Continue")',
+    'button:has-text("Entrar")', 'button:has-text("Sign in")',
   ];
 
   for (const sel of submitSels) {
@@ -865,12 +820,10 @@ async function ensureBrowser(headless = false, proxyConfig?: string): Promise<vo
   browserLaunching = true;
   try {
     if (browser) { await browser.close().catch(() => {}); browser = null; }
-
     if (!stealthPluginRegistered) {
       chromiumExtra.use(StealthPlugin());
       stealthPluginRegistered = true;
     }
-
     const launchOpts: any = {
       headless,
       args: [
@@ -946,21 +899,16 @@ async function etapa_digitarEmailOuTelefone(p: Page, email: string, cycle: numbe
   log('info', `Digitando email: ${email}`, cycle);
 
   const SELS = [
-    '#PHONE_NUMBER_or_EMAIL_ADDRESS',
-    '#EMAIL_ADDRESS',
-    'input[autocomplete="email"]',
-    'input[type="email"]',
-    '#PHONE_NUMBER',
-    'input[autocomplete="tel-national"]',
-    'input[type="tel"]',
-    'input[inputmode="tel"]',
+    '#PHONE_NUMBER_or_EMAIL_ADDRESS', '#EMAIL_ADDRESS',
+    'input[autocomplete="email"]', 'input[type="email"]',
+    '#PHONE_NUMBER', 'input[autocomplete="tel-national"]',
+    'input[type="tel"]', 'input[inputmode="tel"]',
   ];
 
   for (const SEL of SELS) {
     const visible = await p.locator(SEL).first().isVisible({ timeout: 3000 }).catch(() => false);
     if (visible) {
       log('info', `[DEBUG] Campo "${SEL}" -> "${email}"`, cycle);
-
       await p.locator(SEL).evaluate((el: HTMLInputElement) => {
         const nativeSet = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
         if (nativeSet) nativeSet.call(el, '');
@@ -969,16 +917,13 @@ async function etapa_digitarEmailOuTelefone(p: Page, email: string, cycle: numbe
         el.dispatchEvent(new Event('change', { bubbles: true }));
       }).catch(() => {});
       await humanPause(randInt(sp(40), sp(80)));
-
       await humanTypeForce(p, SEL, email);
-
       const val = await p.locator(SEL).inputValue().catch(() => '');
       if (val !== email) {
         log('warn', `Valor pos-digitacao "${val}" != email esperado — forcando via React setter`, cycle);
         await forcarValorReact(p, SEL, email);
         await humanPause(randInt(sp(100), sp(200)));
       }
-
       const finalVal = await p.locator(SEL).inputValue().catch(() => '');
       log('info', `Email digitado — valor final: "${finalVal}"`, cycle);
       return;
@@ -992,18 +937,15 @@ async function etapa_digitarSenha(p: Page, senha: string, cycle: number): Promis
   log('info', 'Digitando senha...', cycle);
 
   const SELS = [
-    '#PASSWORD',
-    'input[autocomplete="new-password"]',
+    '#PASSWORD', 'input[autocomplete="new-password"]',
     'input[autocomplete="current-password"]',
-    'input[name="password"]',
-    'input[type="password"]',
+    'input[name="password"]', 'input[type="password"]',
   ];
 
   for (const SEL of SELS) {
     const visible = await p.locator(SEL).first().isVisible({ timeout: 3000 }).catch(() => false);
     if (visible) {
       log('info', `Campo senha encontrado: "${SEL}"`, cycle);
-
       await p.locator(SEL).evaluate((el: HTMLInputElement) => {
         const nativeSet = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
         if (nativeSet) nativeSet.call(el, '');
@@ -1012,23 +954,18 @@ async function etapa_digitarSenha(p: Page, senha: string, cycle: number): Promis
         el.dispatchEvent(new Event('change', { bubbles: true }));
       }).catch(() => {});
       await humanPause(randInt(sp(40), sp(80)));
-
       await forcarValorReact(p, SEL, senha);
       await humanPause(randInt(sp(50), sp(100)));
-
       await humanTypeForce(p, SEL, senha);
-
       const val = await p.locator(SEL).inputValue().catch(() => '');
       if (val !== senha) {
-        log('warn', 'Valor pos-digitacao da senha incorreto — forcando via React setter', cycle);
+        log('warn', 'Valor pos-digitacao da senha incorreto — forcando', cycle);
         await forcarValorReact(p, SEL, senha);
         await humanPause(randInt(sp(100), sp(200)));
       }
-
       const fwdBtn = p.locator('#forward-button, [data-testid="forward-button"]').first();
       const habilitado = await fwdBtn.waitFor({ state: 'visible', timeout: 1500 })
-        .then(() => fwdBtn.isEnabled({ timeout: 1500 }))
-        .catch(() => false);
+        .then(() => fwdBtn.isEnabled({ timeout: 1500 })).catch(() => false);
       if (!habilitado) {
         log('warn', '#forward-button ainda disabled apos senha — disparando blur', cycle);
         await p.locator(SEL).evaluate((el) => {
@@ -1036,7 +973,6 @@ async function etapa_digitarSenha(p: Page, senha: string, cycle: number): Promis
         }).catch(() => {});
         await humanPause(randInt(sp(150), sp(250)));
       }
-
       log('info', 'Senha digitada', cycle);
       return;
     }
@@ -1117,7 +1053,7 @@ async function processarTelaOnboarding(
   state: { otpDigitado: boolean; senhaDigitada: boolean; cidadePreenchida: boolean }
 ): Promise<'continua' | 'sucesso' | 'kyc' | 'erro'> {
 
-  // ── FIX A: verificar cidade ANTES de senha ────────────────────────────────
+  // FIX A: verificar cidade ANTES de senha
   const cidadeInputVisivel = await p.locator(
     '[data-testid="flow-type-city-selector-v2-input"]'
   ).first().isVisible({ timeout: 500 }).catch(() => false);
@@ -1135,25 +1071,12 @@ async function processarTelaOnboarding(
     return 'continua';
   }
 
-  // ── Verificar sucesso ────────────────────────────────────────────────────
   if (isSuccessUrl(p.url())) return 'sucesso';
-
-  // ── Verificar KYC/Veriff ─────────────────────────────────────────────────
-  if (await detectarVeriff(p)) {
-    log('warn', 'KYC/Veriff detectado', cycle);
-    return 'kyc';
-  }
-
-  // ── WhatsApp opt-in ──────────────────────────────────────────────────────
+  if (await detectarVeriff(p)) { log('warn', 'KYC/Veriff detectado', cycle); return 'kyc'; }
   if (await tratarTelaWhatsApp(p, cycle)) return 'continua';
-
-  // ── Hub KYC ──────────────────────────────────────────────────────────────
   if (await tratarHubKYC(p, cycle)) return 'continua';
-
-  // ── Foto do perfil ────────────────────────────────────────────────────────
   if (await tratarTelaFotoPerfil(p, cycle)) return 'continua';
 
-  // ── Termos ───────────────────────────────────────────────────────────────
   const aceitou = await tentarAceitarTermos(p, cycle);
   if (aceitou) {
     await cogPause(150, 300);
@@ -1162,7 +1085,6 @@ async function processarTelaOnboarding(
     return 'continua';
   }
 
-  // ── OTP ──────────────────────────────────────────────────────────────────
   const temOtpField = await p.locator(
     '#EMAIL_OTP_CODE-0, input[autocomplete="one-time-code"]'
   ).first().isVisible({ timeout: 1000 }).catch(() => false);
@@ -1177,10 +1099,8 @@ async function processarTelaOnboarding(
     return 'continua';
   }
 
-  // ── Re-auth ───────────────────────────────────────────────────────────────
   if (await tratarTelaReAuth(p, payload.email, payload.senha, cycle)) return 'continua';
 
-  // ── Senha ─────────────────────────────────────────────────────────────────
   if (!state.senhaDigitada) {
     if (await tratarTelaSenhaFluxo(p, payload.email, payload.senha, cycle)) {
       state.senhaDigitada = true;
@@ -1188,7 +1108,6 @@ async function processarTelaOnboarding(
     }
   }
 
-  // ── Email/telefone ────────────────────────────────────────────────────────
   const temEmailField = await p.locator(
     '#PHONE_NUMBER_or_EMAIL_ADDRESS, #EMAIL_ADDRESS, input[autocomplete="email"], input[type="email"]'
   ).first().isVisible({ timeout: 1000 }).catch(() => false);
@@ -1201,7 +1120,6 @@ async function processarTelaOnboarding(
     return 'continua';
   }
 
-  // ── Senha direta (página dedicada) ───────────────────────────────────────
   const temSenhaField = await p.locator(
     '#PASSWORD, input[autocomplete="new-password"], input[type="password"]'
   ).first().isVisible({ timeout: 1000 }).catch(() => false);
@@ -1215,7 +1133,6 @@ async function processarTelaOnboarding(
     return 'continua';
   }
 
-  // ── Forward button genérico ───────────────────────────────────────────────
   const fwdVisible = await p.locator('#forward-button, [data-testid="forward-button"]')
     .first().isVisible({ timeout: 800 }).catch(() => false);
   if (fwdVisible) {
@@ -1231,10 +1148,7 @@ async function processarTelaOnboarding(
 // ─── Preencher nome ───────────────────────────────────────────────────────────
 
 async function etapa_preencherNome(
-  p: Page,
-  firstName: string,
-  lastName: string,
-  cycle: number
+  p: Page, firstName: string, lastName: string, cycle: number
 ): Promise<void> {
   log('info', `Preenchendo nome: ${firstName} ${lastName}`, cycle);
 
@@ -1278,6 +1192,16 @@ export interface RunCycleConfig {
   speedMode?: boolean;
 }
 
+/**
+ * MockPlaywrightFlow — compat shim para server/index.ts que instancia
+ * essa classe com MockPlaywrightFlow.init(headless).
+ */
+export class MockPlaywrightFlow {
+  static async init(headless: boolean): Promise<void> {
+    await ensureBrowser(headless);
+  }
+}
+
 export async function runCycle(config: RunCycleConfig, cycle: number): Promise<void> {
   const state = globalState.getState();
   (state.config as any) = { ...state.config, speedMode: config.speedMode ?? false };
@@ -1302,11 +1226,15 @@ export async function runCycle(config: RunCycleConfig, cycle: number): Promise<v
 
     log('info', `Payload gerado: ${payload.email} / ${payload.nome} ${payload.sobrenome}`, cycle);
 
-    const emailClient = createEmailClient(config.emailProvider, { tempmailcDomain: config.tempmailcDomain });
+    // emailClient aceita { tempmailcDomain?: string } mas createEmailClient
+    // pode receber o domain como string — garantimos passar só string ou undefined.
+    const emailClient = createEmailClient(
+      config.emailProvider,
+      config.tempmailcDomain ?? ''
+    );
 
     try {
       await pageWarmup(p);
-
       log('info', `Navegando para: ${config.urlCadastro}`, cycle);
       await p.goto(config.urlCadastro, { waitUntil: 'domcontentloaded', timeout: 20_000 });
       await humanPause(randInt(sp(300), sp(600)));
@@ -1314,7 +1242,6 @@ export async function runCycle(config: RunCycleConfig, cycle: number): Promise<v
       await dispensarCookies(p);
       await scrollIdle(p);
 
-      // ── Preencher nome na tela inicial se visível ─────────────────────────
       const temNomeInicial = await p.locator('#FIRST_NAME, input[name="firstName"]')
         .first().isVisible({ timeout: 2000 }).catch(() => false);
       if (temNomeInicial) {
@@ -1322,7 +1249,6 @@ export async function runCycle(config: RunCycleConfig, cycle: number): Promise<v
         await humanPause(randInt(sp(80), sp(160)));
       }
 
-      // ── Loop principal de onboarding ─────────────────────────────────────
       const flowState = { otpDigitado: false, senhaDigitada: false, cidadePreenchida: false };
       let iteracoes = 0;
       const MAX_ITER = 40;
@@ -1338,34 +1264,34 @@ export async function runCycle(config: RunCycleConfig, cycle: number): Promise<v
 
           const cookies = await ctx.cookies();
           const tmScript = gerarTampermonkeyScript(cookies, payload.email);
-          const artifacts = new ArtifactsManager();
-          await artifacts.salvar(payload, cookies, tmScript, cycle);
 
-          await accountStore.salvarConta({
+          // ArtifactsManager usa apenas métodos estáticos neste repo
+          ArtifactsManager.init();
+
+          // accountStore.save() é a função exportada neste repo
+          accountStore.save({
             email: payload.email,
-            senha: payload.senha,
-            nome: `${payload.nome} ${payload.sobrenome}`,
-            cpf: payload.cpf,
-            cidade: payload.cidade,
-            criadoEm: new Date().toISOString(),
-            ciclo: cycle,
+            password: payload.senha,
+            name: `${payload.nome} ${payload.sobrenome}`,
+            city: payload.cidade,
             cookies: JSON.stringify(cookies),
             tampermonkeyScript: tmScript,
+            cycleNumber: cycle,
           });
 
-          globalState.incrementSuccess();
+          globalState.getState().successCount = (globalState.getState().successCount ?? 0) + 1;
           break;
         }
 
         if (resultado === 'kyc') {
           log('warn', `KYC detectado no ciclo #${cycle}`, cycle);
-          globalState.incrementKyc();
+          globalState.getState().kycCount = (globalState.getState().kycCount ?? 0) + 1;
           break;
         }
 
         if (resultado === 'erro') {
           log('error', `Erro fatal no ciclo #${cycle}`, cycle);
-          globalState.incrementError();
+          globalState.getState().errorCount = (globalState.getState().errorCount ?? 0) + 1;
           break;
         }
 
@@ -1374,7 +1300,7 @@ export async function runCycle(config: RunCycleConfig, cycle: number): Promise<v
 
       if (iteracoes >= MAX_ITER) {
         log('warn', `Ciclo #${cycle} atingiu limite de ${MAX_ITER} iteracoes`, cycle);
-        globalState.incrementError();
+        globalState.getState().errorCount = (globalState.getState().errorCount ?? 0) + 1;
       }
 
     } finally {
@@ -1383,7 +1309,7 @@ export async function runCycle(config: RunCycleConfig, cycle: number): Promise<v
 
   } catch (err: any) {
     log('error', `Ciclo #${cycle} falhou: ${err?.message ?? String(err)}`, cycle);
-    globalState.incrementError();
+    globalState.getState().errorCount = (globalState.getState().errorCount ?? 0) + 1;
   } finally {
     clearTimeout(cycleTimer);
   }
