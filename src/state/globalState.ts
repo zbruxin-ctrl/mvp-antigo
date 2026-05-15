@@ -122,6 +122,26 @@ class GlobalState {
   // Payload de cadastro por ciclo
   private payloadByCycle: Record<number, CyclePayload> = {};
 
+  // ─── Contadores públicos ──────────────────────────────────────────────────────
+
+  /**
+   * Incrementa cyclesCompleted e emite log de sucesso.
+   * Usado por mockFlow.ts ao detectar conta criada com sucesso.
+   */
+  incrementSuccess(): void {
+    this.state.cyclesCompleted += 1;
+    this.addLog('success', `✅ Conta criada — total: ${this.state.cyclesCompleted}`);
+  }
+
+  /**
+   * Registra falha/KYC no log sem incrementar cyclesCompleted.
+   * Usado por mockFlow.ts quando resultado === 'kyc' | 'erro'.
+   */
+  incrementFailure(reason = 'falha'): void {
+    this.state.lastError = reason;
+    this.addLog('error', `❌ Ciclo encerrado por: ${reason}`);
+  }
+
   // ─── Payload API ─────────────────────────────────────────────────────────────
 
   setPayload(cycle: number, payload: CyclePayload): void {
@@ -195,25 +215,6 @@ class GlobalState {
 
   clearKycState(): void {
     this.kycByCycle = {};
-  }
-
-  // ─── Counter API (FIX C) ──────────────────────────────────────────────────────
-
-  /**
-   * Registra uma conta criada com sucesso.
-   * Incrementa cyclesCompleted e loga como 'success'.
-   */
-  incrementSuccess(cycle?: number): void {
-    this.state.cyclesCompleted += 1;
-    this.addLog('success', `✅ Conta criada com sucesso (total: ${this.state.cyclesCompleted})`, cycle);
-  }
-
-  /**
-   * Registra uma falha (KYC, erro, timeout).
-   * Loga como 'error' sem incrementar cyclesCompleted.
-   */
-  incrementFailure(reason: string, cycle?: number): void {
-    this.addLog('error', `❌ Ciclo encerrado por falha: ${reason}`, cycle);
   }
 
   // ─── Core API ────────────────────────────────────────────────────────────────
