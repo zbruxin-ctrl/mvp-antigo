@@ -9,9 +9,6 @@ import {
 import { OTPParser } from '../utils/otpParser';
 
 // ────────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ────────────────────────────────────────────────────────────────────────────────
-
 function isStopped(): boolean {
   return !!(globalState.getState() as { shouldStop?: boolean }).shouldStop;
 }
@@ -148,7 +145,7 @@ export class TempMailClient implements IEmailClient {
           }
           lastMessageCount = messages.length;
         } else {
-          globalState.addLog('info', `📭 [temp-mail.io] Sem mensagens novas — próximo poll em ${POLL_INTERVAL_MS / 1000}s`, cycle);
+          globalState.addLog('info', `💭 [temp-mail.io] Sem mensagens novas — próximo poll em ${POLL_INTERVAL_MS / 1000}s`, cycle);
         }
       } catch (e) {
         if (e instanceof Error && e.message.includes('Parado')) throw e;
@@ -348,7 +345,6 @@ export class MailTmClient implements IEmailClient {
                 created_at: msg.createdAt,
               };
 
-              // extractFromMessageAsync resolve iframes antes de extrair
               const otp = await OTPParser.extractFromMessageAsync(mailMsg);
               if (otp) {
                 globalState.addLog('success', `🎉 [mail.tm] OTP encontrado: ${otp}`, cycle);
@@ -361,7 +357,7 @@ export class MailTmClient implements IEmailClient {
           }
           lastMessageCount = messages.length;
         } else {
-          globalState.addLog('info', `📭 [mail.tm] Sem mensagens novas — próximo poll em ${POLL_INTERVAL_MS / 1000}s`, cycle);
+          globalState.addLog('info', `💭 [mail.tm] Sem mensagens novas — próximo poll em ${POLL_INTERVAL_MS / 1000}s`, cycle);
         }
       } catch (e) {
         if (e instanceof Error && e.message.includes('Parado')) throw e;
@@ -374,8 +370,118 @@ export class MailTmClient implements IEmailClient {
   }
 }
 
-export function createEmailClient(provider: 'temp-mail.io' | 'mail.tm', apiKey?: string): IEmailClient {
+// ────────────────────────────────────────────────────────────────────────────────
+// TempMailCClient  (tempmailc — api.tempmailc.com)
+// Documentação: GET /api/v1/code  |  GET /api/v1/inbox  |  GET /api/v1/domains
+// Autenticação: query param ?code=<apiCode>
+// ────────────────────────────────────────────────────────────────────────────────
+
+export class TempMailCClient implements IEmailClient {
+  private readonly baseUrl = 'https://api.tempmailc.com';
+  private readonly apiCode: string;
+  private domain: string | null = null;
+  private currentEmail: string | null = null;
+
+  constructor(apiCode: string) {
+    this.apiCode = apiCode;
+  }
+
+  /** Obtém a lista de domínios associados à conta e escolhe um aleatoriamente */
+  private async fetchDomain(): Promise<string> {
+    const url = `${this.baseUrl}/api/v1/domains?code=${encodeURIComponent(this.apiCode)}`;
+    const res = await safeFetch(url, { method: 'GET' });
+    if (!res) throw new Error('[tempmailc] fetchDomain: erro de rede/timeout');
+    if (!res.ok) {
+      const text = await res.text().catch(() => String(res.status));
+      throw new Error(`[tempmailc] fetchDomain ${res.status}: ${text}`);
+    }
+    const body = JSON.parse(await res.text()) as { ok: boolean; domains: string[] };
+    if (!body.ok || !body.domains?.length) throw new Error('[tempmailc] Nenhum domínio disponível');
+    return body.domains[Math.floor(Math.random() * body.domains.length)];
+  }
+
+  async createRandomEmail(): Promise<EmailAccount> {
+    globalState.addLog('info', '📧 [tempmailc] Obtendo domínio...');
+    const domain = await withRetry('tempmailc fetchDomain', () => this.fetchDomain());
+    this.domain = domain;
+
+    const localPart = 'user' + Math.random().toString(36).slice(2, 10);
+    const email = `${localPart}@${domain}`;
+    this.currentEmail = email;
+
+    globalState.addLog('info', `✅ [tempmailc] Email gerado: ${email}`);
+    return { email, token: email };
+  }
+
+  /**
+   * Usa o endpoint /api/v1/code que retorna diretamente o OTP mais recente.
+   * Faz polling a cada 4s até obter um código ou atingir o timeout.
+   */
+  async waitForOTP(email: string, timeoutMs = 90000, cycle?: number): Promise<string> {
+    const startTime = Date.now();
+    const POLL_INTERVAL_MS = 4_000;
+    const INITIAL_WAIT_MS  = 6_000;
+
+    globalState.addLog('info', `⏳ [tempmailc] Aguardando OTP para ${email} (${Math.round(timeoutMs / 1000)}s)...`, cycle);
+    await sleep(INITIAL_WAIT_MS);
+
+    let tentativaPoll = 0;
+    let lastCode = '';
+
+    while (Date.now() - startTime < timeoutMs) {
+      if (isStopped()) throw new Error('Parado pelo usuário');
+
+      tentativaPoll++;
+      globalState.addLog('info', `🔄 [tempmailc] Poll #${tentativaPoll} — verificando OTP...`, cycle);
+
+      try {
+        const url = `${this.baseUrl}/api/v1/code?email=${encodeURIComponent(email)}&code=${encodeURIComponent(this.apiCode)}`;
+        const res = await safeFetch(url, { method: 'GET', timeoutMs: 10000 });
+
+        if (!res) {
+          globalState.addLog('warn', `⚠️ [tempmailc] Poll #${tentativaPoll}: erro de rede`, cycle);
+        } else if (!res.ok) {
+          const errText = await res.text().catch(() => String(res.status));
+          globalState.addLog('warn', `⚠️ [tempmailc] Poll #${tentativaPoll}: HTTP ${res.status} — ${errText}`, cycle);
+        } else {
+          const body = JSON.parse(await res.text()) as { status: string; code: string };
+
+          if (body.status === 'ok' && body.code && body.code !== lastCode) {
+            globalState.addLog('success', `🎉 [tempmailc] OTP encontrado: ${body.code}`, cycle);
+            return body.code;
+          }
+
+          if (body.status === 'empty' || !body.code) {
+            globalState.addLog('info', `💭 [tempmailc] Sem código ainda — próximo poll em ${POLL_INTERVAL_MS / 1000}s`, cycle);
+          }
+
+          lastCode = body.code ?? lastCode;
+        }
+      } catch (e) {
+        if (e instanceof Error && e.message.includes('Parado')) throw e;
+        globalState.addLog('warn', `⚠️ [tempmailc] Erro no poll #${tentativaPoll}: ${e instanceof Error ? e.message : e}`, cycle);
+      }
+
+      await sleep(POLL_INTERVAL_MS);
+    }
+
+    throw new Error(`⏰ Timeout aguardando OTP tempmailc (${Math.round(timeoutMs / 1000)}s)`);
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────────────────
+// Factory
+// ────────────────────────────────────────────────────────────────────────────────
+
+export function createEmailClient(
+  provider: 'temp-mail.io' | 'mail.tm' | 'tempmailc',
+  apiKey?: string
+): IEmailClient {
   if (provider === 'mail.tm') return new MailTmClient();
+  if (provider === 'tempmailc') {
+    if (!apiKey) throw new Error('tempmailc requer um API code (apiKey)');
+    return new TempMailCClient(apiKey);
+  }
   if (!apiKey) throw new Error('temp-mail.io requer uma API key');
   return new TempMailClient(apiKey);
 }
