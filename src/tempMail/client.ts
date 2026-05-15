@@ -371,13 +371,13 @@ export class MailTmClient implements IEmailClient {
 }
 
 // ────────────────────────────────────────────────────────────────────────────────
-// TempMailCClient  (tempmailc — api.tempmailc.com)
-// Documentação: GET /api/v1/code  |  GET /api/v1/inbox  |  GET /api/v1/domains
+// TempMailCClient  (tempmailc.com)
+// Base URL: https://tempmailc.com  (sem subdomínio api.)
 // Autenticação: query param ?code=<apiCode>
 // ────────────────────────────────────────────────────────────────────────────────
 
 export class TempMailCClient implements IEmailClient {
-  private readonly baseUrl = 'https://api.tempmailc.com';
+  private readonly baseUrl = 'https://tempmailc.com';
   private readonly apiCode: string;
   private domain: string | null = null;
   private currentEmail: string | null = null;
@@ -386,7 +386,6 @@ export class TempMailCClient implements IEmailClient {
     this.apiCode = apiCode;
   }
 
-  /** Obtém a lista de domínios associados à conta e escolhe um aleatoriamente */
   private async fetchDomain(): Promise<string> {
     const url = `${this.baseUrl}/api/v1/domains?code=${encodeURIComponent(this.apiCode)}`;
     const res = await safeFetch(url, { method: 'GET' });
@@ -413,10 +412,6 @@ export class TempMailCClient implements IEmailClient {
     return { email, token: email };
   }
 
-  /**
-   * Usa o endpoint /api/v1/code que retorna diretamente o OTP mais recente.
-   * Faz polling a cada 4s até obter um código ou atingir o timeout.
-   */
   async waitForOTP(email: string, timeoutMs = 90000, cycle?: number): Promise<string> {
     const startTime = Date.now();
     const POLL_INTERVAL_MS = 4_000;
