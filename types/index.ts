@@ -19,7 +19,7 @@ export interface ProxyConfig {
   password?: string;
 }
 
-export type EmailProvider = 'temp-mail.io' | 'mail.tm';
+export type EmailProvider = 'temp-mail.io' | 'mail.tm' | 'tempmailc';
 
 export interface Config {
   cadastroUrl: string;
