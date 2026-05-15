@@ -180,7 +180,7 @@ async function dispensarCookies(p: Page): Promise<void> {
         await hoverElement(p, seletor);
         await el.click({ timeout: 2000 });
         globalState.addLog('info', `Banner de cookies dispensado (${seletor})`);
-        await humanPause(randInt(sp(100), sp(200)));
+        await humanPause(randInt(sp(80), sp(160)));
         return;
       }
     } catch { /* ignora */ }
@@ -436,13 +436,14 @@ async function selecionarCidade(p: Page, cidade: string, cycle: number): Promise
   }
 
   let itemSel: string | null = null;
-  const pollMs = isSpeedMode() ? 100 : 200;
+  // FIX D: polling reduzido de 150–350ms para 80–150ms
+  const pollMs = isSpeedMode() ? 80 : 150;
   const fimDropdown = Date.now() + 5_000;
   while (Date.now() < fimDropdown) {
     for (const sel of DROPDOWN_ITEM_SELS) {
       try {
         if (await p.locator(sel).count() > 0 &&
-            await p.locator(sel).first().isVisible({ timeout: 400 }).catch(() => false)) {
+            await p.locator(sel).first().isVisible({ timeout: 300 }).catch(() => false)) {
           itemSel = sel; break;
         }
       } catch { /* continua */ }
@@ -459,7 +460,7 @@ async function selecionarCidade(p: Page, cidade: string, cycle: number): Promise
     return;
   }
 
-  await humanPause(randInt(sp(100), sp(250)));
+  await humanPause(randInt(sp(80), sp(180)));
   const opcoes = p.locator(itemSel);
   const total = await opcoes.count();
   let clicou = false;
@@ -470,7 +471,7 @@ async function selecionarCidade(p: Page, cidade: string, cycle: number): Promise
       if (norm(texto).includes(nomeBuscaNorm)) {
         const box = await opcao.boundingBox().catch(() => null);
         if (box) await humanMouseMove(p, box.x + box.width * randFloat(0.25, 0.75), box.y + box.height * randFloat(0.25, 0.75));
-        await humanPause(randInt(sp(60), sp(130)));
+        await humanPause(randInt(sp(50), sp(110)));
         await opcao.click({ timeout: 4000 });
         clicou = true;
         log('info', `Cidade selecionada: "${texto.trim()}"`, cycle);
@@ -505,7 +506,7 @@ async function tratarTelaWhatsApp(p: Page, cycle: number): Promise<boolean> {
   if (!isWhatsApp) return false;
 
   log('info', 'Tela WhatsApp opt-in detectada — clicando NAO ATIVAR', cycle);
-  await cogPause(150, 350);
+  await cogPause(150, 300);
 
   const btn = p.locator('button', { hasText: /NÃO ATIVAR/i }).first();
   if (await btn.isVisible({ timeout: 1500 }).catch(() => false)) {
@@ -514,7 +515,7 @@ async function tratarTelaWhatsApp(p: Page, cycle: number): Promise<boolean> {
     await humanPause(randInt(sp(60), sp(130)));
     await btn.click({ timeout: 4000 });
     log('info', 'WhatsApp opt-in recusado', cycle);
-    await humanPause(randInt(sp(300), sp(500)));
+    await humanPause(randInt(sp(200), sp(400)));
     return true;
   }
 
@@ -522,7 +523,7 @@ async function tratarTelaWhatsApp(p: Page, cycle: number): Promise<boolean> {
   if (await nav.isVisible({ timeout: 1000 }).catch(() => false)) {
     await nav.click({ timeout: 4000 });
     log('info', 'WhatsApp opt-in recusado (fallback nav)', cycle);
-    await humanPause(randInt(sp(300), sp(500)));
+    await humanPause(randInt(sp(200), sp(400)));
     return true;
   }
 
@@ -537,16 +538,16 @@ async function tratarHubKYC(p: Page, cycle: number): Promise<boolean> {
   if (!isHub) return false;
 
   log('info', 'Hub KYC detectado — clicando em Foto do perfil', cycle);
-  await cogPause(200, 400);
+  await cogPause(150, 300);
 
   const fotoItem = p.locator('[data-testid="stepItem profilePhoto"]').first();
   if (await fotoItem.isVisible({ timeout: 3000 }).catch(() => false)) {
     const box = await fotoItem.boundingBox().catch(() => null);
     if (box) await humanMouseMove(p, box.x + box.width * randFloat(0.2, 0.8), box.y + box.height * randFloat(0.2, 0.8));
-    await humanPause(randInt(sp(100), sp(200)));
+    await humanPause(randInt(sp(80), sp(160)));
     await fotoItem.click({ force: true, timeout: 4000 });
     log('info', 'Navegando para etapa de foto do perfil', cycle);
-    await humanPause(randInt(sp(300), sp(600)));
+    await humanPause(randInt(sp(200), sp(500)));
     return true;
   }
 
@@ -562,16 +563,16 @@ async function tratarTelaFotoPerfil(p: Page, cycle: number): Promise<boolean> {
   if (!isFotoStep) return false;
 
   log('info', 'Tela de foto do perfil detectada — clicando Tirar foto', cycle);
-  await cogPause(200, 500);
+  await cogPause(150, 400);
 
   const btnFoto = p.locator('[data-testid="docUploadButton"]').first();
   if (await btnFoto.isVisible({ timeout: 3000 }).catch(() => false)) {
     const box = await btnFoto.boundingBox().catch(() => null);
     if (box) await humanMouseMove(p, box.x + box.width * randFloat(0.3, 0.7), box.y + box.height * randFloat(0.3, 0.7));
-    await humanPause(randInt(sp(100), sp(220)));
+    await humanPause(randInt(sp(80), sp(180)));
     await btnFoto.click({ force: true, timeout: 4000 });
     log('info', 'Botao "Tirar foto" clicado', cycle);
-    await humanPause(randInt(sp(300), sp(600)));
+    await humanPause(randInt(sp(200), sp(500)));
     return true;
   }
 
@@ -579,7 +580,7 @@ async function tratarTelaFotoPerfil(p: Page, cycle: number): Promise<boolean> {
   if (await btnTexto.isVisible({ timeout: 1000 }).catch(() => false)) {
     await btnTexto.click({ force: true, timeout: 4000 });
     log('info', 'Botao "Tirar foto" clicado (fallback texto)', cycle);
-    await humanPause(randInt(sp(300), sp(600)));
+    await humanPause(randInt(sp(200), sp(500)));
     return true;
   }
 
@@ -617,12 +618,12 @@ async function tratarTelaSenhaFluxo(
     .count().then((n) => n > 0).catch(() => false);
 
   log('info', 'Tela de senha do fluxo detectada (pos-email)', cycle);
-  await cogPause(200, 400);
+  await cogPause(150, 300);
 
   if (temUsernameAttached) {
     await forcarValorReact(p, '#username', email);
     log('info', '[senha-fluxo] Username hidden preenchido via React setter', cycle);
-    await humanPause(randInt(sp(60), sp(100)));
+    await humanPause(randInt(sp(50), sp(90)));
   }
 
   const senhaSels = [
@@ -645,14 +646,14 @@ async function tratarTelaSenhaFluxo(
       await humanPause(randInt(sp(40), sp(80)));
 
       await forcarValorReact(p, sel, senha);
-      await humanPause(randInt(sp(50), sp(100)));
+      await humanPause(randInt(sp(50), sp(90)));
       await humanTypeForce(p, sel, senha);
 
       const val = await p.locator(sel).inputValue().catch(() => '');
       if (val !== senha) {
         log('warn', '[senha-fluxo] Valor incorreto apos digitacao — re-forcando', cycle);
         await forcarValorReact(p, sel, senha);
-        await humanPause(randInt(sp(100), sp(200)));
+        await humanPause(randInt(sp(80), sp(160)));
       }
 
       const fwdBtn = p.locator('#forward-button, [data-testid="forward-button"]').first();
@@ -664,7 +665,7 @@ async function tratarTelaSenhaFluxo(
         await p.locator(sel).evaluate((el) => {
           el.dispatchEvent(new FocusEvent('blur', { bubbles: true }));
         }).catch(() => {});
-        await humanPause(randInt(sp(150), sp(300)));
+        await humanPause(randInt(sp(120), sp(240)));
       }
 
       log('info', `[senha-fluxo] Senha digitada (${sel})`, cycle);
@@ -672,10 +673,10 @@ async function tratarTelaSenhaFluxo(
     }
   }
 
-  await cogPause(200, 400);
+  await cogPause(150, 300);
   await clickForwardButton(p, cycle);
   log('info', '[senha-fluxo] Avancado apos senha', cycle);
-  await humanPause(randInt(sp(300), sp(600)));
+  await humanPause(randInt(sp(200), sp(500)));
   return true;
 }
 
@@ -694,6 +695,7 @@ async function tratarTelaReAuth(
 
   if (!temEmail || !temSenha) return false;
 
+  // FIX A: guard secundário — cidade visível → não é tela de re-auth
   const cidadeAindaVisivelReAuth = await p.locator(
     '[data-testid="flow-type-city-selector-v2-input"]'
   ).first().isVisible({ timeout: 300 }).catch(() => false);
@@ -703,7 +705,7 @@ async function tratarTelaReAuth(
   }
 
   log('info', 'Tela re-auth detectada (username + password visiveis)', cycle);
-  await cogPause(200, 400);
+  await cogPause(150, 300);
 
   const emailSel = '#username';
 
@@ -717,20 +719,20 @@ async function tratarTelaReAuth(
   await humanPause(randInt(sp(40), sp(80)));
 
   await forcarValorReact(p, emailSel, email);
-  await humanPause(randInt(sp(50), sp(100)));
+  await humanPause(randInt(sp(50), sp(90)));
   await humanTypeForce(p, emailSel, email);
 
   const emailVal = await p.locator(emailSel).inputValue().catch(() => '');
   if (emailVal !== email) {
     log('warn', '[re-auth] Email incorreto apos digitacao — re-forcando', cycle);
     await forcarValorReact(p, emailSel, email);
-    await humanPause(randInt(sp(100), sp(200)));
+    await humanPause(randInt(sp(80), sp(160)));
   }
 
   await p.locator(emailSel).evaluate((el) => {
     el.dispatchEvent(new FocusEvent('blur', { bubbles: true }));
   }).catch(() => {});
-  await humanPause(randInt(sp(100), sp(200)));
+  await humanPause(randInt(sp(80), sp(160)));
 
   const senhaSels = ['#PASSWORD', 'input[autocomplete="new-password"]', 'input[autocomplete="current-password"]', 'input[type="password"]'];
   let senhaSel = '';
@@ -747,18 +749,18 @@ async function tratarTelaReAuth(
       }).catch(() => {});
       await humanPause(randInt(sp(40), sp(80)));
       await forcarValorReact(p, sel, senha);
-      await humanPause(randInt(sp(50), sp(100)));
+      await humanPause(randInt(sp(50), sp(90)));
       await humanTypeForce(p, sel, senha);
       const senhaVal = await p.locator(sel).inputValue().catch(() => '');
       if (senhaVal !== senha) {
         log('warn', '[re-auth] Senha incorreta — re-forcando', cycle);
         await forcarValorReact(p, sel, senha);
-        await humanPause(randInt(sp(100), sp(200)));
+        await humanPause(randInt(sp(80), sp(160)));
       }
       await p.locator(sel).evaluate((el) => {
         el.dispatchEvent(new FocusEvent('blur', { bubbles: true }));
       }).catch(() => {});
-      await humanPause(randInt(sp(100), sp(200)));
+      await humanPause(randInt(sp(80), sp(160)));
       log('info', `[re-auth] Senha digitada (${sel})`, cycle);
       break;
     }
@@ -779,12 +781,12 @@ async function tratarTelaReAuth(
         el.dispatchEvent(new FocusEvent('blur', { bubbles: true }));
       }).catch(() => {});
     }
-    await humanPause(randInt(sp(200), sp(400)));
+    await humanPause(randInt(sp(150), sp(300)));
   }
 
   if (!habilitado) log('warn', '[re-auth] forward-button nunca habilitou — tentando clicar mesmo assim', cycle);
 
-  await cogPause(150, 300);
+  await cogPause(120, 250);
 
   const submitSels = [
     '#forward-button', '[data-testid="forward-button"]',
@@ -797,10 +799,10 @@ async function tratarTelaReAuth(
     if (await el.isVisible({ timeout: 1000 }).catch(() => false)) {
       const box = await el.boundingBox().catch(() => null);
       if (box) await humanMouseMove(p, box.x + box.width * randFloat(0.3, 0.7), box.y + box.height * randFloat(0.3, 0.7));
-      await humanPause(randInt(sp(80), sp(180)));
+      await humanPause(randInt(sp(60), sp(140)));
       await el.click({ force: true, timeout: 4000 });
       log('info', `[re-auth] Botao submit clicado (${sel})`, cycle);
-      await humanPause(randInt(sp(500), sp(900)));
+      await humanPause(randInt(sp(400), sp(700)));
       return true;
     }
   }
@@ -922,7 +924,7 @@ async function etapa_digitarEmailOuTelefone(p: Page, email: string, cycle: numbe
       if (val !== email) {
         log('warn', `Valor pos-digitacao "${val}" != email esperado — forcando via React setter`, cycle);
         await forcarValorReact(p, SEL, email);
-        await humanPause(randInt(sp(100), sp(200)));
+        await humanPause(randInt(sp(80), sp(160)));
       }
       const finalVal = await p.locator(SEL).inputValue().catch(() => '');
       log('info', `Email digitado — valor final: "${finalVal}"`, cycle);
@@ -955,13 +957,13 @@ async function etapa_digitarSenha(p: Page, senha: string, cycle: number): Promis
       }).catch(() => {});
       await humanPause(randInt(sp(40), sp(80)));
       await forcarValorReact(p, SEL, senha);
-      await humanPause(randInt(sp(50), sp(100)));
+      await humanPause(randInt(sp(50), sp(90)));
       await humanTypeForce(p, SEL, senha);
       const val = await p.locator(SEL).inputValue().catch(() => '');
       if (val !== senha) {
         log('warn', 'Valor pos-digitacao da senha incorreto — forcando', cycle);
         await forcarValorReact(p, SEL, senha);
-        await humanPause(randInt(sp(100), sp(200)));
+        await humanPause(randInt(sp(80), sp(160)));
       }
       const fwdBtn = p.locator('#forward-button, [data-testid="forward-button"]').first();
       const habilitado = await fwdBtn.waitFor({ state: 'visible', timeout: 1500 })
@@ -971,7 +973,7 @@ async function etapa_digitarSenha(p: Page, senha: string, cycle: number): Promis
         await p.locator(SEL).evaluate((el) => {
           el.dispatchEvent(new FocusEvent('blur', { bubbles: true }));
         }).catch(() => {});
-        await humanPause(randInt(sp(150), sp(250)));
+        await humanPause(randInt(sp(120), sp(200)));
       }
       log('info', 'Senha digitada', cycle);
       return;
@@ -1003,7 +1005,7 @@ async function etapa_digitarOTP(p: Page, otp: string, cycle: number): Promise<vo
       await focusField(p, `#EMAIL_OTP_CODE-${i}`);
       await humanPause(randInt(sp(40), sp(80)));
       await _typeChar(p, otp[i]!, isSpeedMode());
-      await humanPause(randInt(sp(50), sp(100)));
+      await humanPause(randInt(sp(40), sp(80)));
     }
     log('info', 'OTP digitado (EMAIL_OTP_CODE-N)', cycle);
     return;
@@ -1019,7 +1021,7 @@ async function etapa_digitarOTP(p: Page, otp: string, cycle: number): Promise<vo
       await focusField(p, `input[autocomplete="one-time-code"]:nth-of-type(${i + 1})`);
       await humanPause(randInt(sp(40), sp(80)));
       await _typeChar(p, otp[i]!, isSpeedMode());
-      await humanPause(randInt(sp(50), sp(100)));
+      await humanPause(randInt(sp(40), sp(80)));
     }
     log('info', 'OTP digitado (one-time-code multi)', cycle);
     return;
@@ -1031,7 +1033,7 @@ async function etapa_digitarOTP(p: Page, otp: string, cycle: number): Promise<vo
   if (await campoUnico.isVisible({ timeout: 3000 }).catch(() => false)) {
     log('info', 'OTP em campo unico', cycle);
     await focusField(p, 'input[autocomplete="one-time-code"]');
-    await humanPause(randInt(sp(60), sp(120)));
+    await humanPause(randInt(sp(50), sp(100)));
     for (const ch of otp) {
       await _typeChar(p, ch, isSpeedMode());
       await humanPause(randInt(sp(40), sp(80)));
@@ -1053,21 +1055,21 @@ async function processarTelaOnboarding(
   state: { otpDigitado: boolean; senhaDigitada: boolean; cidadePreenchida: boolean }
 ): Promise<'continua' | 'sucesso' | 'kyc' | 'erro'> {
 
-  // FIX A: verificar cidade ANTES de senha
+  // FIX A: verificar cidade ANTES de qualquer lógica de senha
   const cidadeInputVisivel = await p.locator(
     '[data-testid="flow-type-city-selector-v2-input"]'
   ).first().isVisible({ timeout: 500 }).catch(() => false);
 
   if (cidadeInputVisivel && !state.cidadePreenchida) {
     log('info', 'Tela de localizacao detectada', cycle);
-    await cogPause(200, 400);
-    await selecionarCidade(p, payload.cidade, cycle);
-    await humanPause(randInt(sp(200), sp(400)));
-    await preencherInviteCode(p, (payload as any).inviteCode ?? '', cycle);
     await cogPause(150, 300);
+    await selecionarCidade(p, payload.cidade, cycle);
+    await humanPause(randInt(sp(150), sp(300)));
+    await preencherInviteCode(p, (payload as any).inviteCode ?? '', cycle);
+    await cogPause(120, 250);
     await clickForwardButton(p, cycle);
     state.cidadePreenchida = true;
-    await humanPause(randInt(sp(300), sp(600)));
+    await humanPause(randInt(sp(200), sp(500)));
     return 'continua';
   }
 
@@ -1079,9 +1081,9 @@ async function processarTelaOnboarding(
 
   const aceitou = await tentarAceitarTermos(p, cycle);
   if (aceitou) {
-    await cogPause(150, 300);
+    await cogPause(120, 250);
     await clickForwardButton(p, cycle);
-    await humanPause(randInt(sp(300), sp(600)));
+    await humanPause(randInt(sp(200), sp(500)));
     return 'continua';
   }
 
@@ -1093,9 +1095,9 @@ async function processarTelaOnboarding(
     const otp = await etapa_aguardarOTP(p, emailClient, payload.email, cycle);
     await etapa_digitarOTP(p, otp, cycle);
     state.otpDigitado = true;
-    await cogPause(150, 300);
+    await cogPause(120, 250);
     await clickForwardButton(p, cycle);
-    await humanPause(randInt(sp(400), sp(700)));
+    await humanPause(randInt(sp(300), sp(600)));
     return 'continua';
   }
 
@@ -1114,9 +1116,9 @@ async function processarTelaOnboarding(
 
   if (temEmailField) {
     await etapa_digitarEmailOuTelefone(p, payload.email, cycle);
-    await cogPause(150, 300);
+    await cogPause(120, 250);
     await clickForwardButton(p, cycle);
-    await humanPause(randInt(sp(300), sp(600)));
+    await humanPause(randInt(sp(200), sp(500)));
     return 'continua';
   }
 
@@ -1127,18 +1129,18 @@ async function processarTelaOnboarding(
   if (temSenhaField && !state.senhaDigitada) {
     await etapa_digitarSenha(p, payload.senha, cycle);
     state.senhaDigitada = true;
-    await cogPause(150, 300);
+    await cogPause(120, 250);
     await clickForwardButton(p, cycle);
-    await humanPause(randInt(sp(300), sp(600)));
+    await humanPause(randInt(sp(200), sp(500)));
     return 'continua';
   }
 
   const fwdVisible = await p.locator('#forward-button, [data-testid="forward-button"]')
     .first().isVisible({ timeout: 800 }).catch(() => false);
   if (fwdVisible) {
-    await cogPause(100, 250);
+    await cogPause(80, 200);
     await clickForwardButton(p, cycle);
-    await humanPause(randInt(sp(300), sp(500)));
+    await humanPause(randInt(sp(200), sp(400)));
     return 'continua';
   }
 
@@ -1169,7 +1171,7 @@ async function etapa_preencherNome(
     }
   }
 
-  await humanPause(randInt(sp(80), sp(160)));
+  await humanPause(randInt(sp(60), sp(120)));
 
   for (const sel of lastSels) {
     if (await p.locator(sel).first().isVisible({ timeout: 2000 }).catch(() => false)) {
@@ -1246,7 +1248,8 @@ export async function runCycle(config: RunCycleConfig, cycle: number): Promise<v
   const state = globalState.getState();
   (state.config as any) = { ...state.config, speedMode: config.speedMode ?? false };
 
-  const CYCLE_TIMEOUT_MS = 95_000;
+  // FIX D: timeout total do ciclo reduzido para 90s
+  const CYCLE_TIMEOUT_MS = 90_000;
 
   const cycleTimer = setTimeout(() => {
     log('warn', `Ciclo #${cycle} excedeu ${CYCLE_TIMEOUT_MS / 1000}s — abortando`, cycle);
@@ -1258,6 +1261,7 @@ export async function runCycle(config: RunCycleConfig, cycle: number): Promise<v
     const ctx = await criarContextoCiclo(cycle);
     const p = await ctx.newPage();
 
+    // FIX D: timeouts do Playwright reduzidos
     p.setDefaultTimeout(20_000);
     p.setDefaultNavigationTimeout(20_000);
 
@@ -1275,7 +1279,7 @@ export async function runCycle(config: RunCycleConfig, cycle: number): Promise<v
       await pageWarmup(p);
       log('info', `Navegando para: ${config.urlCadastro}`, cycle);
       await p.goto(config.urlCadastro, { waitUntil: 'domcontentloaded', timeout: 20_000 });
-      await humanPause(randInt(sp(300), sp(600)));
+      await humanPause(randInt(sp(200), sp(400)));
 
       await dispensarCookies(p);
       await scrollIdle(p);
@@ -1284,7 +1288,7 @@ export async function runCycle(config: RunCycleConfig, cycle: number): Promise<v
         .first().isVisible({ timeout: 2000 }).catch(() => false);
       if (temNomeInicial) {
         await etapa_preencherNome(p, payload.nome, payload.sobrenome, cycle);
-        await humanPause(randInt(sp(80), sp(160)));
+        await humanPause(randInt(sp(60), sp(120)));
       }
 
       const flowState = { otpDigitado: false, senhaDigitada: false, cidadePreenchida: false };
@@ -1300,7 +1304,7 @@ export async function runCycle(config: RunCycleConfig, cycle: number): Promise<v
         if (resultado === 'sucesso') {
           log('success', `Conta criada com sucesso: ${payload.email}`, cycle);
 
-          // FIX B: cookies é Cookie[] — JSON.stringify antes de salvar no store
+          // FIX B: Account.cookies é Cookie[] — passar o array bruto (não stringify)
           const cookies: Cookie[] = await ctx.cookies();
           const tmScript = gerarTampermonkeyScript(cookies, payload.email);
 
@@ -1311,36 +1315,36 @@ export async function runCycle(config: RunCycleConfig, cycle: number): Promise<v
             password: payload.senha,
             name: `${payload.nome} ${payload.sobrenome}`,
             city: payload.cidade,
-            cookies: JSON.stringify(cookies),   // string ✓
+            cookies: cookies,          // Cookie[] ✓ — accountStore aceita Cookie[]
             tampermonkeyScript: tmScript,
             cycleNumber: cycle,
           });
 
-          // FIX C: usar globalState.incrementSuccess() em vez de .successCount
-          globalState.incrementSuccess();
+          // FIX C: usar incrementSuccess() em vez de acessar successCount diretamente
+          globalState.incrementSuccess(cycle);
           break;
         }
 
         if (resultado === 'kyc') {
           log('warn', `KYC detectado no ciclo #${cycle}`, cycle);
-          // FIX C: usar incrementFailure() — kycCount não existe em AppState
-          globalState.incrementFailure();
+          // FIX C: usar incrementFailure() em vez de kycCount / errorCount
+          globalState.incrementFailure('KYC detectado', cycle);
           break;
         }
 
         if (resultado === 'erro') {
           log('error', `Erro fatal no ciclo #${cycle}`, cycle);
-          // FIX C: usar incrementFailure() — errorCount não existe em AppState
-          globalState.incrementFailure();
+          // FIX C: usar incrementFailure() em vez de errorCount
+          globalState.incrementFailure('erro fatal', cycle);
           break;
         }
 
-        await humanPause(randInt(sp(150), sp(300)));
+        await humanPause(randInt(sp(120), sp(250)));
       }
 
       if (iteracoes >= MAX_ITER) {
         log('warn', `Ciclo #${cycle} atingiu limite de ${MAX_ITER} iteracoes`, cycle);
-        globalState.incrementFailure();
+        globalState.incrementFailure('max iteracoes atingido', cycle);
       }
 
     } finally {
@@ -1349,7 +1353,7 @@ export async function runCycle(config: RunCycleConfig, cycle: number): Promise<v
 
   } catch (err: any) {
     log('error', `Ciclo #${cycle} falhou: ${err?.message ?? String(err)}`, cycle);
-    globalState.incrementFailure();
+    globalState.incrementFailure(err?.message ?? 'erro desconhecido', cycle);
   } finally {
     clearTimeout(cycleTimer);
   }
