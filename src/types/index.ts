@@ -25,6 +25,12 @@ export interface Config {
   cadastroUrl: string;
   tempMailApiKey: string;
   emailProvider: EmailProvider;
+  /**
+   * Domínio a usar com o provider tempmailc.
+   * Ex: "kaamoolzy.it.com"
+   * Se não informado, o client tenta buscar via /api/v1/domains.
+   */
+  tempmailcDomain?: string;
   inviteCode: string;
   otpTimeout: number;
   cycleInterval: number;

@@ -372,21 +372,31 @@ export class MailTmClient implements IEmailClient {
 
 // ────────────────────────────────────────────────────────────────────────────────
 // TempMailCClient  (tempmailc.com)
-// Base URL: https://tempmailc.com  (sem subdomínio api.)
+// Base URL: https://tempmailc.com
 // Autenticação: query param ?code=<apiCode>
+// O domínio é fornecido via config (tempmailcDomain) para garantir que só
+// domínios autorizados pela conta sejam usados. Caso não configurado, o client
+// faz fallback para /api/v1/domains.
 // ────────────────────────────────────────────────────────────────────────────────
 
 export class TempMailCClient implements IEmailClient {
   private readonly baseUrl = 'https://tempmailc.com';
   private readonly apiCode: string;
-  private domain: string | null = null;
-  private currentEmail: string | null = null;
+  /** Domínio fixo passado pelo usuário via config.tempmailcDomain */
+  private readonly fixedDomain: string | undefined;
 
-  constructor(apiCode: string) {
+  constructor(apiCode: string, fixedDomain?: string) {
     this.apiCode = apiCode;
+    this.fixedDomain = fixedDomain;
   }
 
-  private async fetchDomain(): Promise<string> {
+  /** Obtém domínio: usa o fixo se disponível, senão chama /api/v1/domains */
+  private async resolveDomain(): Promise<string> {
+    if (this.fixedDomain) {
+      globalState.addLog('info', `📧 [tempmailc] Usando domínio configurado: ${this.fixedDomain}`);
+      return this.fixedDomain;
+    }
+    globalState.addLog('info', '📧 [tempmailc] Buscando domínios via API...');
     const url = `${this.baseUrl}/api/v1/domains?code=${encodeURIComponent(this.apiCode)}`;
     const res = await safeFetch(url, { method: 'GET' });
     if (!res) throw new Error('[tempmailc] fetchDomain: erro de rede/timeout');
@@ -400,14 +410,9 @@ export class TempMailCClient implements IEmailClient {
   }
 
   async createRandomEmail(): Promise<EmailAccount> {
-    globalState.addLog('info', '📧 [tempmailc] Obtendo domínio...');
-    const domain = await withRetry('tempmailc fetchDomain', () => this.fetchDomain());
-    this.domain = domain;
-
+    const domain = await withRetry('tempmailc resolveDomain', () => this.resolveDomain());
     const localPart = 'user' + Math.random().toString(36).slice(2, 10);
     const email = `${localPart}@${domain}`;
-    this.currentEmail = email;
-
     globalState.addLog('info', `✅ [tempmailc] Email gerado: ${email}`);
     return { email, token: email };
   }
@@ -470,12 +475,13 @@ export class TempMailCClient implements IEmailClient {
 
 export function createEmailClient(
   provider: 'temp-mail.io' | 'mail.tm' | 'tempmailc',
-  apiKey?: string
+  apiKey?: string,
+  tempmailcDomain?: string
 ): IEmailClient {
   if (provider === 'mail.tm') return new MailTmClient();
   if (provider === 'tempmailc') {
     if (!apiKey) throw new Error('tempmailc requer um API code (apiKey)');
-    return new TempMailCClient(apiKey);
+    return new TempMailCClient(apiKey, tempmailcDomain);
   }
   if (!apiKey) throw new Error('temp-mail.io requer uma API key');
   return new TempMailClient(apiKey);
