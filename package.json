@@ -1,0 +1,34 @@
+{
+  "name": "mvp-local-automation",
+  "version": "1.0.0",
+  "description": "MVP local para automação com Playwright e Temp-Mail",
+  "main": "dist/server/index.js",
+  "scripts": {
+    "dev": "concurrently \"npm run build:watch\" \"nodemon dist/server/index.js\"",
+    "build": "tsc && shx cp -r src/frontend/. dist/frontend/",
+    "build:watch": "tsc -w",
+    "serve": "node dist/server/index.js",
+    "start": "npm run build && npm run serve",
+    "playwright:install": "npx playwright install chromium",
+    "clean": "shx rm -rf dist"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.11.19",
+    "@types/node-fetch": "^2.6.11",
+    "concurrently": "^8.2.2",
+    "nodemon": "^3.0.3",
+    "shx": "^0.3.4",
+    "typescript": "^5.3.3"
+  },
+  "dependencies": {
+    "@playwright/test": "^1.41.0",
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "node-fetch": "^2.7.0",
+    "playwright": "^1.41.0",
+    "playwright-extra": "^4.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2"
+  }
+}
