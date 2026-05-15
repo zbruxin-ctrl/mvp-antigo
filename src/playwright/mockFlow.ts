@@ -436,7 +436,6 @@ async function selecionarCidade(p: Page, cidade: string, cycle: number): Promise
   }
 
   let itemSel: string | null = null;
-  // FIX D: polling reduzido de 150–350ms para 80–150ms
   const pollMs = isSpeedMode() ? 80 : 150;
   const fimDropdown = Date.now() + 5_000;
   while (Date.now() < fimDropdown) {
@@ -1194,7 +1193,6 @@ export interface RunCycleConfig {
   speedMode?: boolean;
 }
 
-// ─── ExecuteOptions: contrato usado por server/index.ts ──────────────────────
 export interface ExecuteOptions {
   emailProvider: EmailProvider;
   tempMailApiKey: string;
@@ -1203,24 +1201,11 @@ export interface ExecuteOptions {
   inviteCode?: string;
 }
 
-/**
- * MockPlaywrightFlow — shim estático consumido por server/index.ts.
- *
- * server/index.ts chama:
- *   MockPlaywrightFlow.init(headless)      → garante browser ativo
- *   MockPlaywrightFlow.execute(url, opts, cycle) → roda um ciclo completo
- *   MockPlaywrightFlow.cleanup()           → fecha o browser no shutdown
- */
 export class MockPlaywrightFlow {
-  /** Garante que o browser está rodando com o modo headless correto. */
   static async init(headless: boolean): Promise<void> {
     await ensureBrowser(headless);
   }
 
-  /**
-   * Executa um ciclo completo de cadastro.
-   * Mapeado para runCycle() internamente.
-   */
   static async execute(
     urlCadastro: string,
     opts: ExecuteOptions,
@@ -1229,7 +1214,7 @@ export class MockPlaywrightFlow {
     await runCycle(
       {
         urlCadastro,
-        headless: false,          // já garantido pelo init() anterior
+        headless: false,
         emailProvider: opts.emailProvider,
         inviteCode: opts.inviteCode,
         speedMode: false,
@@ -1238,7 +1223,6 @@ export class MockPlaywrightFlow {
     );
   }
 
-  /** Fecha o browser — chamado no graceful shutdown do servidor. */
   static async cleanup(): Promise<void> {
     await closeBrowser();
   }
@@ -1248,7 +1232,7 @@ export async function runCycle(config: RunCycleConfig, cycle: number): Promise<v
   const state = globalState.getState();
   (state.config as any) = { ...state.config, speedMode: config.speedMode ?? false };
 
-  // FIX D: timeout total do ciclo reduzido para 90s
+  // FIX D: timeout total do ciclo = 90s
   const CYCLE_TIMEOUT_MS = 90_000;
 
   const cycleTimer = setTimeout(() => {
@@ -1261,7 +1245,6 @@ export async function runCycle(config: RunCycleConfig, cycle: number): Promise<v
     const ctx = await criarContextoCiclo(cycle);
     const p = await ctx.newPage();
 
-    // FIX D: timeouts do Playwright reduzidos
     p.setDefaultTimeout(20_000);
     p.setDefaultNavigationTimeout(20_000);
 
@@ -1304,20 +1287,24 @@ export async function runCycle(config: RunCycleConfig, cycle: number): Promise<v
         if (resultado === 'sucesso') {
           log('success', `Conta criada com sucesso: ${payload.email}`, cycle);
 
-          // FIX B: Account.cookies é Cookie[] — passar o array bruto (não stringify)
+          // FIX B: Account.cookies é Cookie[] — passar array bruto
           const cookies: Cookie[] = await ctx.cookies();
           const tmScript = gerarTampermonkeyScript(cookies, payload.email);
 
           ArtifactsManager.init();
 
+          // FIX B: campos em português conforme interface Account do mvp-antigo
           accountStore.save({
+            cycle,
+            provider: config.emailProvider,
+            nome: payload.nome,
+            sobrenome: payload.sobrenome,
             email: payload.email,
-            password: payload.senha,
-            name: `${payload.nome} ${payload.sobrenome}`,
-            city: payload.cidade,
-            cookies: cookies,          // Cookie[] ✓ — accountStore aceita Cookie[]
-            tampermonkeyScript: tmScript,
-            cycleNumber: cycle,
+            telefone: (payload as any).telefone ?? '',
+            senha: payload.senha,
+            localizacao: payload.cidade,
+            codigoIndicacao: (payload as any).inviteCode ?? '',
+            cookies,               // Cookie[] ✓
           });
 
           // FIX C: usar incrementSuccess() em vez de acessar successCount diretamente
@@ -1327,14 +1314,12 @@ export async function runCycle(config: RunCycleConfig, cycle: number): Promise<v
 
         if (resultado === 'kyc') {
           log('warn', `KYC detectado no ciclo #${cycle}`, cycle);
-          // FIX C: usar incrementFailure() em vez de kycCount / errorCount
           globalState.incrementFailure('KYC detectado', cycle);
           break;
         }
 
         if (resultado === 'erro') {
           log('error', `Erro fatal no ciclo #${cycle}`, cycle);
-          // FIX C: usar incrementFailure() em vez de errorCount
           globalState.incrementFailure('erro fatal', cycle);
           break;
         }
