@@ -1,27 +1,39 @@
 import express, { Request, Response, NextFunction } from 'express';
 import path from 'path';
-import { globalState } from '../state/globalState';
+import { globalState, parseProxyString } from '../state/globalState';
 import { MockPlaywrightFlow } from '../playwright/mockFlow';
+import { diagnoseUberForm } from '../playwright/diagnose';
 import * as accountStore from '../store/accountStore';
 import { Config } from '../types';
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = 3000;
 
 const ADMIN_PASSWORD = 'connect@10';
+const CADASTRO_URL = 'https://driver.uber.com/start-driving';
 
 app.use(express.json());
-app.use(express.static(path.join(__dirname, '../../src/frontend')));
+
+// ── CORS ──────────────────────────────────────────────────────
+app.use((req: Request, res: Response, next: NextFunction) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-admin-password');
+  if (req.method === 'OPTIONS') { res.sendStatus(204); return; }
+  next();
+});
+
+const FRONTEND_DIR = path.resolve(__dirname, '../frontend');
+app.use(express.static(FRONTEND_DIR));
 
 globalState.setExecutor(async (config, cycle) => {
   await MockPlaywrightFlow.init(config.headless);
   await MockPlaywrightFlow.execute(
-    config.cadastroUrl,
+    CADASTRO_URL,
     {
-      emailProvider:   config.emailProvider   ?? 'temp-mail.io',
-      tempMailApiKey:  config.tempMailApiKey  ?? '',
-      tempmailcDomain: config.tempmailcDomain,
-      otpTimeout:      config.otpTimeout,
+      emailProvider:  config.emailProvider  ?? 'tempmailc',
+      tempMailApiKey: config.tempMailApiKey ?? '',
+      otpTimeout:     config.otpTimeout,
       extraDelay:     config.extraDelay,
       inviteCode:     config.inviteCode,
     },
@@ -38,13 +50,40 @@ function requireAuth(req: Request, res: Response, next: NextFunction): void {
   next();
 }
 
-const VALID_EMAIL_PROVIDERS = ['temp-mail.io', 'mail.tm', 'tempmailc'] as const;
+const VALID_EMAIL_PROVIDERS = ['tempmailc', 'temp-mail.io', 'mail.tm'];
 
-function validateConfig(body: Partial<Config>): { ok: true; data: Partial<Config> } | { ok: false; error: string } {
+function validateConfig(body: Partial<Config> & { proxyServer?: string; proxyUser?: string; proxyPass?: string }): { ok: true; data: Partial<Config> } | { ok: false; error: string } {
   const errors: string[] = [];
 
+  if (body.proxyServer !== undefined || body.proxyUser !== undefined || body.proxyPass !== undefined) {
+    const server   = (body.proxyServer ?? '').trim();
+    const username = (body.proxyUser   ?? '').trim() || undefined;
+    const password = (body.proxyPass   ?? '').trim() || undefined;
+
+    if (server) {
+      const parsed = parseProxyString(server);
+      if (parsed) {
+        body.proxies = [{
+          server:   parsed.server,
+          username: username ?? parsed.username,
+          password: password ?? parsed.password,
+        }];
+      } else {
+        body.proxies = [{ server, username, password }];
+      }
+    } else {
+      body.proxies = [];
+    }
+
+    delete (body as any).proxyServer;
+    delete (body as any).proxyUser;
+    delete (body as any).proxyPass;
+  }
+
+  delete (body as any).cadastroUrl;
+
   if ('emailProvider' in body) {
-    if (!VALID_EMAIL_PROVIDERS.includes(body.emailProvider as any)) {
+    if (!VALID_EMAIL_PROVIDERS.includes(body.emailProvider as string)) {
       errors.push(`emailProvider deve ser um de: ${VALID_EMAIL_PROVIDERS.join(', ')}`);
     }
   }
@@ -71,9 +110,6 @@ function validateConfig(body: Partial<Config>): { ok: true; data: Partial<Config
   if ('headless' in body && typeof body.headless !== 'boolean') {
     body.headless = body.headless === 'true' || (body.headless as unknown) === true;
   }
-  if ('cadastroUrl' in body && body.cadastroUrl && typeof body.cadastroUrl !== 'string') {
-    errors.push('cadastroUrl deve ser string');
-  }
   if ('proxies' in body && body.proxies !== undefined && !Array.isArray(body.proxies)) {
     errors.push('proxies deve ser array');
   }
@@ -85,12 +121,29 @@ function validateConfig(body: Partial<Config>): { ok: true; data: Partial<Config
 app.get('/api/status',   (_req, res) => { res.json(globalState.getState()); });
 app.get('/api/logs',     (_req, res) => { res.json(globalState.getLogs()); });
 app.get('/api/kyc',      (_req, res) => { res.json(globalState.getKycState()); });
+app.get('/api/config',   requireAuth, (_req, res) => { res.json(globalState.getState().config); });
 app.get('/api/accounts', requireAuth, (_req, res) => {
   res.json({ accounts: accountStore.list() });
 });
 
-app.post('/api/logs/clear', requireAuth, (_req, res) => {
+// ── Diagnóstico de seletores ─────────────────────────────
+app.post('/api/diagnose', requireAuth, async (req: Request, res: Response) => {
+  const url: string = req.body?.url ?? CADASTRO_URL;
+  try {
+    const result = await diagnoseUberForm(url);
+    res.json({ ok: true, ...result });
+  } catch (err: any) {
+    res.status(500).json({ ok: false, error: err?.message ?? String(err) });
+  }
+});
+
+// ── Limpar logs e KYC ────────────────────────────────────
+app.delete('/api/logs', requireAuth, (_req, res) => {
   globalState.clearLogs();
+  res.json({ ok: true });
+});
+app.delete('/api/kyc', requireAuth, (_req, res) => {
+  globalState.clearKycState();
   res.json({ ok: true });
 });
 
@@ -121,13 +174,18 @@ app.post('/api/start-once', requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
-app.post('/api/stop', requireAuth, (_req, res) => {
-  globalState.stop();
+app.post('/api/run-once', requireAuth, (req, res) => {
+  if (req.body?.config) {
+    const result = validateConfig(req.body.config);
+    if (!result.ok) { res.status(400).json({ ok: false, error: result.error }); return; }
+    globalState.updateConfig(result.data);
+  }
+  globalState.startOnce();
   res.json({ ok: true });
 });
 
-app.post('/api/kyc/clear', requireAuth, (_req, res) => {
-  globalState.clearKycState();
+app.post('/api/stop', requireAuth, (_req, res) => {
+  globalState.stop();
   res.json({ ok: true });
 });
 
@@ -136,8 +194,15 @@ app.delete('/api/accounts/:id', requireAuth, (req, res) => {
   res.json({ ok: removed });
 });
 
+app.get('*', (_req, res) => {
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.sendFile(path.join(FRONTEND_DIR, 'index.html'));
+});
+
 app.listen(PORT, () => {
-  console.log(`🚀 Server rodando em http://localhost:${PORT}`);
+  console.log(`\n🚀 Servidor rodando em http://localhost:${PORT}`);
+  console.log(`🔑 Senha do painel: connect@10\n`);
+  console.log(`📁 Frontend dir: ${FRONTEND_DIR}`);
 });
 
 async function gracefulShutdown(signal: string) {
