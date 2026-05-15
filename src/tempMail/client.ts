@@ -372,41 +372,45 @@ export class MailTmClient implements IEmailClient {
 
 // ────────────────────────────────────────────────────────────────────────────────
 // TempMailCClient  (tempmailc.com)
-// Base URL: https://tempmailc.com
-// Autenticação: query param ?code=<apiCode>
-// O domínio é fornecido via config (tempmailcDomain) para garantir que só
-// domínios autorizados pela conta sejam usados. Caso não configurado, o client
-// faz fallback para /api/v1/domains.
 // ────────────────────────────────────────────────────────────────────────────────
 
 export class TempMailCClient implements IEmailClient {
   private readonly baseUrl = 'https://tempmailc.com';
   private readonly apiCode: string;
-  /** Domínio fixo passado pelo usuário via config.tempmailcDomain */
   private readonly fixedDomain: string | undefined;
+  /** Cache do domínio resolvido — evita chamada extra por ciclo */
+  private cachedDomain: string | null = null;
 
   constructor(apiCode: string, fixedDomain?: string) {
     this.apiCode = apiCode;
     this.fixedDomain = fixedDomain;
   }
 
-  /** Obtém domínio: usa o fixo se disponível, senão chama /api/v1/domains */
+  /**
+   * Resolve o domínio a usar.
+   * Prioridade: 1) fixedDomain (config) 2) cachedDomain 3) busca /api/v1/domains
+   * O primeiro domínio retornado pela API é sempre o principal da conta.
+   */
   private async resolveDomain(): Promise<string> {
-    if (this.fixedDomain) {
-      globalState.addLog('info', `📧 [tempmailc] Usando domínio configurado: ${this.fixedDomain}`);
-      return this.fixedDomain;
-    }
-    globalState.addLog('info', '📧 [tempmailc] Buscando domínios via API...');
+    if (this.fixedDomain) return this.fixedDomain;
+    if (this.cachedDomain) return this.cachedDomain;
+
+    globalState.addLog('info', '📧 [tempmailc] Buscando domínios autorizados via API...');
     const url = `${this.baseUrl}/api/v1/domains?code=${encodeURIComponent(this.apiCode)}`;
     const res = await safeFetch(url, { method: 'GET' });
-    if (!res) throw new Error('[tempmailc] fetchDomain: erro de rede/timeout');
+    if (!res) throw new Error('[tempmailc] fetchDomains: erro de rede/timeout');
     if (!res.ok) {
       const text = await res.text().catch(() => String(res.status));
-      throw new Error(`[tempmailc] fetchDomain ${res.status}: ${text}`);
+      throw new Error(`[tempmailc] fetchDomains ${res.status}: ${text}`);
     }
     const body = JSON.parse(await res.text()) as { ok: boolean; domains: string[] };
-    if (!body.ok || !body.domains?.length) throw new Error('[tempmailc] Nenhum domínio disponível');
-    return body.domains[Math.floor(Math.random() * body.domains.length)];
+    if (!body.ok || !body.domains?.length) throw new Error('[tempmailc] Nenhum domínio disponível na conta');
+
+    // Usa sempre o primeiro — é o domínio principal da conta
+    this.cachedDomain = body.domains[0];
+    globalState.addLog('info', `📧 [tempmailc] Domínios disponíveis: ${body.domains.join(', ')}`);
+    globalState.addLog('info', `📧 [tempmailc] Usando domínio: ${this.cachedDomain}`);
+    return this.cachedDomain;
   }
 
   async createRandomEmail(): Promise<EmailAccount> {
