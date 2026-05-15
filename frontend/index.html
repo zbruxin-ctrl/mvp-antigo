@@ -131,18 +131,17 @@
       <div class="provider-card">
         <div class="provider-header">
           <span class="provider-name">📧 Serviço de Email Temporário</span>
-          <!-- badge inicia como Gratuito pois mail.tm é o padrão -->
           <span id="providerBadge" class="provider-badge badge-free">Gratuito</span>
         </div>
         <label for="emailProvider" style="margin-bottom:4px">Provedor</label>
         <select id="emailProvider" onchange="onProviderChange()">
-          <!-- mail.tm como padrão (primeiro = selecionado) -->
           <option value="mail.tm">mail.tm (gratuito, sem API key)</option>
           <option value="temp-mail.io">temp-mail.io (requer API key)</option>
+          <option value="tempmailc">tempmailc (requer API code)</option>
         </select>
         <div id="apiKeyWrapper" style="display:none">
-          <label for="tempMailApiKey">API Key</label>
-          <input id="tempMailApiKey" type="password" placeholder="sua-api-key" value="amr6V6AnadfeRcdMiwaO" />
+          <label for="tempMailApiKey" id="apiKeyLabel">API Key</label>
+          <input id="tempMailApiKey" type="password" placeholder="sua-api-key" />
         </div>
         <p id="providerHint" class="provider-hint">mail.tm: completamente gratuito, sem API key. Cria conta automática a cada ciclo.</p>
       </div>
@@ -269,7 +268,8 @@
 
     var PROVIDER_HINTS = {
       'temp-mail.io': 'temp-mail.io: requer conta paga. Cada poll consome 1 crédito.',
-      'mail.tm': 'mail.tm: completamente gratuito, sem API key. Cria conta automática a cada ciclo.',
+      'mail.tm':      'mail.tm: completamente gratuito, sem API key. Cria conta automática a cada ciclo.',
+      'tempmailc':    'tempmailc: requer API code. Polling via /api/v1/code — apenas 1 crédito por código único recebido.',
     };
 
     var _selectedCycle    = null;
@@ -283,14 +283,25 @@
       var wrapper  = document.getElementById('apiKeyWrapper');
       var badge    = document.getElementById('providerBadge');
       var hint     = document.getElementById('providerHint');
+      var label    = document.getElementById('apiKeyLabel');
+      var input    = document.getElementById('tempMailApiKey');
+
       if (provider === 'mail.tm') {
         wrapper.style.display = 'none';
         badge.textContent = 'Gratuito';
         badge.className = 'provider-badge badge-free';
+      } else if (provider === 'tempmailc') {
+        wrapper.style.display = 'block';
+        badge.textContent = 'API Code';
+        badge.className = 'provider-badge badge-key';
+        label.textContent = 'API Code';
+        input.placeholder = 'seu-api-code';
       } else {
         wrapper.style.display = 'block';
         badge.textContent = 'API Key';
         badge.className = 'provider-badge badge-key';
+        label.textContent = 'API Key';
+        input.placeholder = 'sua-api-key';
       }
       hint.textContent = PROVIDER_HINTS[provider] || '';
     }
@@ -343,10 +354,11 @@
       var proxies = proxiesRaw.split('\n').map(function(l) { return parseProxyString(l); }).filter(Boolean);
       var provider = document.getElementById('emailProvider').value;
       var apiKey   = document.getElementById('tempMailApiKey').value.trim();
+      var needsKey = provider === 'temp-mail.io' || provider === 'tempmailc';
       return {
         cadastroUrl:    document.getElementById('cadastroUrl').value.trim(),
         emailProvider:  provider,
-        tempMailApiKey: provider === 'temp-mail.io' ? apiKey : '',
+        tempMailApiKey: needsKey ? apiKey : '',
         inviteCode:     document.getElementById('inviteCode').value.trim(),
         otpTimeout:     Number(document.getElementById('otpTimeout').value) || 60000,
         cycleInterval:  Number(document.getElementById('cycleInterval').value) || 60000,
