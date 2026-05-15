@@ -122,26 +122,6 @@ class GlobalState {
   // Payload de cadastro por ciclo
   private payloadByCycle: Record<number, CyclePayload> = {};
 
-  // ─── Contadores públicos ──────────────────────────────────────────────────────
-
-  /**
-   * Incrementa cyclesCompleted e emite log de sucesso.
-   * Usado por mockFlow.ts ao detectar conta criada com sucesso.
-   */
-  incrementSuccess(): void {
-    this.state.cyclesCompleted += 1;
-    this.addLog('success', `✅ Conta criada — total: ${this.state.cyclesCompleted}`);
-  }
-
-  /**
-   * Registra falha/KYC no log sem incrementar cyclesCompleted.
-   * Usado por mockFlow.ts quando resultado === 'kyc' | 'erro'.
-   */
-  incrementFailure(reason = 'falha'): void {
-    this.state.lastError = reason;
-    this.addLog('error', `❌ Ciclo encerrado por: ${reason}`);
-  }
-
   // ─── Payload API ─────────────────────────────────────────────────────────────
 
   setPayload(cycle: number, payload: CyclePayload): void {
@@ -243,6 +223,23 @@ class GlobalState {
   addLog(level: LogEntry['level'], message: string, cycle?: number): void {
     this.logs.unshift({ timestamp: new Date().toISOString(), level, message, cycle });
   }
+
+  // ─── Contadores públicos ──────────────────────────────────────────────────────
+
+  /** Incrementa cyclesCompleted e loga sucesso. */
+  incrementSuccess(cycle?: number): void {
+    this.state.cyclesCompleted += 1;
+    this.addLog('success', `✅ Conta criada com sucesso (total: ${this.state.cyclesCompleted})`, cycle);
+  }
+
+  /** Registra falha (KYC ou erro genérico) sem incrementar cyclesCompleted. */
+  incrementFailure(reason: 'kyc' | 'error' = 'error', cycle?: number): void {
+    const emoji = reason === 'kyc' ? '🔒' : '❌';
+    const label = reason === 'kyc' ? 'KYC detectado' : 'Falha no ciclo';
+    this.addLog('error', `${emoji} ${label} (ciclo #${cycle ?? '?'})`, cycle);
+  }
+
+  // ─── Flow control ─────────────────────────────────────────────────────────────
 
   stop(): void {
     if (this.state.status === 'RUNNING' || this.state.status === 'WAITING_OTP') {
