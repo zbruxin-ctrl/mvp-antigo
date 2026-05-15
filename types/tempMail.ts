@@ -1,4 +1,4 @@
-export type EmailProvider = 'temp-mail.io' | 'mail.tm';
+export type EmailProvider = 'temp-mail.io' | 'mail.tm' | 'tempmailc';
 
 export interface TempMailConfig {
   apiKey: string;
@@ -6,6 +6,12 @@ export interface TempMailConfig {
 }
 
 export interface MailTmConfig {
+  baseUrl: string;
+}
+
+export interface TempMailCConfig {
+  apiCode: string;
+  domain: string;
   baseUrl: string;
 }
 
