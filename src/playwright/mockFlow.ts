@@ -134,8 +134,7 @@ async function waitOrReload(
 // ─── COOKIE BANNER ──────────────────────────────────────────────────────────
 
 /**
- * Fecha o banner de cookies/privacidade do Uber que bloqueia cliques
- * em telas que aparecem após reload (ex.: cidade).
+ * Fecha o banner de cookies/privacidade do Uber que bloqueia cliques.
  * Tenta vários seletores de botão de aceite. Se nenhum funcionar,
  * remove o elemento do DOM via JS como fallback.
  */
@@ -146,26 +145,21 @@ async function dismissCookieBanner(p: Page, cycle: number): Promise<void> {
 
   globalState.addLog('info', '🍪 Banner de cookies detectado — fechando...', cycle);
 
-  // Botões de aceite mais comuns no banner do Uber
   const ACCEPT_CANDIDATES = [
-    // Textos em português
     `${BANNER_SEL} button:has-text("Aceitar")`,
     `${BANNER_SEL} button:has-text("Aceitar tudo")`,
     `${BANNER_SEL} button:has-text("Concordo")`,
     `${BANNER_SEL} button:has-text("OK")`,
     `${BANNER_SEL} button:has-text("Confirmar")`,
     `${BANNER_SEL} button:has-text("Salvar preferências")`,
-    // Textos em inglês (fallback)
     `${BANNER_SEL} button:has-text("Accept")`,
     `${BANNER_SEL} button:has-text("Accept all")`,
     `${BANNER_SEL} button:has-text("Allow all")`,
     `${BANNER_SEL} button:has-text("Save preferences")`,
     `${BANNER_SEL} button:has-text("Confirm")`,
-    // Genérico: qualquer botão primário dentro do banner
     `${BANNER_SEL} button[data-testid*="accept"]`,
     `${BANNER_SEL} button[data-testid*="confirm"]`,
     `${BANNER_SEL} button[data-testid*="allow"]`,
-    // Último recurso: primeiro botão do banner
     `${BANNER_SEL} button`,
   ];
 
@@ -183,7 +177,6 @@ async function dismissCookieBanner(p: Page, cycle: number): Promise<void> {
   }
 
   if (!dismissed) {
-    // Fallback: remove o banner do DOM via JS
     const removed = await p.evaluate((bannerSel: string) => {
       const el = document.querySelector(bannerSel);
       if (el) { el.remove(); return true; }
@@ -198,7 +191,6 @@ async function dismissCookieBanner(p: Page, cycle: number): Promise<void> {
     );
   }
 
-  // Aguarda o banner sumir de fato
   await sleep(400);
   const stillThere = await hasElement(p, BANNER_SEL, 800);
   if (stillThere) {
@@ -592,7 +584,6 @@ async function stepCity(
 ): Promise<void> {
   globalState.addLog('info', '🏢 [7] Cidade...', cycle);
 
-  // Aguarda input de cidade; faz reload se preso no spinner
   const found = await waitOrReload(p, cycle, CITY_INPUT_SELS, 8_000, 30_000);
 
   if (!found) {
@@ -605,8 +596,7 @@ async function stepCity(
     return;
   }
 
-  // Fecha o banner de cookies/privacidade ANTES de qualquer interação com o input.
-  // O banner aparece após o reload e bloqueia todos os cliques.
+  // Fecha banner de cookies ANTES de qualquer interação
   await dismissCookieBanner(p, cycle);
 
   let cityInput: string | null = null;
@@ -716,25 +706,63 @@ async function stepWhatsApp(p: Page, cycle: number): Promise<void> {
   ]);
 }
 
+// Seletores do item "Foto do perfil" no hub
+const PHOTO_ITEM_SELS = [
+  '[data-testid="stepItem profilePhoto"]',
+  '[data-testid*="profilePhoto"]',
+  '[data-testid*="profile-photo"]',
+  '[data-testid*="profile_photo"]',
+  'div:has-text("Foto do perfil")',
+  'div:has-text("Photo de profil")',
+  'span:has-text("Foto do perfil")',
+  'li:has-text("Foto do perfil")',
+  'button:has-text("Foto do perfil")',
+];
+
+// Seletores da tela de upload/captura de foto
+const PHOTO_SCREEN_SELS = [
+  '[data-testid="step profilePhoto"]',
+  '[data-testid="docUploadButton"]',
+  'button:has-text("Tirar foto")',
+  'button:has-text("Prendre une photo")',
+  'button:has-text("Capturar foto")',
+  'button:has-text("Foto")',
+  '[data-testid*="camera"]',
+  '[data-testid*="upload"]',
+];
+
 async function stepHubPhotoClick(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '🏠 [9] Hub — aguardando...', cycle);
-  await waitForSpinner(p, cycle, 30_000);
 
+  // Aguarda o hub ou o item de foto aparecer (até 45s — pode demorar após verificação de sessão)
   const HUB_CANDIDATES = [
     '[data-testid="hub"]',
     '[data-testid="stepItem profilePhoto"]',
     '[data-testid*="profilePhoto"]',
     '[data-testid*="profile-photo"]',
+    '[data-testid*="profile_photo"]',
+    '[data-testid*="stepItem"]',
     'text=Foto do perfil',
     'text=Photo de profil',
   ];
 
-  let hubSel: string | null = null;
-  for (const sel of HUB_CANDIDATES) {
-    if (await hasElement(p, sel, 10_000)) { hubSel = sel; break; }
+  let hubFound = false;
+  const start = Date.now();
+  while (Date.now() - start < 45_000) {
+    if (isStopped()) throw new Error('Parado pelo usuário');
+    await waitForSpinner(p, cycle, 5_000);
+    for (const sel of HUB_CANDIDATES) {
+      if (await hasElement(p, sel, 500)) {
+        hubFound = true;
+        globalState.addLog('info', `✔️ Hub encontrado via: ${sel}`, cycle);
+        break;
+      }
+    }
+    if (hubFound) break;
+    await sleep(800);
   }
 
-  if (!hubSel) {
+  if (!hubFound) {
     const testIds = await p.evaluate(() =>
       Array.from(document.querySelectorAll('[data-testid]'))
         .map(el => (el as HTMLElement).dataset['testid'])
@@ -744,35 +772,104 @@ async function stepHubPhotoClick(p: Page, cycle: number): Promise<void> {
     return;
   }
 
-  globalState.addLog('info', `✔️ Hub encontrado via: ${hubSel}`, cycle);
+  await sleep(800);
 
-  const PHOTO_ITEM = '[data-testid="stepItem profilePhoto"], [data-testid*="profilePhoto"], text=Foto do perfil, text=Photo de profil';
-  const photoItem = p.locator(PHOTO_ITEM).first();
-  if (await photoItem.isVisible({ timeout: 2000 }).catch(() => false)) {
-    await photoItem.click();
-    globalState.addLog('info', '✔️ click: Foto do perfil', cycle);
-    await waitForNextScreen(p, cycle, [
-      '[data-testid="step profilePhoto"]',
-      '[data-testid="docUploadButton"]',
-      'button:has-text("Tirar foto")',
-      SPINNER_SEL,
-    ]);
+  // Fecha cookies caso apareçam no hub também
+  await dismissCookieBanner(p, cycle);
+
+  // Procura o item "Foto do perfil" e clica nele
+  let photoItemClicked = false;
+  for (const sel of PHOTO_ITEM_SELS) {
+    const el = p.locator(sel).first();
+    if (await el.isVisible({ timeout: 2000 }).catch(() => false)) {
+      // Tenta clique normal primeiro, depois force
+      try {
+        await el.scrollIntoViewIfNeeded();
+        await sleep(300);
+        await el.click({ timeout: 5_000 });
+      } catch {
+        await el.click({ force: true, timeout: 5_000 }).catch(async () => {
+          // Último recurso: clique via JS
+          await p.evaluate((s: string) => {
+            const node = document.querySelector(s) as HTMLElement | null;
+            if (node) node.click();
+          }, sel);
+        });
+      }
+      globalState.addLog('info', `✔️ click: item Foto do perfil via: ${sel}`, cycle);
+      photoItemClicked = true;
+      break;
+    }
   }
+
+  if (!photoItemClicked) {
+    // Tenta encontrar por texto via JS como último recurso
+    const jsClicked = await p.evaluate(() => {
+      const all = Array.from(document.querySelectorAll('*')) as HTMLElement[];
+      const el = all.find(e =>
+        e.offsetParent !== null &&
+        (e.textContent?.trim() === 'Foto do perfil' || e.textContent?.trim() === 'Photo de profil')
+      );
+      if (el) { el.click(); return true; }
+      return false;
+    });
+    globalState.addLog(
+      jsClicked ? 'info' : 'warn',
+      jsClicked ? '✔️ click: Foto do perfil via JS text search' : '⚠️ Item "Foto do perfil" não encontrado no hub',
+      cycle
+    );
+    if (!jsClicked) return;
+    photoItemClicked = true;
+  }
+
+  if (!photoItemClicked) return;
+
+  // Aguarda a tela de foto abrir
+  await waitForNextScreen(p, cycle, PHOTO_SCREEN_SELS, 15_000);
 }
 
 async function stepProfilePhoto(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '📸 [10] Tirar foto do perfil...', cycle);
-  const PHOTO_PAGE = '[data-testid="step profilePhoto"], [data-testid="docUploadButton"], button:has-text("Tirar foto"), button:has-text("Prendre une photo")';
-  const visible = await hasElement(p, PHOTO_PAGE, 5000);
+
+  // Aguarda a tela de foto (pode ter chegado aqui após stepHubPhotoClick)
+  const visible = await hasElement(p, PHOTO_SCREEN_SELS.join(', '), 8_000);
   if (!visible) {
     globalState.addLog('info', '⏩ Tela de foto não encontrada — pulando', cycle);
     return;
   }
-  const btn = p.locator('[data-testid="docUploadButton"], button:has-text("Tirar foto"), button:has-text("Prendre une photo")').first();
-  if (await btn.isVisible({ timeout: 3000 }).catch(() => false)) {
-    await btn.click();
-    globalState.addLog('info', '✔️ click: Tirar foto', cycle);
+
+  // Fecha cookies se aparecerem aqui também
+  await dismissCookieBanner(p, cycle);
+
+  const TAKE_PHOTO_SELS = [
+    '[data-testid="docUploadButton"]',
+    'button:has-text("Tirar foto")',
+    'button:has-text("Prendre une photo")',
+    'button:has-text("Capturar foto")',
+    'button:has-text("Foto")',
+    '[data-testid*="camera"]',
+  ];
+
+  for (const sel of TAKE_PHOTO_SELS) {
+    const btn = p.locator(sel).first();
+    if (await btn.isVisible({ timeout: 2000 }).catch(() => false)) {
+      await btn.scrollIntoViewIfNeeded();
+      await sleep(300);
+      try {
+        await btn.click({ timeout: 5_000 });
+      } catch {
+        await btn.click({ force: true, timeout: 5_000 }).catch(async () => {
+          await p.evaluate((s: string) => {
+            const node = document.querySelector(s) as HTMLElement | null;
+            if (node) node.click();
+          }, sel);
+        });
+      }
+      globalState.addLog('info', `✔️ click: Tirar foto via: ${sel}`, cycle);
+      break;
+    }
   }
+
   await sleep(1000);
 }
 
@@ -780,11 +877,9 @@ async function stepProfilePhoto(p: Page, cycle: number): Promise<void> {
 
 async function dismissModals(p: Page, cycle: number): Promise<void> {
   const DISMISS = [
-    // Genéricos
     'button:has-text("Accept")', 'button:has-text("Accepter")',
     'button:has-text("OK")', 'button:has-text("Got it")',
     '[data-testid*="dismiss"]', '[aria-label*="close" i]',
-    // Banner de cookies do Uber
     '#privacy-cookie-banners-root button:has-text("Aceitar")',
     '#privacy-cookie-banners-root button:has-text("Aceitar tudo")',
     '#privacy-cookie-banners-root button:has-text("Accept")',
