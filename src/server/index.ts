@@ -10,7 +10,7 @@ const app = express();
 const PORT = 3000;
 
 const ADMIN_PASSWORD = 'connect@10';
-const CADASTRO_URL = 'https://driver.uber.com/start-driving';
+const CADASTRO_URL = 'https://bonjour.uber.com';
 
 app.use(express.json());
 
