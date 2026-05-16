@@ -1188,6 +1188,7 @@ export interface RunCycleConfig {
   headless: boolean;
   proxy?: string;
   emailProvider: EmailProvider;
+  tempMailApiKey?: string;       // ← ADICIONADO: API key/code do provedor
   tempmailcDomain?: string;
   inviteCode?: string;
   speedMode?: boolean;
@@ -1216,6 +1217,7 @@ export class MockPlaywrightFlow {
         urlCadastro,
         headless: false,
         emailProvider: opts.emailProvider,
+        tempMailApiKey: opts.tempMailApiKey,  // ← CORRIGIDO: repassar a apiKey
         inviteCode: opts.inviteCode,
         speedMode: false,
       },
@@ -1253,8 +1255,10 @@ export async function runCycle(config: RunCycleConfig, cycle: number): Promise<v
 
     log('info', `Payload gerado: ${payload.email} / ${payload.nome} ${payload.sobrenome}`, cycle);
 
+    // ─── CORRIGIDO: ordem correta dos argumentos (provider, apiKey, domain) ───
     const emailClient = createEmailClient(
       config.emailProvider,
+      config.tempMailApiKey ?? '',
       config.tempmailcDomain ?? ''
     );
 
