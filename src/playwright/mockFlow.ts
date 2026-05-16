@@ -1,8 +1,7 @@
 import { chromium as chromiumExtra } from 'playwright-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
-import { Browser, Page, BrowserContext, devices } from 'playwright';
+import { Browser, Page, devices } from 'playwright';
 import type { BrowserType } from 'playwright';
-import path from 'path';
 import { globalState } from '../state/globalState';
 import { EmailProvider } from '../types';
 import { createEmailClient } from '../tempMail/client';
@@ -27,164 +26,99 @@ async function sleep(ms: number): Promise<void> {
   }
 }
 
-async function hasElement(p: Page, sel: string, timeout = 500): Promise<boolean> {
+async function hasElement(p: Page, sel: string, timeout = 600): Promise<boolean> {
   return p.locator(sel).first().isVisible({ timeout }).catch(() => false);
 }
 
-async function safeClick(p: Page, sel: string, label: string, cycle?: number): Promise<void> {
-  const el = p.locator(sel).first();
-  await el.waitFor({ state: 'visible' });
+/** Clica num elemento pelo data-testid */
+async function clickTestId(p: Page, testId: string, label: string, cycle: number): Promise<void> {
+  const el = p.locator(`[data-testid="${testId}"]`).first();
+  await el.waitFor({ state: 'visible', timeout: 15_000 });
   await el.scrollIntoViewIfNeeded();
-  await sleep(300 + Math.random() * 200);
+  await sleep(250 + Math.random() * 150);
   await el.click();
-  globalState.addLog('info', `✔️ click: ${label}`, cycle);
+  globalState.addLog('info', `✔️ click [${testId}]: ${label}`, cycle);
 }
 
-async function safeFill(
+/** Preenche um input pelo id do elemento */
+async function fillById(
   p: Page,
-  sel: string,
+  id: string,
   value: string,
   label: string,
-  cycle?: number
+  cycle: number
 ): Promise<void> {
-  const el = p.locator(sel).first();
-  await el.waitFor({ state: 'visible' });
+  const el = p.locator(`#${id}, [id="${id}"]`).first();
+  await el.waitFor({ state: 'visible', timeout: 15_000 });
   await el.scrollIntoViewIfNeeded();
-  await sleep(200 + Math.random() * 150);
+  await sleep(150 + Math.random() * 100);
   await el.click();
-  await sleep(100);
-  await el.fill('');
-  for (const ch of value) {
-    await el.type(ch, { delay: 40 + Math.random() * 60 });
+  await sleep(80);
+  await el.click({ clickCount: 3 });
+  await p.keyboard.press('Delete');
+  await sleep(60);
+  await el.pressSequentially(value, { delay: 55 + Math.random() * 45 });
+  globalState.addLog('info', `✔️ fill [#${id}]: ${label}`, cycle);
+}
+
+/** Preenche um input pelo data-testid */
+async function fillByTestId(
+  p: Page,
+  testId: string,
+  value: string,
+  label: string,
+  cycle: number
+): Promise<void> {
+  const el = p.locator(`[data-testid="${testId}"]`).first();
+  await el.waitFor({ state: 'visible', timeout: 15_000 });
+  await el.scrollIntoViewIfNeeded();
+  await sleep(150 + Math.random() * 100);
+  await el.click();
+  await sleep(80);
+  await el.click({ clickCount: 3 });
+  await p.keyboard.press('Delete');
+  await sleep(60);
+  await el.pressSequentially(value, { delay: 55 + Math.random() * 45 });
+  globalState.addLog('info', `✔️ fill [testid=${testId}]: ${label}`, cycle);
+}
+
+/** Clica no botão forward-button (Avançar) */
+async function clickForward(p: Page, cycle: number): Promise<void> {
+  const el = p.locator('[data-testid="forward-button"]').first();
+  // Aguarda habilitar (React valida antes de ativar o botão)
+  await el.waitFor({ state: 'visible', timeout: 15_000 });
+  // Espera até 5s pelo botão ficar enabled
+  let enabled = false;
+  for (let i = 0; i < 25; i++) {
+    enabled = await el.isEnabled({ timeout: 200 }).catch(() => false);
+    if (enabled) break;
+    await sleep(200);
   }
-  globalState.addLog('info', `✔️ fill: ${label}`, cycle);
+  if (!enabled) throw new Error('forward-button nunca habilitou');
+  await el.scrollIntoViewIfNeeded();
+  await sleep(200 + Math.random() * 100);
+  await el.click();
+  globalState.addLog('info', '✔️ click: Avançar (forward-button)', cycle);
 }
 
-async function detectCurrentStep(p: Page): Promise<string> {
-  const url = p.url();
-  if (url.includes('otp') || url.includes('verify') || url.includes('code')) return 'otp';
-  if (url.includes('password')) return 'password';
-  if (url.includes('phone')) return 'phone';
-  if (url.includes('email')) return 'email';
-  if (url.includes('name') || url.includes('profile')) return 'profile';
-  if (url.includes('documents') || url.includes('docs')) return 'documents';
-  if (url.includes('vehicle') || url.includes('car')) return 'vehicle';
-  if (url.includes('hub') || url.includes('dashboard')) return 'complete';
-  return 'unknown';
-}
+// ─── ETAPAS ──────────────────────────────────────────────────────────────────
 
+/** Tela 1: Email */
 async function stepEmail(p: Page, email: string, cycle: number): Promise<void> {
-  globalState.addLog('info', '📧 Preenchendo email...', cycle);
-  const INPUT_SEL = 'input[type="email"], input[name="email"], input[placeholder*="email" i], input[autocomplete="email"]';
-  await p.waitForSelector(INPUT_SEL, { state: 'visible', timeout: 15000 });
-  await safeFill(p, INPUT_SEL, email, 'email', cycle);
-  const BTN_SELS = [
-    'button[type="submit"]',
-    'button:has-text("Continue")',
-    'button:has-text("Next")',
-    'button:has-text("Continuer")',
-    'button:has-text("Próximo")',
-    '[data-testid*="submit"]',
-    '[data-testid*="next"]',
-    '[data-testid*="continue"]',
-  ];
-  for (const sel of BTN_SELS) {
-    if (await hasElement(p, sel, 300)) {
-      await safeClick(p, sel, 'avancar-email', cycle);
-      globalState.addLog('info', `✔️ Email enviado via ${sel}`, cycle);
-      return;
-    }
-  }
-  throw new Error('Nenhum botão de avançar encontrado na etapa de email');
+  globalState.addLog('info', '📧 [1] Email...', cycle);
+  // Campo de email: type=email ou autocomplete=email ou id=EMAIL
+  const EMAIL_SEL = 'input[type="email"], input[autocomplete="email"], #EMAIL, #EMAIL_ADDRESS';
+  await p.waitForSelector(EMAIL_SEL, { state: 'visible', timeout: 15_000 });
+  const el = p.locator(EMAIL_SEL).first();
+  await el.click();
+  await sleep(80);
+  await el.pressSequentially(email, { delay: 55 + Math.random() * 45 });
+  globalState.addLog('info', '✔️ fill: email', cycle);
+  await clickForward(p, cycle);
+  await sleep(1000);
 }
 
-async function stepPassword(p: Page, password: string, cycle: number): Promise<void> {
-  globalState.addLog('info', '🔒 Preenchendo senha...', cycle);
-  const INPUT_SEL = 'input[type="password"]';
-  const visible = await hasElement(p, INPUT_SEL, 1500);
-  if (!visible) { globalState.addLog('info', '⏩ Campo de senha não encontrado — pulando', cycle); return; }
-  await safeFill(p, INPUT_SEL, password, 'senha', cycle);
-  const BTN_SELS = [
-    'button[type="submit"]',
-    'button:has-text("Continue")',
-    'button:has-text("Sign in")',
-    'button:has-text("Login")',
-    'button:has-text("Entrar")',
-  ];
-  for (const sel of BTN_SELS) {
-    if (await hasElement(p, sel, 300)) { await safeClick(p, sel, 'avancar-senha', cycle); return; }
-  }
-  throw new Error('Nenhum botão de avançar encontrado na etapa de senha');
-}
-
-/**
- * Preenche OTP usando pressSequentially para disparar eventos React/Vue.
- * Suporta input único e inputs split (um box por dígito).
- */
-async function fillOTP(p: Page, otp: string, cycle: number): Promise<void> {
-  // --- Tenta detectar split (4+ inputs maxlength=1) primeiro ---
-  const SPLIT_SELS = [
-    'input[maxlength="1"]',
-    'input[data-index]',
-    'input[inputmode="numeric"][maxlength="1"]',
-    'input[type="tel"][maxlength="1"]',
-    'input[type="number"][maxlength="1"]',
-    'input[type="text"][maxlength="1"]',
-  ];
-
-  for (const baseSel of SPLIT_SELS) {
-    const inputs = p.locator(baseSel);
-    const count = await inputs.count().catch(() => 0);
-    if (count >= 4) {
-      globalState.addLog('info', `✔️ OTP split detectado: ${count} inputs (${baseSel})`, cycle);
-      const digits = otp.split('');
-      for (let i = 0; i < Math.min(count, digits.length); i++) {
-        const box = inputs.nth(i);
-        await box.scrollIntoViewIfNeeded();
-        await box.click();
-        await sleep(60 + Math.random() * 40);
-        // pressSequentially dispara eventos de input/change corretamente
-        await box.pressSequentially(digits[i], { delay: 60 + Math.random() * 50 });
-        await sleep(50);
-      }
-      globalState.addLog('info', `✔️ OTP preenchido (split ${digits.length} dígitos)`, cycle);
-      return;
-    }
-  }
-
-  // --- Input único ---
-  const SINGLE_SELS = [
-    'input[autocomplete="one-time-code"]',
-    'input[inputmode="numeric"]',
-    'input[name*="otp" i]',
-    'input[name*="code" i]',
-    'input[name*="token" i]',
-    'input[placeholder*="code" i]',
-    'input[placeholder*="otp" i]',
-  ];
-
-  for (const sel of SINGLE_SELS) {
-    const el = p.locator(sel).first();
-    const visible = await el.isVisible({ timeout: 800 }).catch(() => false);
-    if (!visible) continue;
-
-    globalState.addLog('info', `✔️ OTP input único: ${sel}`, cycle);
-    await el.scrollIntoViewIfNeeded();
-    await el.click();
-    await sleep(100);
-    // Limpa campo existente via triple-click + Delete
-    await el.click({ clickCount: 3 });
-    await p.keyboard.press('Delete');
-    await sleep(80);
-    // pressSequentially: dispara keydown/input/keyup — habilita botão React
-    await el.pressSequentially(otp, { delay: 60 + Math.random() * 50 });
-    globalState.addLog('info', `✔️ OTP preenchido (input único)`, cycle);
-    return;
-  }
-
-  throw new Error('Não foi possível encontrar campo OTP (nem single nem split)');
-}
-
+/** Tela 2: OTP (input único autocomplete=one-time-code) */
 async function stepOTP(
   p: Page,
   emailClient: ReturnType<typeof createEmailClient>,
@@ -192,146 +126,228 @@ async function stepOTP(
   otpTimeout: number,
   cycle: number
 ): Promise<void> {
-  globalState.addLog('info', '🔢 Aguardando tela de OTP...', cycle);
+  globalState.addLog('info', '🔢 [2] Aguardando OTP...', cycle);
 
-  const ANY_OTP_SEL = [
-    'input[autocomplete="one-time-code"]',
-    'input[inputmode="numeric"]',
-    'input[maxlength="1"]',
-    'input[name*="otp" i]',
-    'input[name*="code" i]',
-  ].join(', ');
-
-  const appeared = await p.waitForSelector(ANY_OTP_SEL, { state: 'visible', timeout: 20000 })
-    .then(() => true)
-    .catch(() => false);
-
-  if (!appeared) {
-    globalState.addLog('warn', '⚠️ Tela de OTP não detectada — tentando mesmo assim...', cycle);
-  } else {
-    globalState.addLog('info', '✔️ Tela de OTP detectada', cycle);
-  }
+  // Detecta tela de OTP
+  const OTP_SEL = 'input[autocomplete="one-time-code"], input[inputmode="numeric"], input[maxlength="1"]';
+  await p.waitForSelector(OTP_SEL, { state: 'visible', timeout: 20_000 });
+  globalState.addLog('info', '✔️ Tela OTP detectada', cycle);
 
   const otp = await emailClient.waitForOTP(email, otpTimeout, cycle);
-  globalState.addLog('info', `🔢 Preenchendo OTP: ${otp}`, cycle);
+  globalState.addLog('info', `🔢 OTP recebido: ${otp}`, cycle);
 
-  await fillOTP(p, otp, cycle);
+  // Verifica se é split (vários inputs maxlength=1)
+  const splitInputs = p.locator('input[maxlength="1"]');
+  const splitCount = await splitInputs.count().catch(() => 0);
 
-  // Aguarda botão habilitar após preencher OTP (React valida assincronamente)
+  if (splitCount >= 4) {
+    globalState.addLog('info', `✔️ OTP split: ${splitCount} boxes`, cycle);
+    for (let i = 0; i < Math.min(splitCount, otp.length); i++) {
+      const box = splitInputs.nth(i);
+      await box.click();
+      await sleep(60);
+      await box.pressSequentially(otp[i], { delay: 70 });
+      await sleep(50);
+    }
+  } else {
+    // Input único
+    const el = p.locator(OTP_SEL).first();
+    await el.click();
+    await sleep(80);
+    await el.click({ clickCount: 3 });
+    await p.keyboard.press('Delete');
+    await sleep(60);
+    await el.pressSequentially(otp, { delay: 70 + Math.random() * 40 });
+    globalState.addLog('info', '✔️ OTP preenchido (input único)', cycle);
+  }
+
+  // Aguarda botão habilitar (React valida OTP)
   await sleep(800);
 
-  const BTN_SELS = [
-    'button[type="submit"]:not([disabled])',
-    'button:has-text("Verify")',
-    'button:has-text("Confirm")',
-    'button:has-text("Continue")',
-    'button:has-text("Valider")',
-    'button:has-text("Verificar")',
-  ];
-  for (const btnSel of BTN_SELS) {
-    if (await hasElement(p, btnSel, 1500)) {
-      await safeClick(p, btnSel, 'confirmar-otp', cycle);
-      break;
+  // Tenta forward-button ou botão de verificar genérico
+  const fwdVisible = await hasElement(p, '[data-testid="forward-button"]', 1000);
+  if (fwdVisible) {
+    await clickForward(p, cycle);
+  } else {
+    // Fallback: qualquer botão submit habilitado
+    const btn = p.locator('button[type="submit"]:not([disabled])').first();
+    if (await btn.isVisible({ timeout: 2000 }).catch(() => false)) {
+      await btn.click();
+      globalState.addLog('info', '✔️ confirmar-otp via submit', cycle);
     }
   }
+  await sleep(1000);
 }
 
-async function stepCitySelection(p: Page, cycle: number): Promise<void> {
-  globalState.addLog('info', '🏡 Verificando seleção de cidade...', cycle);
-  const CITY_SELS = ['[data-testid="city-selector"]', '[data-testid*="city"]', 'select[name*="city" i]', 'button:has-text("Paris")', '[role="combobox"]'];
-  for (const sel of CITY_SELS) {
-    if (await hasElement(p, sel, 1000)) {
-      globalState.addLog('info', `🏡 Seletor de cidade: ${sel}`, cycle);
-      await safeClick(p, sel, 'cidade', cycle);
-      await sleep(1000);
-      return;
-    }
-  }
-  globalState.addLog('info', '⏩ Seleção de cidade não encontrada — pulando', cycle);
-}
-
-async function stepPhoneNumber(p: Page, cycle: number): Promise<void> {
-  globalState.addLog('info', '📱 Verificando etapa de telefone...', cycle);
-  const PHONE_SEL = 'input[type="tel"], input[name*="phone" i], input[placeholder*="phone" i]';
-  if (!(await hasElement(p, PHONE_SEL, 2000))) {
-    globalState.addLog('info', '⏩ Campo de telefone não encontrado — pulando', cycle);
+/** Tela 3: Criar senha (id=PASSWORD, autocomplete=new-password) */
+async function stepPassword(p: Page, cycle: number): Promise<void> {
+  globalState.addLog('info', '🔒 [3] Senha...', cycle);
+  const visible = await hasElement(p, '#PASSWORD, input[autocomplete="new-password"]', 2000);
+  if (!visible) {
+    globalState.addLog('info', '⏩ Tela de senha não encontrada — pulando', cycle);
     return;
   }
-  const prefix = Math.random() < 0.5 ? '06' : '07';
-  const rest = Array.from({ length: 8 }, () => Math.floor(Math.random() * 10)).join('');
-  await safeFill(p, PHONE_SEL, prefix + rest, 'telefone', cycle);
-  const BTN_SELS = ['button[type="submit"]', 'button:has-text("Continue")', 'button:has-text("Next")', 'button:has-text("Send code")',];
-  for (const sel of BTN_SELS) {
-    if (await hasElement(p, sel, 500)) { await safeClick(p, sel, 'avancar-telefone', cycle); return; }
-  }
+  const senha = 'Uber2024@';
+  await fillById(p, 'PASSWORD', senha, 'senha', cycle);
+  await clickForward(p, cycle);
+  await sleep(1000);
 }
 
+/** Tela 4: Nome e Sobrenome (id=FIRST_NAME / LAST_NAME) */
 async function stepPersonalInfo(p: Page, cycle: number): Promise<void> {
-  globalState.addLog('info', '👤 Verificando informações pessoais...', cycle);
-  const FIRST_NAME_SEL = 'input[name*="first" i], input[name*="fname" i], input[placeholder*="first name" i], input[placeholder*="prénom" i]';
-  const LAST_NAME_SEL  = 'input[name*="last" i], input[name*="lname" i], input[placeholder*="last name" i], input[placeholder*="nom" i]';
-  if (!(await hasElement(p, FIRST_NAME_SEL, 2000))) {
-    globalState.addLog('info', '⏩ Campos de nome não encontrados — pulando', cycle);
+  globalState.addLog('info', '👤 [4] Nome...', cycle);
+  const visible = await hasElement(p, '#FIRST_NAME, input[autocomplete="given-name"]', 2000);
+  if (!visible) {
+    globalState.addLog('info', '⏩ Tela de nome não encontrada — pulando', cycle);
     return;
   }
   const firstNames = ['Thomas', 'Lucas', 'Hugo', 'Maxime', 'Antoine', 'Nicolas', 'Alexandre'];
   const lastNames  = ['Martin', 'Bernard', 'Dubois', 'Laurent', 'Fontaine', 'Girard', 'Rousseau'];
-  await safeFill(p, FIRST_NAME_SEL, firstNames[Math.floor(Math.random() * firstNames.length)], 'primeiro-nome', cycle);
-  if (await hasElement(p, LAST_NAME_SEL, 1000)) {
-    await safeFill(p, LAST_NAME_SEL, lastNames[Math.floor(Math.random() * lastNames.length)], 'sobrenome', cycle);
-  }
-  const BTN_SELS = ['button[type="submit"]', 'button:has-text("Continue")', 'button:has-text("Next")', 'button:has-text("Suivant")', '[data-testid*="next"]'];
-  for (const sel of BTN_SELS) {
-    if (await hasElement(p, sel, 500)) { await safeClick(p, sel, 'avancar-info-pessoal', cycle); return; }
-  }
+  const fn = firstNames[Math.floor(Math.random() * firstNames.length)];
+  const ln = lastNames[Math.floor(Math.random() * lastNames.length)];
+  await fillById(p, 'FIRST_NAME', fn, 'primeiro nome', cycle);
+  const hasLast = await hasElement(p, '#LAST_NAME, input[autocomplete="family-name"]', 1000);
+  if (hasLast) await fillById(p, 'LAST_NAME', ln, 'sobrenome', cycle);
+  await clickForward(p, cycle);
+  await sleep(1000);
 }
+
+/** Tela 5: Número de celular (id=PHONE_NUMBER, autocomplete=tel-national) */
+async function stepPhone(p: Page, cycle: number): Promise<void> {
+  globalState.addLog('info', '📱 [5] Telefone...', cycle);
+  const visible = await hasElement(p, '#PHONE_NUMBER, input[autocomplete="tel-national"]', 2000);
+  if (!visible) {
+    globalState.addLog('info', '⏩ Tela de telefone não encontrada — pulando', cycle);
+    return;
+  }
+  // Gera número celular francês (06/07 + 8 dígitos)
+  const prefix = Math.random() < 0.5 ? '06' : '07';
+  const rest = Array.from({ length: 8 }, () => Math.floor(Math.random() * 10)).join('');
+  await fillById(p, 'PHONE_NUMBER', prefix + rest, 'telefone', cycle);
+  await clickForward(p, cycle);
+  await sleep(1000);
+}
+
+/** Tela 6: Aceitar termos (checkbox + forward-button) */
+async function stepTerms(p: Page, cycle: number): Promise<void> {
+  globalState.addLog('info', '📝 [6] Termos...', cycle);
+  // Detecta pelo testId accept-terms ou pelo checkbox
+  const visible = await hasElement(p, '[data-testid="accept-terms"], input[type="checkbox"]', 2000);
+  if (!visible) {
+    globalState.addLog('info', '⏩ Tela de termos não encontrada — pulando', cycle);
+    return;
+  }
+  // Clica no checkbox "Concordo"
+  const checkbox = p.locator('input[type="checkbox"]').first();
+  if (await checkbox.isVisible({ timeout: 1000 }).catch(() => false)) {
+    await checkbox.click();
+    globalState.addLog('info', '✔️ checkbox: Concordo', cycle);
+    await sleep(400);
+  }
+  await clickForward(p, cycle);
+  await sleep(1000);
+}
+
+/** Tela 7: Cidade + código de indicação (testId=flow-type-city-selector-v2-input) */
+async function stepCity(p: Page, inviteCode: string, cycle: number): Promise<void> {
+  globalState.addLog('info', '🏢 [7] Cidade...', cycle);
+  const visible = await hasElement(p, '[data-testid="flow-type-city-selector-v2-input"]', 3000);
+  if (!visible) {
+    globalState.addLog('info', '⏩ Tela de cidade não encontrada — pulando', cycle);
+    return;
+  }
+  // Limpa e digita cidade
+  await fillByTestId(p, 'flow-type-city-selector-v2-input', '', 'limpar cidade', cycle);
+  await sleep(300);
+  await fillByTestId(p, 'flow-type-city-selector-v2-input', 'Paris', 'cidade', cycle);
+  await sleep(1000);
+  // Seleciona primeira opção da lista
+  const option = p.locator('[role="option"], [role="listitem"], [data-testid*="suggestion"]').first();
+  if (await option.isVisible({ timeout: 2000 }).catch(() => false)) {
+    await option.click();
+    globalState.addLog('info', '✔️ cidade selecionada da lista', cycle);
+  }
+  await sleep(500);
+  // Código de indicação (opcional)
+  if (inviteCode) {
+    const codeVisible = await hasElement(p, '[data-testid="signup-step::invite-code-input"]', 1000);
+    if (codeVisible) {
+      await fillByTestId(p, 'signup-step::invite-code-input', inviteCode, 'invite code', cycle);
+      await sleep(300);
+    }
+  }
+  // Botão Avançar nessa tela é testId="submit-button"
+  const submitBtn = p.locator('[data-testid="submit-button"]').first();
+  if (await submitBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
+    await submitBtn.click();
+    globalState.addLog('info', '✔️ click: submit-button (cidade)', cycle);
+  } else {
+    await clickForward(p, cycle);
+  }
+  await sleep(1200);
+}
+
+/** Tela 8: WhatsApp opt-in — clica em "NÃO ATIVAR" */
+async function stepWhatsApp(p: Page, cycle: number): Promise<void> {
+  globalState.addLog('info', '📲 [8] WhatsApp opt-in...', cycle);
+  // Detecta pela imagem ou pelo testId step-bottom-navigation
+  const visible = await hasElement(p, '[data-testid="step-bottom-navigation"]', 3000);
+  if (!visible) {
+    globalState.addLog('info', '⏩ Tela WhatsApp não encontrada — pulando', cycle);
+    return;
+  }
+  // Clica em "NÃO ATIVAR"
+  const naoAtivar = p.locator('button:has-text("NÃO ATIVAR"), button:has-text("Nao ativar"), button:has-text("NOT NOW")');
+  if (await naoAtivar.first().isVisible({ timeout: 1500 }).catch(() => false)) {
+    await naoAtivar.first().click();
+    globalState.addLog('info', '✔️ click: NÃO ATIVAR (WhatsApp)', cycle);
+  }
+  await sleep(1200);
+}
+
+/** Tela 9: Hub — clica em "Foto do perfil" (testId=stepItem profilePhoto) */
+async function stepHubPhotoClick(p: Page, cycle: number): Promise<void> {
+  globalState.addLog('info', '🏠 [9] Hub — clicando em Foto do perfil...', cycle);
+  // Aguarda hub carregar
+  await p.waitForSelector('[data-testid="hub"], [data-testid="stepItem profilePhoto"]', { state: 'visible', timeout: 15_000 });
+  const photoLink = p.locator('[data-testid="stepItem profilePhoto"]').first();
+  await photoLink.waitFor({ state: 'visible', timeout: 10_000 });
+  await photoLink.click();
+  globalState.addLog('info', '✔️ click: Foto do perfil', cycle);
+  await sleep(1500);
+}
+
+/** Tela 10: Foto do perfil — clica em "Tirar foto" (docUploadButton) */
+async function stepProfilePhoto(p: Page, cycle: number): Promise<void> {
+  globalState.addLog('info', '📸 [10] Tirar foto do perfil...', cycle);
+  await p.waitForSelector('[data-testid="step profilePhoto"], [data-testid="docUploadButton"]', { state: 'visible', timeout: 15_000 });
+  // Clica em "Tirar foto"
+  const btn = p.locator('[data-testid="docUploadButton"], button:has-text("Tirar foto")').first();
+  if (await btn.isVisible({ timeout: 3000 }).catch(() => false)) {
+    await btn.click();
+    globalState.addLog('info', '✔️ click: Tirar foto', cycle);
+  }
+  await sleep(1000);
+}
+
+// ─── DISMISS MODALS ──────────────────────────────────────────────────────────
 
 async function dismissModals(p: Page, cycle: number): Promise<void> {
-  const DISMISS_SELS = [
-    'button:has-text("Accept")', 'button:has-text("Accepter")', 'button:has-text("Agree")',
-    'button:has-text("OK")', 'button:has-text("Got it")', 'button:has-text("Close")',
-    '[data-testid*="accept"]', '[data-testid*="dismiss"]',
-    '[aria-label*="close" i]', '[aria-label*="dismiss" i]',
+  const DISMISS = [
+    'button:has-text("Accept")', 'button:has-text("Accepter")',
+    'button:has-text("OK")', 'button:has-text("Got it")',
+    '[data-testid*="dismiss"]', '[aria-label*="close" i]',
   ];
-  for (const sel of DISMISS_SELS) {
-    if (await hasElement(p, sel, 500)) {
-      globalState.addLog('info', `🚪 Fechando modal: ${sel}`, cycle);
-      await safeClick(p, sel, 'fechar-modal', cycle);
-      await sleep(500);
+  for (const sel of DISMISS) {
+    if (await hasElement(p, sel, 400)) {
+      await p.locator(sel).first().click();
+      globalState.addLog('info', `🚪 modal: ${sel}`, cycle);
+      await sleep(400);
     }
   }
 }
 
-async function clickForwardButton(p: Page, cycle: number, label = 'avançar'): Promise<boolean> {
-  const FWD_SELS = [
-    'button[type="submit"]:not([disabled])',
-    '[data-testid*="forward"]:not([disabled])',
-    '[data-testid*="next"]:not([disabled])',
-    '[data-testid*="submit"]:not([disabled])',
-    '[data-testid*="continue"]:not([disabled])',
-    'button:has-text("Continue")',
-    'button:has-text("Next")',
-    'button:has-text("Suivant")',
-    'button:has-text("Submit")',
-    'button:has-text("Próximo")',
-  ];
-  for (const sel of FWD_SELS) {
-    const el = p.locator(sel).first();
-    if (await el.isVisible({ timeout: 300 }).catch(() => false)) {
-      const enabled = await el.isEnabled({ timeout: 300 }).catch(() => false);
-      if (enabled) {
-        await el.scrollIntoViewIfNeeded();
-        await sleep(200);
-        await el.click();
-        globalState.addLog('info', `✔️ ${label} via ${sel}`, cycle);
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
-// ---
+// ─── BROWSER ─────────────────────────────────────────────────────────────────
 
 let browserInstance: Browser | null = null;
 let lastProxyConfig: string | null = null;
@@ -340,52 +356,37 @@ export class MockPlaywrightFlow {
   static async init(headless = true): Promise<void> {
     const state = globalState.getState() as State & { proxies?: string[] };
     const proxies: string[] = state.proxies ?? [];
-    const proxyServer = proxies.length > 0 ? proxies[0] : '';
-    const proxyKey = proxyServer;
+    const proxyKey = proxies[0] ?? '';
 
     if (browserInstance && lastProxyConfig !== proxyKey) {
       globalState.addLog('info', '🔄 Proxy mudou — reiniciando browser...');
       await browserInstance.close().catch(() => {});
       browserInstance = null;
     }
-
     if (browserInstance) return;
 
     const braveCandidates = [
       process.env.BRAVE_PATH,
-      '/usr/bin/brave-browser',
-      '/usr/bin/brave',
-      '/usr/bin/chromium-browser',
-      '/usr/bin/chromium',
-      '/snap/bin/chromium',
+      '/usr/bin/brave-browser', '/usr/bin/brave',
+      '/usr/bin/chromium-browser', '/usr/bin/chromium', '/snap/bin/chromium',
     ].filter(Boolean) as string[];
     let chromiumBin: string | undefined;
     const { existsSync } = await import('fs');
-    for (const candidate of braveCandidates) {
-      if (existsSync(candidate)) { chromiumBin = candidate; break; }
-    }
-    if (chromiumBin) {
-      globalState.addLog('info', `🚀 Usando binário: ${chromiumBin}`);
-    } else {
-      globalState.addLog('info', '⚠️ Brave não encontrado — usando Playwright bundled Chromium');
-    }
+    for (const c of braveCandidates) { if (existsSync(c)) { chromiumBin = c; break; } }
 
-    const launchArgs = [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-blink-features=AutomationControlled',
-      '--disable-infobars',
-      '--disable-dev-shm-usage',
-      '--no-first-run',
-      '--no-default-browser-check',
-      `--proxy-server=${proxies.length > 0 ? proxies[0] : ''}`,
-    ];
-
+    globalState.addLog('info', chromiumBin ? `🚀 Usando: ${chromiumBin}` : '⚠️ Usando Playwright Chromium');
     globalState.addLog('info', `🚀 Iniciando browser (headless=${headless})...`);
+
     browserInstance = await (chromiumExtra as unknown as BrowserType).launch({
       headless,
       ...(chromiumBin ? { executablePath: chromiumBin } : {}),
-      args: launchArgs,
+      args: [
+        '--no-sandbox', '--disable-setuid-sandbox',
+        '--disable-blink-features=AutomationControlled',
+        '--disable-infobars', '--disable-dev-shm-usage',
+        '--no-first-run', '--no-default-browser-check',
+        `--proxy-server=${proxyKey}`,
+      ],
     });
     lastProxyConfig = proxyKey;
     globalState.addLog('info', '✅ Browser iniciado');
@@ -393,53 +394,30 @@ export class MockPlaywrightFlow {
 
   static async execute(
     cadastroUrl: string,
-    config: {
-      emailProvider: EmailProvider;
-      tempMailApiKey: string;
-      otpTimeout: number;
-      extraDelay: number;
-      inviteCode: string;
-    },
+    config: { emailProvider: EmailProvider; tempMailApiKey: string; otpTimeout: number; extraDelay: number; inviteCode: string },
     cycle: number
   ): Promise<void> {
-    if (!browserInstance) throw new Error('Browser não iniciado — chame MockPlaywrightFlow.init() primeiro');
-
-    const cyclePromise = new Promise<void>((resolve, reject) => {
-      MockPlaywrightFlow._executarCiclo(cadastroUrl, config, cycle, reject)
-        .then(resolve)
-        .catch(reject);
-    });
-
+    if (!browserInstance) throw new Error('Browser não iniciado');
+    const cyclePromise = MockPlaywrightFlow._run(cadastroUrl, config, cycle);
     const timeoutPromise = new Promise<void>((_, reject) =>
-      setTimeout(
-        () => reject(new Error(`⏰ CYCLE_TIMEOUT: ciclo ${cycle} excedeu ${CYCLE_TIMEOUT_MS / 1000}s`)),
-        CYCLE_TIMEOUT_MS
-      )
+      setTimeout(() => reject(new Error(`⏰ CYCLE_TIMEOUT ${cycle}`)), CYCLE_TIMEOUT_MS)
     );
-
     await Promise.race([cyclePromise, timeoutPromise]).catch(e => {
       globalState.addLog('error', `❌ Ciclo ${cycle} abortado: ${e instanceof Error ? e.message : e}`, cycle);
       throw e;
     });
   }
 
-  private static async _executarCiclo(
+  private static async _run(
     cadastroUrl: string,
-    config: {
-      emailProvider: EmailProvider;
-      tempMailApiKey: string;
-      otpTimeout: number;
-      extraDelay: number;
-      inviteCode: string;
-    },
-    cycle: number,
-    _onError: (e: Error) => void
+    config: { emailProvider: EmailProvider; tempMailApiKey: string; otpTimeout: number; extraDelay: number; inviteCode: string },
+    cycle: number
   ): Promise<void> {
     const state = globalState.getState() as State & { proxies?: string[] };
     const proxies: string[] = state.proxies ?? [];
     const proxyUrl = proxies.length > 0 ? proxies[cycle % proxies.length] : undefined;
 
-    const contextOptions: Parameters<Browser['newContext']>[0] = {
+    const ctxOpts: Parameters<Browser['newContext']>[0] = {
       ...devices['Desktop Chrome'],
       locale: 'fr-FR',
       timezoneId: 'Europe/Paris',
@@ -448,23 +426,21 @@ export class MockPlaywrightFlow {
     };
 
     if (proxyUrl) {
-      let server = proxyUrl;
-      let username: string | undefined;
-      let password: string | undefined;
       try {
         const u = new URL(proxyUrl.startsWith('http') ? proxyUrl : `http://${proxyUrl}`);
-        server = `${u.protocol}//${u.hostname}:${u.port}`;
-        if (u.username) { username = decodeURIComponent(u.username); password = decodeURIComponent(u.password); }
-      } catch { /* usa raw */ }
-      contextOptions.proxy = { server, username, password };
-      globalState.addLog('info', `🌐 Usando proxy: ${server}`, cycle);
+        ctxOpts.proxy = {
+          server: `${u.protocol}//${u.hostname}:${u.port}`,
+          username: u.username ? decodeURIComponent(u.username) : undefined,
+          password: u.password ? decodeURIComponent(u.password) : undefined,
+        };
+        globalState.addLog('info', `🌐 Proxy: ${ctxOpts.proxy.server}`, cycle);
+      } catch { ctxOpts.proxy = { server: proxyUrl }; }
     } else {
-      globalState.addLog('info', '🌐 Sem proxy — usando rede do sistema (VPN)', cycle);
+      globalState.addLog('info', '🌐 Sem proxy (VPN)', cycle);
     }
 
-    const context = await browserInstance!.newContext(contextOptions);
+    const context = await browserInstance!.newContext(ctxOpts);
     const p = await context.newPage();
-
     p.setDefaultTimeout(20_000);
     p.setDefaultNavigationTimeout(30_000);
 
@@ -474,46 +450,27 @@ export class MockPlaywrightFlow {
       globalState.addLog('info', `📧 Email: ${email}`, cycle);
 
       globalState.addLog('info', `🌐 Navegando para ${cadastroUrl}...`, cycle);
-
-      // domcontentloaded é instantâneo; aguarda o campo de email manualmente
-      // para evitar timeout de networkidle em conexões lentas.
       await p.goto(cadastroUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
 
-      // Aguarda o SPA hidratar (campo de email ou botão visível)
-      const READY_SEL = 'input[type="email"], input[name="email"], input[placeholder*="email" i], input[autocomplete="email"], button[type="submit"]';
-      await p.waitForSelector(READY_SEL, { state: 'visible', timeout: 20_000 });
-      await sleep(800);
-
+      // Aguarda campo de email ou tela inicial carregar
+      await p.waitForSelector(
+        'input[type="email"], input[autocomplete="email"], #EMAIL, #EMAIL_ADDRESS',
+        { state: 'visible', timeout: 20_000 }
+      );
+      await sleep(600);
       await dismissModals(p, cycle);
 
-      const step = await detectCurrentStep(p);
-      globalState.addLog('info', `📍 Passo atual detectado: ${step}`, cycle);
-
+      // ── Fluxo principal ──
       await stepEmail(p, email, cycle);
-      await sleep(1000);
-      await stepPassword(p, 'Uber2024!', cycle);
-      await sleep(800);
       await stepOTP(p, emailClient, email, config.otpTimeout, cycle);
-      await sleep(1000);
-
-      await dismissModals(p, cycle);
+      await stepPassword(p, cycle);
       await stepPersonalInfo(p, cycle);
-      await sleep(800);
-      await stepPhoneNumber(p, cycle);
-      await sleep(800);
-      await stepCitySelection(p, cycle);
-      await sleep(800);
-
-      let attempts = 0;
-      while (attempts < 10) {
-        const currentStep = await detectCurrentStep(p);
-        if (currentStep === 'complete') break;
-        await dismissModals(p, cycle);
-        const advanced = await clickForwardButton(p, cycle);
-        if (!advanced) break;
-        await sleep(1200);
-        attempts++;
-      }
+      await stepPhone(p, cycle);
+      await stepTerms(p, cycle);
+      await stepCity(p, config.inviteCode, cycle);
+      await stepWhatsApp(p, cycle);
+      await stepHubPhotoClick(p, cycle);
+      await stepProfilePhoto(p, cycle);
 
       if (config.extraDelay > 0) {
         globalState.addLog('info', `⏳ Extra delay: ${config.extraDelay}ms`, cycle);
