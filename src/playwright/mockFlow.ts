@@ -8,7 +8,6 @@ import { createEmailClient } from '../tempMail/client';
 
 chromiumExtra.use(StealthPlugin());
 
-const CADASTRO_URL = 'https://bonjour.uber.com';
 const CYCLE_TIMEOUT_MS = 8 * 60 * 1_000;
 
 type State = ReturnType<typeof globalState.getState>;
@@ -30,38 +29,36 @@ async function hasElement(p: Page, sel: string, timeout = 600): Promise<boolean>
   return p.locator(sel).first().isVisible({ timeout }).catch(() => false);
 }
 
+// ─── SPINNER ──────────────────────────────────────────────────────────────────
+
+const SPINNER_SEL = [
+  '[data-testid="loading_component"]',
+  '[data-testid="spinner"]',
+  '[data-testid="loading_component_SessionVerification"]',
+].join(', ');
+
 /**
- * Aguarda o spinner/loading do Uber desaparecer.
- * O Uber usa polling XHR (não fica networkidle), então precisamos
- * esperar o elemento de loading sair do DOM / ficar hidden.
- * Timeout máximo: 30s.
+ * Aguarda todos os spinners/loadings do Uber sumirem.
+ * O Uber usa polling XHR — networkidle nunca dispara.
  */
 async function waitForSpinner(p: Page, cycle: number, maxMs = 30_000): Promise<void> {
-  const SPINNER_SEL = '[data-testid="loading_component"], [data-testid="spinner"], [data-testid="loading_component_SessionVerification"]';
-  const start = Date.now();
-
-  // Só espera se o spinner estiver visível agora
-  const visible = await hasElement(p, SPINNER_SEL, 1000);
+  const visible = await hasElement(p, SPINNER_SEL, 1200);
   if (!visible) return;
 
-  globalState.addLog('info', '⏳ Aguardando spinner desaparecer...', cycle);
+  globalState.addLog('info', '⏳ Aguardando spinner...', cycle);
+  const start = Date.now();
 
   while (Date.now() - start < maxMs) {
-    const still = await hasElement(p, SPINNER_SEL, 400);
-    if (!still) {
+    if (!(await hasElement(p, SPINNER_SEL, 400))) {
       globalState.addLog('info', '✔️ Spinner sumiu', cycle);
-      await sleep(600); // margem extra para React re-renderizar
+      await sleep(600);
       return;
     }
-    await sleep(500);
+    await sleep(400);
   }
-  globalState.addLog('warn', '⚠️ Spinner ainda visível após timeout — continuando mesmo assim', cycle);
+  globalState.addLog('warn', '⚠️ Spinner timeout — continuando mesmo assim', cycle);
 }
 
-/**
- * Aguarda a página estabilizar após clique de navegação.
- * Primeiro deixa o networkidle tentar (2s), depois chama waitForSpinner.
- */
 async function waitForPageSettle(p: Page, cycle: number, ms = 3000): Promise<void> {
   await Promise.race([
     p.waitForLoadState('networkidle', { timeout: ms }).catch(() => {}),
@@ -70,6 +67,33 @@ async function waitForPageSettle(p: Page, cycle: number, ms = 3000): Promise<voi
   await waitForSpinner(p, cycle);
   await sleep(300);
 }
+
+// ─── DETECÇÃO DE TELA ATUAL ───────────────────────────────────────────────────
+
+/**
+ * Retorna qual tela o Uber está mostrando agora.
+ * Usado para decidir qual step executar, independente da ordem.
+ */
+async function detectScreen(p: Page): Promise<string> {
+  const checks: Array<[string, string]> = [
+    ['otp',      'input[autocomplete="one-time-code"], input[inputmode="numeric"][maxlength]'],
+    ['phone',    '[data-testid="PHONE_COUNTRY_CODE"], [data-testid="country-code"], #PHONE_NUMBER, input[autocomplete="tel-national"]'],
+    ['password', '#PASSWORD, input[autocomplete="new-password"], input[type="password"]'],
+    ['name',     '#FIRST_NAME, input[autocomplete="given-name"]'],
+    ['terms',    'input[type="checkbox"], [role="checkbox"], [data-testid="accept-terms"]'],
+    ['city',     '[data-testid*="city"], input[placeholder*="city" i], input[placeholder*="ville" i], input[placeholder*="cidade" i]'],
+    ['whatsapp', '[data-testid="step-bottom-navigation"]'],
+    ['hub',      '[data-testid="hub"], [data-testid*="profilePhoto"], [data-testid*="stepItem"]'],
+    ['photo',    '[data-testid="step profilePhoto"], [data-testid="docUploadButton"]'],
+    ['email',    'input[type="email"], input[autocomplete="email"], #EMAIL'],
+  ];
+  for (const [name, sel] of checks) {
+    if (await hasElement(p, sel, 800)) return name;
+  }
+  return 'unknown';
+}
+
+// ─── HELPERS ─────────────────────────────────────────────────────────────────
 
 async function fillById(p: Page, id: string, value: string, label: string, cycle: number): Promise<void> {
   const el = p.locator(`#${id}, [id="${id}"]`).first();
@@ -88,13 +112,10 @@ async function fillById(p: Page, id: string, value: string, label: string, cycle
 async function clickForward(p: Page, cycle: number): Promise<void> {
   const el = p.locator('[data-testid="forward-button"]').first();
   await el.waitFor({ state: 'visible', timeout: 15_000 });
-  let enabled = false;
   for (let i = 0; i < 25; i++) {
-    enabled = await el.isEnabled({ timeout: 200 }).catch(() => false);
-    if (enabled) break;
+    if (await el.isEnabled({ timeout: 200 }).catch(() => false)) break;
     await sleep(200);
   }
-  if (!enabled) throw new Error('forward-button nunca habilitou');
   await el.scrollIntoViewIfNeeded();
   await sleep(200 + Math.random() * 100);
   await el.click();
@@ -136,7 +157,7 @@ async function stepOTP(
   cycle: number
 ): Promise<void> {
   globalState.addLog('info', '🔢 [2] Aguardando OTP...', cycle);
-  const OTP_SEL = 'input[autocomplete="one-time-code"], input[inputmode="numeric"], input[maxlength="1"]';
+  const OTP_SEL = 'input[autocomplete="one-time-code"], input[inputmode="numeric"][maxlength], input[maxlength="1"]';
   await p.waitForSelector(OTP_SEL, { state: 'visible', timeout: 20_000 });
   globalState.addLog('info', '✔️ Tela OTP detectada', cycle);
 
@@ -167,7 +188,9 @@ async function stepOTP(
   }
 
   await sleep(800);
-  const fwdVisible = await hasElement(p, '[data-testid="forward-button"]', 1000);
+
+  // Tenta forward-button; se não existir, tenta submit
+  const fwdVisible = await hasElement(p, '[data-testid="forward-button"]', 1500);
   if (fwdVisible) {
     await clickForward(p, cycle);
   } else {
@@ -178,35 +201,102 @@ async function stepOTP(
       await waitForPageSettle(p, cycle, 4000);
     }
   }
+
+  // CRÍTICO: após OTP o Uber redireciona para telefone — esperar spinner sumir
+  await waitForSpinner(p, cycle, 20_000);
 }
 
 async function stepPhone(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '📱 [3] Telefone...', cycle);
-  const visible = await hasElement(p, '#PHONE_NUMBER, input[autocomplete="tel-national"]', 5000);
-  if (!visible) {
-    globalState.addLog('info', '⏩ Tela de telefone não encontrada — pulando', cycle);
+  await waitForSpinner(p, cycle, 10_000);
+
+  // Uber usa PHONE_COUNTRY_CODE (testid) + campo de número separado
+  const PHONE_CANDIDATES = [
+    '#PHONE_NUMBER',
+    'input[autocomplete="tel-national"]',
+    '[data-testid="PHONE_COUNTRY_CODE"] ~ input',
+    '[data-testid="PHONE_COUNTRY_CODE"] + input',
+    // campo de número ao lado do seletor de país
+    'input[data-testid*="phone" i]',
+    'input[placeholder*="phone" i]',
+    'input[placeholder*="téléphone" i]',
+    'input[placeholder*="telefone" i]',
+    'input[type="tel"]',
+  ];
+
+  let phoneInput: string | null = null;
+  for (const sel of PHONE_CANDIDATES) {
+    if (await hasElement(p, sel, 2000)) { phoneInput = sel; break; }
+  }
+
+  if (!phoneInput) {
+    // Último recurso: pega qualquer input numérico visível que não seja OTP
+    const found = await p.evaluate(() => {
+      const inputs = Array.from(document.querySelectorAll('input')) as HTMLInputElement[];
+      const tel = inputs.find(i =>
+        (i.type === 'tel' || i.inputMode === 'tel' || i.inputMode === 'numeric') &&
+        i.maxLength !== 1 &&
+        i.offsetParent !== null
+      );
+      return tel ? (tel.id ? `#${tel.id}` : null) : null;
+    });
+    if (found) phoneInput = found;
+  }
+
+  if (!phoneInput) {
+    const testIds = await p.evaluate(() =>
+      Array.from(document.querySelectorAll('[data-testid]'))
+        .map(el => (el as HTMLElement).dataset['testid'])
+        .filter(Boolean).slice(0, 20)
+    ).catch(() => []);
+    globalState.addLog('warn', `⏩ Tela de telefone não encontrada. testids: ${JSON.stringify(testIds)}`, cycle);
     return;
   }
+
   const telefone = gerarTelefoneFixoBR();
   globalState.addLog('info', `📞 Telefone gerado: ${telefone}`, cycle);
-  await fillById(p, 'PHONE_NUMBER', telefone, 'telefone fixo BR', cycle);
+
+  // Extrai só os dígitos (sem DDD formatado) para preencher no campo
+  const digitosApenas = telefone.replace(/\D/g, '').slice(2); // remove DDD, mantém 8 dígitos
+  const el = p.locator(phoneInput).first();
+  await el.scrollIntoViewIfNeeded();
+  await sleep(200);
+  await el.click({ clickCount: 3 });
+  await p.keyboard.press('Delete');
+  await sleep(80);
+  await el.pressSequentially(digitosApenas, { delay: 60 + Math.random() * 40 });
+  globalState.addLog('info', `✔️ fill telefone via: ${phoneInput}`, cycle);
+
   await clickForward(p, cycle);
 }
 
 async function stepPassword(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '🔒 [4] Senha...', cycle);
-  const visible = await hasElement(p, '#PASSWORD, input[autocomplete="new-password"]', 5000);
+  await waitForSpinner(p, cycle, 10_000);
+  const visible = await hasElement(p, '#PASSWORD, input[autocomplete="new-password"], input[type="password"]', 8000);
   if (!visible) {
     globalState.addLog('info', '⏩ Tela de senha não encontrada — pulando', cycle);
     return;
   }
-  await fillById(p, 'PASSWORD', 'Uber2024@', 'senha', cycle);
+  // tenta #PASSWORD primeiro, depois qualquer password input
+  const hasPwdId = await hasElement(p, '#PASSWORD', 500);
+  if (hasPwdId) {
+    await fillById(p, 'PASSWORD', 'Uber2024@', 'senha', cycle);
+  } else {
+    const el = p.locator('input[autocomplete="new-password"], input[type="password"]').first();
+    await el.click({ clickCount: 3 });
+    await p.keyboard.press('Delete');
+    await sleep(60);
+    await el.pressSequentially('Uber2024@', { delay: 60 });
+    globalState.addLog('info', '✔️ fill [password]: senha', cycle);
+  }
   await clickForward(p, cycle);
 }
 
 async function stepPersonalInfo(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '👤 [5] Nome...', cycle);
-  const visible = await hasElement(p, '#FIRST_NAME, input[autocomplete="given-name"]', 5000);
+  await waitForSpinner(p, cycle, 10_000);
+  const visible = await hasElement(p, '#FIRST_NAME, input[autocomplete="given-name"]', 8000);
   if (!visible) {
     globalState.addLog('info', '⏩ Tela de nome não encontrada — pulando', cycle);
     return;
@@ -223,12 +313,14 @@ async function stepPersonalInfo(p: Page, cycle: number): Promise<void> {
 
 async function stepTerms(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '📝 [6] Termos...', cycle);
+  await waitForSpinner(p, cycle, 10_000);
 
   const TELA_SEL = [
     '[data-testid="accept-terms"]',
     'text=Concordo',
     'text=Aceite os Termos',
     'input[type="checkbox"]',
+    '[role="checkbox"]',
   ];
   let telaFound = false;
   for (const sel of TELA_SEL) {
@@ -243,11 +335,11 @@ async function stepTerms(p: Page, cycle: number): Promise<void> {
 
   const CHECKBOX_CANDIDATES = [
     'input[type="checkbox"]',
+    '[role="checkbox"]',
     'label:has-text("Concordo")',
     'text=Concordo',
     '[data-testid="accept-terms"] ~ * input',
     '[data-testid="accept-terms"] ~ * label',
-    '[role="checkbox"]',
   ];
 
   let clicked = false;
@@ -276,25 +368,20 @@ async function stepTerms(p: Page, cycle: number): Promise<void> {
       if (concordo) { concordo.click(); return true; }
       return false;
     });
-    if (jsClicked) {
-      globalState.addLog('info', '✔️ checkbox clicado via JS evaluate', cycle);
-    } else {
-      globalState.addLog('warn', '⚠️ Não encontrou checkbox — tentando forward mesmo assim', cycle);
-    }
+    globalState.addLog(jsClicked ? 'info' : 'warn',
+      jsClicked ? '✔️ checkbox clicado via JS evaluate' : '⚠️ Não encontrou checkbox — tentando forward mesmo assim',
+      cycle);
   }
 
   await sleep(600);
   await clickForward(p, cycle);
-  // Após termos o Uber faz verificação de sessão — esperar spinner sumir
+  // Após termos o Uber faz verificação de sessão — pode demorar até 45s
   await waitForSpinner(p, cycle, 45_000);
 }
 
-/**
- * [7] Cidade + código de indicação
- * Aguarda spinner antes de tentar detectar o campo.
- */
 async function stepCity(p: Page, inviteCode: string, cycle: number): Promise<void> {
   globalState.addLog('info', '🏢 [7] Cidade...', cycle);
+  await waitForSpinner(p, cycle, 20_000);
 
   const CITY_CANDIDATES = [
     '[data-testid="flow-type-city-selector-v2-input"]',
@@ -309,15 +396,14 @@ async function stepCity(p: Page, inviteCode: string, cycle: number): Promise<voi
 
   let cityInput: string | null = null;
   for (const sel of CITY_CANDIDATES) {
-    if (await hasElement(p, sel, 15_000)) { cityInput = sel; break; }
+    if (await hasElement(p, sel, 12_000)) { cityInput = sel; break; }
   }
 
   if (!cityInput) {
     const testIds = await p.evaluate(() =>
       Array.from(document.querySelectorAll('[data-testid]'))
         .map(el => (el as HTMLElement).dataset['testid'])
-        .filter(Boolean)
-        .slice(0, 20)
+        .filter(Boolean).slice(0, 20)
     ).catch(() => []);
     globalState.addLog('warn', `⏩ Cidade não encontrada. testids: ${JSON.stringify(testIds)}`, cycle);
     return;
@@ -336,18 +422,15 @@ async function stepCity(p: Page, inviteCode: string, cycle: number): Promise<voi
   await sleep(1500);
 
   const OPTION_CANDIDATES = [
-    '[role="option"]',
-    '[role="listitem"]',
-    '[data-testid*="suggestion"]',
-    '[data-testid*="option"]',
-    'li[data-value]',
-    'ul li',
+    '[role="option"]', '[role="listitem"]',
+    '[data-testid*="suggestion"]', '[data-testid*="option"]',
+    'li[data-value]', 'ul li',
   ];
   for (const sel of OPTION_CANDIDATES) {
     const opt = p.locator(sel).first();
     if (await opt.isVisible({ timeout: 2000 }).catch(() => false)) {
       await opt.click();
-      globalState.addLog('info', `✔️ cidade selecionada da lista via: ${sel}`, cycle);
+      globalState.addLog('info', `✔️ cidade selecionada via: ${sel}`, cycle);
       break;
     }
   }
@@ -357,10 +440,8 @@ async function stepCity(p: Page, inviteCode: string, cycle: number): Promise<voi
   if (inviteCode) {
     const CODE_CANDIDATES = [
       '[data-testid="signup-step::invite-code-input"]',
-      '[data-testid*="invite"]',
-      '[data-testid*="referral"]',
-      'input[placeholder*="código" i]',
-      'input[placeholder*="code" i]',
+      '[data-testid*="invite"]', '[data-testid*="referral"]',
+      'input[placeholder*="código" i]', 'input[placeholder*="code" i]',
     ];
     for (const sel of CODE_CANDIDATES) {
       if (await hasElement(p, sel, 1000)) {
@@ -384,7 +465,6 @@ async function stepCity(p: Page, inviteCode: string, cycle: number): Promise<voi
   }
 }
 
-/** [8] WhatsApp opt-in */
 async function stepWhatsApp(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '📲 [8] WhatsApp opt-in...', cycle);
   await waitForSpinner(p, cycle, 10_000);
@@ -401,7 +481,6 @@ async function stepWhatsApp(p: Page, cycle: number): Promise<void> {
   }
 }
 
-/** [9] Hub — clica em Foto do perfil (OPCIONAL) */
 async function stepHubPhotoClick(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '🏠 [9] Hub — aguardando...', cycle);
   await waitForSpinner(p, cycle, 15_000);
@@ -424,8 +503,7 @@ async function stepHubPhotoClick(p: Page, cycle: number): Promise<void> {
     const testIds = await p.evaluate(() =>
       Array.from(document.querySelectorAll('[data-testid]'))
         .map(el => (el as HTMLElement).dataset['testid'])
-        .filter(Boolean)
-        .slice(0, 20)
+        .filter(Boolean).slice(0, 20)
     ).catch(() => []);
     globalState.addLog('info', `⏩ Hub não encontrado. testids: ${JSON.stringify(testIds)}`, cycle);
     return;
@@ -442,7 +520,6 @@ async function stepHubPhotoClick(p: Page, cycle: number): Promise<void> {
   }
 }
 
-/** [10] Foto do perfil (OPCIONAL) */
 async function stepProfilePhoto(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '📸 [10] Tirar foto do perfil...', cycle);
   const PHOTO_PAGE = '[data-testid="step profilePhoto"], [data-testid="docUploadButton"], button:has-text("Tirar foto"), button:has-text("Prendre une photo")';
