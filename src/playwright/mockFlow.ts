@@ -368,7 +368,6 @@ async function stepPersonalInfo(p: Page, cycle: number): Promise<void> {
   await clickForward(p, cycle);
 
   // Aguarda ativamente a próxima tela (termos, cidade ou spinner)
-  // sem depender de networkidle que nunca dispara no Uber
   await waitForNextScreen(p, cycle, [
     'input[type="checkbox"]',
     '[role="checkbox"]',
@@ -443,7 +442,19 @@ async function stepTerms(p: Page, cycle: number): Promise<void> {
 
   await sleep(600);
   await clickForward(p, cycle);
-  await waitForSpinner(p, cycle, 45_000);
+
+  // Aguarda ativamente a tela de cidade após os termos
+  // O Uber mostra spinner após aceitar os termos que pode durar vários segundos
+  await waitForNextScreen(p, cycle, [
+    '[data-testid="flow-type-city-selector-v2-input"]',
+    '[data-testid="city-selector-input"]',
+    '[data-testid*="city"]',
+    'input[placeholder*="cidade" i]',
+    'input[placeholder*="city" i]',
+    '[data-testid="step-bottom-navigation"]',
+    '[data-testid="hub"]',
+    SPINNER_SEL,
+  ], 60_000);
 }
 
 async function stepCity(
@@ -453,7 +464,18 @@ async function stepCity(
   cityName = 'São Paulo'
 ): Promise<void> {
   globalState.addLog('info', '🏢 [7] Cidade...', cycle);
-  await waitForSpinner(p, cycle, 45_000);
+
+  // Aguarda o spinner sumir E o input de cidade aparecer
+  // (o Uber pode demorar bastante para carregar esta tela após os termos)
+  await waitForNextScreen(p, cycle, [
+    '[data-testid="flow-type-city-selector-v2-input"]',
+    '[data-testid="city-selector-input"]',
+    '[data-testid*="city"]',
+    'input[placeholder*="cidade" i]',
+    'input[placeholder*="city" i]',
+    'input[aria-label*="cidade" i]',
+    'input[aria-label*="city" i]',
+  ], 60_000);
 
   const CITY_CANDIDATES = [
     '[data-testid="flow-type-city-selector-v2-input"]',
@@ -468,7 +490,7 @@ async function stepCity(
 
   let cityInput: string | null = null;
   for (const sel of CITY_CANDIDATES) {
-    if (await hasElement(p, sel, 20_000)) { cityInput = sel; break; }
+    if (await hasElement(p, sel, 5_000)) { cityInput = sel; break; }
   }
 
   if (!cityInput) {
