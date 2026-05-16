@@ -81,7 +81,10 @@ async function detectCurrentStep(p: Page): Promise<string> {
 async function stepEmail(p: Page, email: string, cycle: number): Promise<void> {
   globalState.addLog('info', '📧 Preenchendo email...', cycle);
   const INPUT_SEL = 'input[type="email"], input[name="email"], input[placeholder*="email" i], input[autocomplete="email"]';
-  await p.waitForSelector(INPUT_SEL, { state: 'visible', timeout: 10000 });
+
+  // Aguarda até 15s pelo campo de email — dá tempo ao site de carregar completamente
+  await p.waitForSelector(INPUT_SEL, { state: 'visible', timeout: 15000 });
+
   await safeFill(p, INPUT_SEL, email, 'email', cycle);
   const BTN_SELS = [
     'button[type="submit"]',
@@ -260,11 +263,6 @@ let browserInstance: Browser | null = null;
 let lastProxyConfig: string | null = null;
 
 export class MockPlaywrightFlow {
-  /**
-   * Inicia o browser.
-   * Usa Brave/Chromium do sistema se disponível; caso contrário usa o
-   * Chromium bundled do Playwright (sem executablePath).
-   */
   static async init(headless = true): Promise<void> {
     const state = globalState.getState() as State & { proxies?: string[] };
     const proxies: string[] = state.proxies ?? [];
@@ -279,7 +277,6 @@ export class MockPlaywrightFlow {
 
     if (browserInstance) return;
 
-    // Detecta binário disponível; se nenhum → usa Playwright bundled Chromium
     const braveCandidates = [
       process.env.BRAVE_PATH,
       '/usr/bin/brave-browser',
@@ -307,7 +304,7 @@ export class MockPlaywrightFlow {
       '--disable-dev-shm-usage',
       '--no-first-run',
       '--no-default-browser-check',
-      `--proxy-server=${proxyServer}`,
+      `--proxy-server=${proxies.length > 0 ? proxies[0] : ''}`,
     ];
 
     globalState.addLog('info', `🚀 Iniciando browser (headless=${headless})...`);
@@ -394,9 +391,9 @@ export class MockPlaywrightFlow {
     const context = await browserInstance!.newContext(contextOptions);
     const p = await context.newPage();
 
-    // Timeouts por ação de UI — 20s
+    // Timeouts por ação de UI
     p.setDefaultTimeout(20_000);
-    p.setDefaultNavigationTimeout(20_000);
+    p.setDefaultNavigationTimeout(30_000);
 
     try {
       const emailClient = createEmailClient(config.emailProvider, config.tempMailApiKey);
@@ -404,8 +401,14 @@ export class MockPlaywrightFlow {
       globalState.addLog('info', `📧 Email: ${email}`, cycle);
 
       globalState.addLog('info', `🌐 Navegando para ${cadastroUrl}...`, cycle);
-      await p.goto(cadastroUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
-      await sleep(1500);
+
+      // FIX: usa 'networkidle' para garantir que o SPA terminou de renderizar
+      // antes de tentar interagir com os elementos da página.
+      await p.goto(cadastroUrl, { waitUntil: 'networkidle', timeout: 45_000 });
+
+      // Aguarda extra após navegação para sites React/SPA que renderizam após
+      // o evento networkidle (ex: Uber usa lazy hydration)
+      await sleep(2500);
 
       await dismissModals(p, cycle);
 
