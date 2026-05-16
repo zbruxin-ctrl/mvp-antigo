@@ -35,7 +35,9 @@ const MOBILE_UA =
   'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) ' +
   'Chrome/124.0.0.0 Mobile Safari/537.36';
 
-const MOBILE_VIEWPORT = { width: 390, height: 844 };
+const MOBILE_W = 390;
+const MOBILE_H = 844;
+const MOBILE_DPR = 3;
 
 // ─── SPINNER ──────────────────────────────────────────────────────────────────
 
@@ -62,9 +64,6 @@ async function waitForSpinner(p: Page, cycle: number, maxMs = 30_000): Promise<v
   globalState.addLog('warn', '⚠️ Spinner timeout — continuando mesmo assim', cycle);
 }
 
-/**
- * Aguarda ativamente até que um dos seletores concretos apareça na tela.
- */
 async function waitForNextScreen(
   p: Page,
   cycle: number,
@@ -88,10 +87,6 @@ async function waitForNextScreen(
   globalState.addLog('warn', '⚠️ Timeout aguardando próxima tela — continuando mesmo assim', cycle);
 }
 
-/**
- * Tenta detectar os seletores por até `quickMs`.
- * Se não encontrar, faz reload e aguarda até `afterReloadMs`.
- */
 async function waitOrReload(
   p: Page,
   cycle: number,
@@ -178,9 +173,7 @@ async function dismissCookieBanner(p: Page, cycle: number): Promise<void> {
     }, BANNER_SEL);
     globalState.addLog(
       removed ? 'info' : 'warn',
-      removed
-        ? '✔️ Cookie banner removido via JS (DOM remove)'
-        : '⚠️ Cookie banner não encontrado para remover',
+      removed ? '✔️ Cookie banner removido via JS (DOM remove)' : '⚠️ Cookie banner não encontrado para remover',
       cycle
     );
   }
@@ -907,20 +900,31 @@ export class MockPlaywrightFlow {
     globalState.addLog('info', chromiumBin ? `🚀 Usando: ${chromiumBin}` : '⚠️ Usando Playwright Chromium');
     globalState.addLog('info', `🚀 Iniciando browser (headless=${headless})...`);
 
+    // Tamanho físico da janela = viewport CSS * deviceScaleFactor
+    const windowW = MOBILE_W * MOBILE_DPR;  // 1170
+    const windowH = MOBILE_H * MOBILE_DPR;  // 2532
+
     browserInstance = await (chromiumExtra as unknown as BrowserType).launch({
       headless,
       ...(chromiumBin ? { executablePath: chromiumBin } : {}),
       args: [
-        '--no-sandbox', '--disable-setuid-sandbox',
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
         '--disable-blink-features=AutomationControlled',
-        '--disable-infobars', '--disable-dev-shm-usage',
-        '--no-first-run', '--no-default-browser-check',
+        '--disable-infobars',
+        '--disable-dev-shm-usage',
+        '--no-first-run',
+        '--no-default-browser-check',
+        // — Mobile window & DPI —
+        `--window-size=${windowW},${windowH}`,
+        `--force-device-scale-factor=${MOBILE_DPR}`,
+        // — Proxy —
         `--proxy-server=${proxyKey}`,
       ],
     });
     lastProxyConfig = proxyKey;
     lastHeadless = headless;
-    globalState.addLog('info', '✅ Browser iniciado');
+    globalState.addLog('info', `✅ Browser iniciado (janela ${windowW}×${windowH} @ ${MOBILE_DPR}x)`);
   }
 
   static async execute(
@@ -951,8 +955,8 @@ export class MockPlaywrightFlow {
     // Contexto Android/Chrome — UA compatível com Chromium, sem conflito Safari/WebKit
     const ctxOpts: Parameters<Browser['newContext']>[0] = {
       userAgent: MOBILE_UA,
-      viewport: MOBILE_VIEWPORT,
-      deviceScaleFactor: 3,
+      viewport: { width: MOBILE_W, height: MOBILE_H },
+      deviceScaleFactor: MOBILE_DPR,
       isMobile: true,
       hasTouch: true,
       locale: 'pt-BR',
@@ -995,16 +999,16 @@ export class MockPlaywrightFlow {
       await sleep(600);
       await dismissModals(p, cycle);
 
-      await stepEmail(p, email, cycle);                                      // 1
-      await stepOTP(p, emailClient, email, config.otpTimeout, cycle);        // 2
-      await stepPhone(p, cycle);                                             // 3
-      await stepPassword(p, cycle);                                          // 4
-      await stepPersonalInfo(p, cycle);                                      // 5
-      await stepTerms(p, cycle);                                             // 6
+      await stepEmail(p, email, cycle);                                          // 1
+      await stepOTP(p, emailClient, email, config.otpTimeout, cycle);            // 2
+      await stepPhone(p, cycle);                                                 // 3
+      await stepPassword(p, cycle);                                              // 4
+      await stepPersonalInfo(p, cycle);                                          // 5
+      await stepTerms(p, cycle);                                                 // 6
       await stepCity(p, config.inviteCode, cycle, config.cityName ?? 'São Paulo'); // 7
-      await stepWhatsApp(p, cycle);                                          // 8
-      await stepHubPhotoClick(p, cycle);                                     // 9
-      await stepProfilePhoto(p, cycle);                                      // 10
+      await stepWhatsApp(p, cycle);                                              // 8
+      await stepHubPhotoClick(p, cycle);                                         // 9
+      await stepProfilePhoto(p, cycle);                                          // 10
 
       if (config.extraDelay > 0) {
         globalState.addLog('info', `⏳ Extra delay: ${config.extraDelay}ms`, cycle);
