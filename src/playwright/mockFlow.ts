@@ -85,6 +85,30 @@ async function detectScreen(p: Page): Promise<string> {
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 
+/**
+ * Injeta um valor em um campo React controlado.
+ * O React usa nativeInputValueSetter internamente — sem isso,
+ * input.value = x não dispara onChange e o estado interno do React não atualiza.
+ */
+async function reactFill(p: Page, selector: string, value: string): Promise<void> {
+  await p.evaluate(({ sel, val }: { sel: string; val: string }) => {
+    const el = document.querySelector(sel) as HTMLInputElement | null;
+    if (!el) throw new Error(`reactFill: elemento não encontrado — "${sel}"`);
+    // Usa o setter nativo do HTMLInputElement para bypassar o React
+    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype, 'value'
+    )?.set;
+    if (nativeInputValueSetter) {
+      nativeInputValueSetter.call(el, val);
+    } else {
+      el.value = val;
+    }
+    // Dispara os eventos que o React escuta
+    el.dispatchEvent(new Event('input',  { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  }, { sel: selector, val: value });
+}
+
 async function fillById(p: Page, id: string, value: string, label: string, cycle: number): Promise<void> {
   const el = p.locator(`#${id}, [id="${id}"]`).first();
   await el.waitFor({ state: 'visible', timeout: 15_000 });
@@ -115,14 +139,11 @@ async function clickForward(p: Page, cycle: number): Promise<void> {
 
 /**
  * Gera número de celular francês válido.
- * O campo #PHONE_NUMBER do Uber espera o número COMPLETO no formato local:
- * 0XXXXXXXXX (10 dígitos, com o zero inicial / indicativo de cidade).
- * Ex: 0644905143, 0712345678
+ * Formato local: 0XXXXXXXXX (10 dígitos, zero inicial obrigatório).
  */
 function gerarTelefoneFR(): { display: string; digits: string } {
   const prefix = Math.random() < 0.5 ? '6' : '7';
   const rest = Array.from({ length: 8 }, () => Math.floor(Math.random() * 10)).join('');
-  // 10 dígitos com zero inicial — formato exigido pelo campo
   const digits = `0${prefix}${rest}`;
   const display = `0${prefix} ${rest.slice(0, 2)} ${rest.slice(2, 4)} ${rest.slice(4, 6)} ${rest.slice(6, 8)}`;
   return { display, digits };
@@ -246,16 +267,23 @@ async function stepPhone(p: Page, cycle: number): Promise<void> {
 
   const el = p.locator(phoneInput).first();
   await el.scrollIntoViewIfNeeded();
+  await el.click();
+  await sleep(150);
+
+  // 1. Seleciona todo o texto existente e apaga via teclado
+  await p.keyboard.press('Control+a');
+  await p.keyboard.press('Delete');
+  await sleep(80);
+
+  // 2. Injeta o valor via nativeInputValueSetter (compatível com React controlled inputs)
+  await reactFill(p, phoneInput, digits);
+  await sleep(150);
+
+  // 3. Dispara blur+focus para garantir que o React processe o novo valor
+  await el.evaluate((node: HTMLInputElement) => { node.blur(); node.focus(); });
   await sleep(200);
 
-  // Limpa o campo completamente com fill() antes de digitar
-  // Isso substitui qualquer valor existente (ex: prefixo +33 deixado pelo Uber)
-  await el.fill('');
-  await sleep(100);
-  await el.fill(digits);
   globalState.addLog('info', `✔️ fill telefone via: ${phoneInput}`, cycle);
-
-  await sleep(400);
 
   const hasError = await hasElement(p, '[data-testid="phone-number-error"]', 800);
   if (hasError) {
