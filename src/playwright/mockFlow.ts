@@ -37,17 +37,11 @@ const SPINNER_SEL = [
   '[data-testid="loading_component_SessionVerification"]',
 ].join(', ');
 
-/**
- * Aguarda todos os spinners/loadings do Uber sumirem.
- * O Uber usa polling XHR — networkidle nunca dispara.
- */
 async function waitForSpinner(p: Page, cycle: number, maxMs = 30_000): Promise<void> {
   const visible = await hasElement(p, SPINNER_SEL, 1200);
   if (!visible) return;
-
   globalState.addLog('info', '⏳ Aguardando spinner...', cycle);
   const start = Date.now();
-
   while (Date.now() - start < maxMs) {
     if (!(await hasElement(p, SPINNER_SEL, 400))) {
       globalState.addLog('info', '✔️ Spinner sumiu', cycle);
@@ -70,10 +64,6 @@ async function waitForPageSettle(p: Page, cycle: number, ms = 3000): Promise<voi
 
 // ─── DETECÇÃO DE TELA ATUAL ───────────────────────────────────────────────────
 
-/**
- * Retorna qual tela o Uber está mostrando agora.
- * Usado para decidir qual step executar, independente da ordem.
- */
 async function detectScreen(p: Page): Promise<string> {
   const checks: Array<[string, string]> = [
     ['otp',      'input[autocomplete="one-time-code"], input[inputmode="numeric"][maxlength]'],
@@ -123,16 +113,17 @@ async function clickForward(p: Page, cycle: number): Promise<void> {
   await waitForPageSettle(p, cycle, 3000);
 }
 
-function gerarTelefoneFixoBR(): string {
-  const ddds = ['11','21','22','24','27','28','31','32','33','34','35','37','38',
-                '41','42','43','44','45','46','47','48','49','51','53','54','55',
-                '61','62','63','64','65','66','67','68','69','71','73','74','75',
-                '77','79','81','82','83','84','85','86','87','88','89','91','92',
-                '93','94','95','96','97','98','99'];
-  const ddd = ddds[Math.floor(Math.random() * ddds.length)];
-  const primeiro = String(2 + Math.floor(Math.random() * 4));
-  const resto = Array.from({ length: 7 }, () => Math.floor(Math.random() * 10)).join('');
-  return `(${ddd}) ${primeiro}${resto.slice(0, 3)}-${resto.slice(3)}`;
+/**
+ * Gera número de celular francês válido para o campo de telefone do Uber.
+ * O campo já tem +33 selecionado, então enviamos 9 dígitos sem o zero inicial.
+ * Formato: 6XXXXXXXX ou 7XXXXXXXX (06xx ou 07xx no formato nacional).
+ */
+function gerarTelefoneFR(): { display: string; digits: string } {
+  const prefix = Math.random() < 0.5 ? '6' : '7';
+  const rest = Array.from({ length: 8 }, () => Math.floor(Math.random() * 10)).join('');
+  const digits = prefix + rest; // 9 dígitos — o que vai no campo (após +33)
+  const display = `0${prefix} ${rest.slice(0, 2)} ${rest.slice(2, 4)} ${rest.slice(4, 6)} ${rest.slice(6, 8)}`;
+  return { display, digits };
 }
 
 // ─── ETAPAS ──────────────────────────────────────────────────────────────────
@@ -189,7 +180,6 @@ async function stepOTP(
 
   await sleep(800);
 
-  // Tenta forward-button; se não existir, tenta submit
   const fwdVisible = await hasElement(p, '[data-testid="forward-button"]', 1500);
   if (fwdVisible) {
     await clickForward(p, cycle);
@@ -202,7 +192,6 @@ async function stepOTP(
     }
   }
 
-  // CRÍTICO: após OTP o Uber redireciona para telefone — esperar spinner sumir
   await waitForSpinner(p, cycle, 20_000);
 }
 
@@ -210,13 +199,11 @@ async function stepPhone(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '📱 [3] Telefone...', cycle);
   await waitForSpinner(p, cycle, 10_000);
 
-  // Uber usa PHONE_COUNTRY_CODE (testid) + campo de número separado
   const PHONE_CANDIDATES = [
     '#PHONE_NUMBER',
     'input[autocomplete="tel-national"]',
     '[data-testid="PHONE_COUNTRY_CODE"] ~ input',
     '[data-testid="PHONE_COUNTRY_CODE"] + input',
-    // campo de número ao lado do seletor de país
     'input[data-testid*="phone" i]',
     'input[placeholder*="phone" i]',
     'input[placeholder*="téléphone" i]',
@@ -230,7 +217,6 @@ async function stepPhone(p: Page, cycle: number): Promise<void> {
   }
 
   if (!phoneInput) {
-    // Último recurso: pega qualquer input numérico visível que não seja OTP
     const found = await p.evaluate(() => {
       const inputs = Array.from(document.querySelectorAll('input')) as HTMLInputElement[];
       const tel = inputs.find(i =>
@@ -253,21 +239,38 @@ async function stepPhone(p: Page, cycle: number): Promise<void> {
     return;
   }
 
-  const telefone = gerarTelefoneFixoBR();
-  globalState.addLog('info', `📞 Telefone gerado: ${telefone}`, cycle);
+  const { display, digits } = gerarTelefoneFR();
+  globalState.addLog('info', `📞 Telefone gerado: ${display} (+33 ${digits})`, cycle);
 
-  // Extrai só os dígitos (sem DDD formatado) para preencher no campo
-  const digitosApenas = telefone.replace(/\D/g, '').slice(2); // remove DDD, mantém 8 dígitos
   const el = p.locator(phoneInput).first();
   await el.scrollIntoViewIfNeeded();
   await sleep(200);
   await el.click({ clickCount: 3 });
   await p.keyboard.press('Delete');
   await sleep(80);
-  await el.pressSequentially(digitosApenas, { delay: 60 + Math.random() * 40 });
+  await el.pressSequentially(digits, { delay: 60 + Math.random() * 40 });
   globalState.addLog('info', `✔️ fill telefone via: ${phoneInput}`, cycle);
 
+  await sleep(400);
+
+  // Verifica se o Uber mostrou erro de número inválido antes de avançar
+  const hasError = await hasElement(p, '[data-testid="phone-number-error"]', 800);
+  if (hasError) {
+    const errMsg = await p.locator('[data-testid="phone-number-error"]').first().innerText().catch(() => '');
+    globalState.addLog('warn', `⚠️ Erro no telefone: "${errMsg.trim()}" — abortando ciclo`, cycle);
+    throw new Error(`Telefone rejeitado pelo Uber: ${errMsg.trim()}`);
+  }
+
   await clickForward(p, cycle);
+
+  // Checa erro novamente após clicar Avançar (Uber valida no submit também)
+  await sleep(600);
+  const hasErrorAfter = await hasElement(p, '[data-testid="phone-number-error"]', 800);
+  if (hasErrorAfter) {
+    const errMsg = await p.locator('[data-testid="phone-number-error"]').first().innerText().catch(() => '');
+    globalState.addLog('warn', `⚠️ Erro pós-submit no telefone: "${errMsg.trim()}" — abortando ciclo`, cycle);
+    throw new Error(`Telefone rejeitado pós-submit: ${errMsg.trim()}`);
+  }
 }
 
 async function stepPassword(p: Page, cycle: number): Promise<void> {
@@ -278,7 +281,6 @@ async function stepPassword(p: Page, cycle: number): Promise<void> {
     globalState.addLog('info', '⏩ Tela de senha não encontrada — pulando', cycle);
     return;
   }
-  // tenta #PASSWORD primeiro, depois qualquer password input
   const hasPwdId = await hasElement(p, '#PASSWORD', 500);
   if (hasPwdId) {
     await fillById(p, 'PASSWORD', 'Uber2024@', 'senha', cycle);
@@ -375,8 +377,6 @@ async function stepTerms(p: Page, cycle: number): Promise<void> {
 
   await sleep(600);
   await clickForward(p, cycle);
-  // CRÍTICO: após termos o Uber executa verificação de sessão (SessionVerification)
-  // — pode demorar até 45s; não pular este wait ou stepCity vai falhar.
   await waitForSpinner(p, cycle, 45_000);
 }
 
@@ -387,7 +387,6 @@ async function stepCity(
   cityName = 'Paris'
 ): Promise<void> {
   globalState.addLog('info', '🏢 [7] Cidade...', cycle);
-  // Spinner pós-termos pode ainda estar ativo — aguardar com folga
   await waitForSpinner(p, cycle, 45_000);
 
   const CITY_CANDIDATES = [
@@ -427,10 +426,8 @@ async function stepCity(
   await el.pressSequentially(cityName, { delay: 60 + Math.random() * 40 });
   globalState.addLog('info', `✔️ fill cidade: ${cityName}`, cycle);
 
-  // Aguarda o dropdown aparecer (até 5s)
   await sleep(1500);
 
-  // Seleciona a PRIMEIRA opção do dropdown do Uber
   const OPTION_CANDIDATES = [
     '[data-testid="flow-type-city-selector-v2-option"]',
     '[data-testid*="city-selector"][data-testid*="option"]',
@@ -505,7 +502,6 @@ async function stepWhatsApp(p: Page, cycle: number): Promise<void> {
 
 async function stepHubPhotoClick(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '🏠 [9] Hub — aguardando...', cycle);
-  // Hub pode demorar a carregar após a tela de cidade — usar timeout generoso
   await waitForSpinner(p, cycle, 30_000);
 
   const HUB_CANDIDATES = [
@@ -588,7 +584,6 @@ export class MockPlaywrightFlow {
     const proxies: string[] = state.proxies ?? [];
     const proxyKey = proxies[0] ?? '';
 
-    // Reinicia o browser se o proxy OU o modo headless mudou
     if (browserInstance && (lastProxyConfig !== proxyKey || lastHeadless !== headless)) {
       globalState.addLog('info', '🔄 Configuração mudou — reiniciando browser...');
       await browserInstance.close().catch(() => {});
