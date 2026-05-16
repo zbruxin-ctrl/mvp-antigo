@@ -30,24 +30,7 @@ async function hasElement(p: Page, sel: string, timeout = 600): Promise<boolean>
   return p.locator(sel).first().isVisible({ timeout }).catch(() => false);
 }
 
-/** Clica num elemento pelo data-testid */
-async function clickTestId(p: Page, testId: string, label: string, cycle: number): Promise<void> {
-  const el = p.locator(`[data-testid="${testId}"]`).first();
-  await el.waitFor({ state: 'visible', timeout: 15_000 });
-  await el.scrollIntoViewIfNeeded();
-  await sleep(250 + Math.random() * 150);
-  await el.click();
-  globalState.addLog('info', `✔️ click [${testId}]: ${label}`, cycle);
-}
-
-/** Preenche um input pelo id do elemento */
-async function fillById(
-  p: Page,
-  id: string,
-  value: string,
-  label: string,
-  cycle: number
-): Promise<void> {
+async function fillById(p: Page, id: string, value: string, label: string, cycle: number): Promise<void> {
   const el = p.locator(`#${id}, [id="${id}"]`).first();
   await el.waitFor({ state: 'visible', timeout: 15_000 });
   await el.scrollIntoViewIfNeeded();
@@ -61,14 +44,7 @@ async function fillById(
   globalState.addLog('info', `✔️ fill [#${id}]: ${label}`, cycle);
 }
 
-/** Preenche um input pelo data-testid */
-async function fillByTestId(
-  p: Page,
-  testId: string,
-  value: string,
-  label: string,
-  cycle: number
-): Promise<void> {
+async function fillByTestId(p: Page, testId: string, value: string, label: string, cycle: number): Promise<void> {
   const el = p.locator(`[data-testid="${testId}"]`).first();
   await el.waitFor({ state: 'visible', timeout: 15_000 });
   await el.scrollIntoViewIfNeeded();
@@ -82,12 +58,9 @@ async function fillByTestId(
   globalState.addLog('info', `✔️ fill [testid=${testId}]: ${label}`, cycle);
 }
 
-/** Clica no botão forward-button (Avançar) */
 async function clickForward(p: Page, cycle: number): Promise<void> {
   const el = p.locator('[data-testid="forward-button"]').first();
-  // Aguarda habilitar (React valida antes de ativar o botão)
   await el.waitFor({ state: 'visible', timeout: 15_000 });
-  // Espera até 5s pelo botão ficar enabled
   let enabled = false;
   for (let i = 0; i < 25; i++) {
     enabled = await el.isEnabled({ timeout: 200 }).catch(() => false);
@@ -101,12 +74,11 @@ async function clickForward(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '✔️ click: Avançar (forward-button)', cycle);
 }
 
-// ─── ETAPAS ──────────────────────────────────────────────────────────────────
+// ─── ETAPAS ───────────────────────────────────────────────────────────────────
 
-/** Tela 1: Email */
+/** [1] Email */
 async function stepEmail(p: Page, email: string, cycle: number): Promise<void> {
   globalState.addLog('info', '📧 [1] Email...', cycle);
-  // Campo de email: type=email ou autocomplete=email ou id=EMAIL
   const EMAIL_SEL = 'input[type="email"], input[autocomplete="email"], #EMAIL, #EMAIL_ADDRESS';
   await p.waitForSelector(EMAIL_SEL, { state: 'visible', timeout: 15_000 });
   const el = p.locator(EMAIL_SEL).first();
@@ -118,7 +90,7 @@ async function stepEmail(p: Page, email: string, cycle: number): Promise<void> {
   await sleep(1000);
 }
 
-/** Tela 2: OTP (input único autocomplete=one-time-code) */
+/** [2] OTP */
 async function stepOTP(
   p: Page,
   emailClient: ReturnType<typeof createEmailClient>,
@@ -127,8 +99,6 @@ async function stepOTP(
   cycle: number
 ): Promise<void> {
   globalState.addLog('info', '🔢 [2] Aguardando OTP...', cycle);
-
-  // Detecta tela de OTP
   const OTP_SEL = 'input[autocomplete="one-time-code"], input[inputmode="numeric"], input[maxlength="1"]';
   await p.waitForSelector(OTP_SEL, { state: 'visible', timeout: 20_000 });
   globalState.addLog('info', '✔️ Tela OTP detectada', cycle);
@@ -136,7 +106,6 @@ async function stepOTP(
   const otp = await emailClient.waitForOTP(email, otpTimeout, cycle);
   globalState.addLog('info', `🔢 OTP recebido: ${otp}`, cycle);
 
-  // Verifica se é split (vários inputs maxlength=1)
   const splitInputs = p.locator('input[maxlength="1"]');
   const splitCount = await splitInputs.count().catch(() => 0);
 
@@ -150,7 +119,6 @@ async function stepOTP(
       await sleep(50);
     }
   } else {
-    // Input único
     const el = p.locator(OTP_SEL).first();
     await el.click();
     await sleep(80);
@@ -161,15 +129,11 @@ async function stepOTP(
     globalState.addLog('info', '✔️ OTP preenchido (input único)', cycle);
   }
 
-  // Aguarda botão habilitar (React valida OTP)
   await sleep(800);
-
-  // Tenta forward-button ou botão de verificar genérico
   const fwdVisible = await hasElement(p, '[data-testid="forward-button"]', 1000);
   if (fwdVisible) {
     await clickForward(p, cycle);
   } else {
-    // Fallback: qualquer botão submit habilitado
     const btn = p.locator('button[type="submit"]:not([disabled])').first();
     if (await btn.isVisible({ timeout: 2000 }).catch(() => false)) {
       await btn.click();
@@ -179,24 +143,38 @@ async function stepOTP(
   await sleep(1000);
 }
 
-/** Tela 3: Criar senha (id=PASSWORD, autocomplete=new-password) */
-async function stepPassword(p: Page, cycle: number): Promise<void> {
-  globalState.addLog('info', '🔒 [3] Senha...', cycle);
-  const visible = await hasElement(p, '#PASSWORD, input[autocomplete="new-password"]', 2000);
+/** [3] Telefone — vem LOGO APÓS o OTP */
+async function stepPhone(p: Page, cycle: number): Promise<void> {
+  globalState.addLog('info', '📱 [3] Telefone...', cycle);
+  const visible = await hasElement(p, '#PHONE_NUMBER, input[autocomplete="tel-national"]', 3000);
   if (!visible) {
-    globalState.addLog('info', '⏩ Tela de senha não encontrada — pulando', cycle);
+    globalState.addLog('info', '⏩ Tela de telefone não encontrada — pulando', cycle);
     return;
   }
-  const senha = 'Uber2024@';
-  await fillById(p, 'PASSWORD', senha, 'senha', cycle);
+  const prefix = Math.random() < 0.5 ? '06' : '07';
+  const rest = Array.from({ length: 8 }, () => Math.floor(Math.random() * 10)).join('');
+  await fillById(p, 'PHONE_NUMBER', prefix + rest, 'telefone', cycle);
   await clickForward(p, cycle);
   await sleep(1000);
 }
 
-/** Tela 4: Nome e Sobrenome (id=FIRST_NAME / LAST_NAME) */
+/** [4] Criar senha */
+async function stepPassword(p: Page, cycle: number): Promise<void> {
+  globalState.addLog('info', '🔒 [4] Senha...', cycle);
+  const visible = await hasElement(p, '#PASSWORD, input[autocomplete="new-password"]', 3000);
+  if (!visible) {
+    globalState.addLog('info', '⏩ Tela de senha não encontrada — pulando', cycle);
+    return;
+  }
+  await fillById(p, 'PASSWORD', 'Uber2024@', 'senha', cycle);
+  await clickForward(p, cycle);
+  await sleep(1000);
+}
+
+/** [5] Nome e Sobrenome */
 async function stepPersonalInfo(p: Page, cycle: number): Promise<void> {
-  globalState.addLog('info', '👤 [4] Nome...', cycle);
-  const visible = await hasElement(p, '#FIRST_NAME, input[autocomplete="given-name"]', 2000);
+  globalState.addLog('info', '👤 [5] Nome...', cycle);
+  const visible = await hasElement(p, '#FIRST_NAME, input[autocomplete="given-name"]', 3000);
   if (!visible) {
     globalState.addLog('info', '⏩ Tela de nome não encontrada — pulando', cycle);
     return;
@@ -212,32 +190,14 @@ async function stepPersonalInfo(p: Page, cycle: number): Promise<void> {
   await sleep(1000);
 }
 
-/** Tela 5: Número de celular (id=PHONE_NUMBER, autocomplete=tel-national) */
-async function stepPhone(p: Page, cycle: number): Promise<void> {
-  globalState.addLog('info', '📱 [5] Telefone...', cycle);
-  const visible = await hasElement(p, '#PHONE_NUMBER, input[autocomplete="tel-national"]', 2000);
-  if (!visible) {
-    globalState.addLog('info', '⏩ Tela de telefone não encontrada — pulando', cycle);
-    return;
-  }
-  // Gera número celular francês (06/07 + 8 dígitos)
-  const prefix = Math.random() < 0.5 ? '06' : '07';
-  const rest = Array.from({ length: 8 }, () => Math.floor(Math.random() * 10)).join('');
-  await fillById(p, 'PHONE_NUMBER', prefix + rest, 'telefone', cycle);
-  await clickForward(p, cycle);
-  await sleep(1000);
-}
-
-/** Tela 6: Aceitar termos (checkbox + forward-button) */
+/** [6] Aceitar termos */
 async function stepTerms(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '📝 [6] Termos...', cycle);
-  // Detecta pelo testId accept-terms ou pelo checkbox
-  const visible = await hasElement(p, '[data-testid="accept-terms"], input[type="checkbox"]', 2000);
+  const visible = await hasElement(p, '[data-testid="accept-terms"], input[type="checkbox"]', 3000);
   if (!visible) {
     globalState.addLog('info', '⏩ Tela de termos não encontrada — pulando', cycle);
     return;
   }
-  // Clica no checkbox "Concordo"
   const checkbox = p.locator('input[type="checkbox"]').first();
   if (await checkbox.isVisible({ timeout: 1000 }).catch(() => false)) {
     await checkbox.click();
@@ -248,7 +208,7 @@ async function stepTerms(p: Page, cycle: number): Promise<void> {
   await sleep(1000);
 }
 
-/** Tela 7: Cidade + código de indicação (testId=flow-type-city-selector-v2-input) */
+/** [7] Cidade + código de indicação */
 async function stepCity(p: Page, inviteCode: string, cycle: number): Promise<void> {
   globalState.addLog('info', '🏢 [7] Cidade...', cycle);
   const visible = await hasElement(p, '[data-testid="flow-type-city-selector-v2-input"]', 3000);
@@ -256,19 +216,16 @@ async function stepCity(p: Page, inviteCode: string, cycle: number): Promise<voi
     globalState.addLog('info', '⏩ Tela de cidade não encontrada — pulando', cycle);
     return;
   }
-  // Limpa e digita cidade
   await fillByTestId(p, 'flow-type-city-selector-v2-input', '', 'limpar cidade', cycle);
   await sleep(300);
   await fillByTestId(p, 'flow-type-city-selector-v2-input', 'Paris', 'cidade', cycle);
   await sleep(1000);
-  // Seleciona primeira opção da lista
   const option = p.locator('[role="option"], [role="listitem"], [data-testid*="suggestion"]').first();
   if (await option.isVisible({ timeout: 2000 }).catch(() => false)) {
     await option.click();
     globalState.addLog('info', '✔️ cidade selecionada da lista', cycle);
   }
   await sleep(500);
-  // Código de indicação (opcional)
   if (inviteCode) {
     const codeVisible = await hasElement(p, '[data-testid="signup-step::invite-code-input"]', 1000);
     if (codeVisible) {
@@ -276,7 +233,6 @@ async function stepCity(p: Page, inviteCode: string, cycle: number): Promise<voi
       await sleep(300);
     }
   }
-  // Botão Avançar nessa tela é testId="submit-button"
   const submitBtn = p.locator('[data-testid="submit-button"]').first();
   if (await submitBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
     await submitBtn.click();
@@ -287,16 +243,14 @@ async function stepCity(p: Page, inviteCode: string, cycle: number): Promise<voi
   await sleep(1200);
 }
 
-/** Tela 8: WhatsApp opt-in — clica em "NÃO ATIVAR" */
+/** [8] WhatsApp opt-in — clica em NÃO ATIVAR */
 async function stepWhatsApp(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '📲 [8] WhatsApp opt-in...', cycle);
-  // Detecta pela imagem ou pelo testId step-bottom-navigation
   const visible = await hasElement(p, '[data-testid="step-bottom-navigation"]', 3000);
   if (!visible) {
     globalState.addLog('info', '⏩ Tela WhatsApp não encontrada — pulando', cycle);
     return;
   }
-  // Clica em "NÃO ATIVAR"
   const naoAtivar = p.locator('button:has-text("NÃO ATIVAR"), button:has-text("Nao ativar"), button:has-text("NOT NOW")');
   if (await naoAtivar.first().isVisible({ timeout: 1500 }).catch(() => false)) {
     await naoAtivar.first().click();
@@ -305,10 +259,9 @@ async function stepWhatsApp(p: Page, cycle: number): Promise<void> {
   await sleep(1200);
 }
 
-/** Tela 9: Hub — clica em "Foto do perfil" (testId=stepItem profilePhoto) */
+/** [9] Hub — clica em Foto do perfil */
 async function stepHubPhotoClick(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '🏠 [9] Hub — clicando em Foto do perfil...', cycle);
-  // Aguarda hub carregar
   await p.waitForSelector('[data-testid="hub"], [data-testid="stepItem profilePhoto"]', { state: 'visible', timeout: 15_000 });
   const photoLink = p.locator('[data-testid="stepItem profilePhoto"]').first();
   await photoLink.waitFor({ state: 'visible', timeout: 10_000 });
@@ -317,11 +270,10 @@ async function stepHubPhotoClick(p: Page, cycle: number): Promise<void> {
   await sleep(1500);
 }
 
-/** Tela 10: Foto do perfil — clica em "Tirar foto" (docUploadButton) */
+/** [10] Foto do perfil — clica em Tirar foto */
 async function stepProfilePhoto(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '📸 [10] Tirar foto do perfil...', cycle);
   await p.waitForSelector('[data-testid="step profilePhoto"], [data-testid="docUploadButton"]', { state: 'visible', timeout: 15_000 });
-  // Clica em "Tirar foto"
   const btn = p.locator('[data-testid="docUploadButton"], button:has-text("Tirar foto")').first();
   if (await btn.isVisible({ timeout: 3000 }).catch(() => false)) {
     await btn.click();
@@ -330,7 +282,7 @@ async function stepProfilePhoto(p: Page, cycle: number): Promise<void> {
   await sleep(1000);
 }
 
-// ─── DISMISS MODALS ──────────────────────────────────────────────────────────
+// ─── DISMISS MODALS ───────────────────────────────────────────────────────────
 
 async function dismissModals(p: Page, cycle: number): Promise<void> {
   const DISMISS = [
@@ -347,7 +299,7 @@ async function dismissModals(p: Page, cycle: number): Promise<void> {
   }
 }
 
-// ─── BROWSER ─────────────────────────────────────────────────────────────────
+// ─── BROWSER ──────────────────────────────────────────────────────────────────
 
 let browserInstance: Browser | null = null;
 let lastProxyConfig: string | null = null;
@@ -452,7 +404,6 @@ export class MockPlaywrightFlow {
       globalState.addLog('info', `🌐 Navegando para ${cadastroUrl}...`, cycle);
       await p.goto(cadastroUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
 
-      // Aguarda campo de email ou tela inicial carregar
       await p.waitForSelector(
         'input[type="email"], input[autocomplete="email"], #EMAIL, #EMAIL_ADDRESS',
         { state: 'visible', timeout: 20_000 }
@@ -460,17 +411,17 @@ export class MockPlaywrightFlow {
       await sleep(600);
       await dismissModals(p, cycle);
 
-      // ── Fluxo principal ──
-      await stepEmail(p, email, cycle);
-      await stepOTP(p, emailClient, email, config.otpTimeout, cycle);
-      await stepPassword(p, cycle);
-      await stepPersonalInfo(p, cycle);
-      await stepPhone(p, cycle);
-      await stepTerms(p, cycle);
-      await stepCity(p, config.inviteCode, cycle);
-      await stepWhatsApp(p, cycle);
-      await stepHubPhotoClick(p, cycle);
-      await stepProfilePhoto(p, cycle);
+      // ── Ordem correta do fluxo Uber ──
+      await stepEmail(p, email, cycle);          // 1. email
+      await stepOTP(p, emailClient, email, config.otpTimeout, cycle); // 2. OTP
+      await stepPhone(p, cycle);                 // 3. telefone  ← ANTES da senha
+      await stepPassword(p, cycle);              // 4. senha
+      await stepPersonalInfo(p, cycle);          // 5. nome/sobrenome
+      await stepTerms(p, cycle);                 // 6. termos
+      await stepCity(p, config.inviteCode, cycle); // 7. cidade
+      await stepWhatsApp(p, cycle);              // 8. whatsapp opt-in
+      await stepHubPhotoClick(p, cycle);         // 9. hub → foto do perfil
+      await stepProfilePhoto(p, cycle);          // 10. tirar foto
 
       if (config.extraDelay > 0) {
         globalState.addLog('info', `⏳ Extra delay: ${config.extraDelay}ms`, cycle);
