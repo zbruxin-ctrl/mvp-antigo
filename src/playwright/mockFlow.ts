@@ -1250,17 +1250,23 @@ export async function runCycle(config: RunCycleConfig, cycle: number): Promise<v
     p.setDefaultTimeout(20_000);
     p.setDefaultNavigationTimeout(20_000);
 
-    const payload = gerarPayloadCompleto();
-    if (config.inviteCode) (payload as any).inviteCode = config.inviteCode;
-
-    log('info', `Payload gerado: ${payload.email} / ${payload.nome} ${payload.sobrenome}`, cycle);
-
     // ─── CORRIGIDO: ordem correta dos argumentos (provider, apiKey, domain) ───
     const emailClient = createEmailClient(
       config.emailProvider,
       config.tempMailApiKey ?? '',
       config.tempmailcDomain ?? ''
     );
+
+    // FIX Bug1+Bug2: criar o email real ANTES de gerar o payload,
+    // para que payload.email contenha o endereço correto do provedor.
+    log('info', 'Criando email no provedor...', cycle);
+    const emailAccount = await emailClient.createRandomEmail();
+    log('info', `Email criado: ${emailAccount.email}`, cycle);
+
+    const payload = gerarPayloadCompleto(emailAccount);
+    if (config.inviteCode) (payload as any).inviteCode = config.inviteCode;
+
+    log('info', `Payload gerado: ${payload.email} / ${payload.nome} ${payload.sobrenome}`, cycle);
 
     try {
       await pageWarmup(p);
