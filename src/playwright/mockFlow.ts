@@ -62,6 +62,35 @@ async function waitForPageSettle(p: Page, cycle: number, ms = 3000): Promise<voi
   await sleep(300);
 }
 
+/**
+ * Aguarda ativamente até que um dos seletores concretos apareça na tela
+ * ou o spinner desapareça — o que acontecer primeiro.
+ * Resolve o problema de networkidle nunca disparar no Uber.
+ */
+async function waitForNextScreen(
+  p: Page,
+  cycle: number,
+  selectors: string[],
+  maxMs = 45_000
+): Promise<void> {
+  globalState.addLog('info', '⏳ Aguardando próxima tela...', cycle);
+  const start = Date.now();
+  while (Date.now() - start < maxMs) {
+    if (isStopped()) throw new Error('Parado pelo usuário');
+    for (const sel of selectors) {
+      if (await hasElement(p, sel, 400)) {
+        globalState.addLog('info', '✔️ Próxima tela detectada', cycle);
+        await sleep(400);
+        return;
+      }
+    }
+    // se ainda há spinner, aguarda ele sumir (máx 5s desta rodada)
+    await waitForSpinner(p, cycle, 5_000);
+    await sleep(500);
+  }
+  globalState.addLog('warn', '⚠️ Timeout aguardando próxima tela — continuando mesmo assim', cycle);
+}
+
 // ─── DETECÇÃO DE TELA ATUAL ───────────────────────────────────────────────────
 
 async function detectScreen(p: Page): Promise<string> {
@@ -302,7 +331,6 @@ async function stepPassword(p: Page, cycle: number): Promise<void> {
     return;
   }
 
-  // Tenta pelo ID primeiro; se não tiver, usa o seletor genérico
   const hasPwdId = await hasElement(p, '#PASSWORD', 500);
   const el = hasPwdId
     ? p.locator('#PASSWORD').first()
@@ -312,11 +340,9 @@ async function stepPassword(p: Page, cycle: number): Promise<void> {
   await el.scrollIntoViewIfNeeded();
   await el.click();
   await sleep(100);
-  // Seleciona tudo e apaga qualquer conteúdo preexistente
   await p.keyboard.press('Control+a');
   await p.keyboard.press('Delete');
   await sleep(80);
-  // Digita caractere a caractere para garantir que o React processa cada tecla
   await el.pressSequentially(PASSWORD, { delay: 60 + Math.random() * 40 });
   globalState.addLog('info', '✔️ fill [password]: senha digitada', cycle);
 
@@ -338,7 +364,19 @@ async function stepPersonalInfo(p: Page, cycle: number): Promise<void> {
   await fillById(p, 'FIRST_NAME', fn, 'primeiro nome', cycle);
   const hasLast = await hasElement(p, '#LAST_NAME, input[autocomplete="family-name"]', 1000);
   if (hasLast) await fillById(p, 'LAST_NAME', ln, 'sobrenome', cycle);
+
   await clickForward(p, cycle);
+
+  // Aguarda ativamente a próxima tela (termos, cidade ou spinner)
+  // sem depender de networkidle que nunca dispara no Uber
+  await waitForNextScreen(p, cycle, [
+    'input[type="checkbox"]',
+    '[role="checkbox"]',
+    '[data-testid="accept-terms"]',
+    '[data-testid*="city"]',
+    'input[placeholder*="cidade" i]',
+    SPINNER_SEL,
+  ], 45_000);
 }
 
 async function stepTerms(p: Page, cycle: number): Promise<void> {
