@@ -74,6 +74,26 @@ async function clickForward(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '✔️ click: Avançar (forward-button)', cycle);
 }
 
+/**
+ * Gera número de telefone fixo brasileiro válido.
+ * Formato esperado pelo campo: (XX) XXXX-XXXX
+ * - DDD: 11, 21, 31, 41, 51, 61, 71, 81, 91...
+ * - 8 dígitos, primeiro dígito entre 2-5 (fixo, não celular)
+ */
+function gerarTelefoneFixoBR(): string {
+  const ddds = ['11','21','22','24','27','28','31','32','33','34','35','37','38',
+                '41','42','43','44','45','46','47','48','49','51','53','54','55',
+                '61','62','63','64','65','66','67','68','69','71','73','74','75',
+                '77','79','81','82','83','84','85','86','87','88','89','91','92',
+                '93','94','95','96','97','98','99'];
+  const ddd = ddds[Math.floor(Math.random() * ddds.length)];
+  // Primeiro dígito: 2, 3, 4 ou 5 (telefone fixo)
+  const primeiro = String(2 + Math.floor(Math.random() * 4));
+  const resto = Array.from({ length: 7 }, () => Math.floor(Math.random() * 10)).join('');
+  // Formato: (11) 3456-7890 → campo aceita sem parênteses/traço também
+  return `(${ddd}) ${primeiro}${resto.slice(0, 3)}-${resto.slice(3)}`;
+}
+
 // ─── ETAPAS ───────────────────────────────────────────────────────────────────
 
 /** [1] Email */
@@ -143,7 +163,7 @@ async function stepOTP(
   await sleep(1000);
 }
 
-/** [3] Telefone — vem LOGO APÓS o OTP */
+/** [3] Telefone FIXO brasileiro — vem logo após OTP */
 async function stepPhone(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '📱 [3] Telefone...', cycle);
   const visible = await hasElement(p, '#PHONE_NUMBER, input[autocomplete="tel-national"]', 3000);
@@ -151,9 +171,9 @@ async function stepPhone(p: Page, cycle: number): Promise<void> {
     globalState.addLog('info', '⏩ Tela de telefone não encontrada — pulando', cycle);
     return;
   }
-  const prefix = Math.random() < 0.5 ? '06' : '07';
-  const rest = Array.from({ length: 8 }, () => Math.floor(Math.random() * 10)).join('');
-  await fillById(p, 'PHONE_NUMBER', prefix + rest, 'telefone', cycle);
+  const telefone = gerarTelefoneFixoBR();
+  globalState.addLog('info', `📞 Telefone gerado: ${telefone}`, cycle);
+  await fillById(p, 'PHONE_NUMBER', telefone, 'telefone fixo BR', cycle);
   await clickForward(p, cycle);
   await sleep(1000);
 }
@@ -412,16 +432,16 @@ export class MockPlaywrightFlow {
       await dismissModals(p, cycle);
 
       // ── Ordem correta do fluxo Uber ──
-      await stepEmail(p, email, cycle);          // 1. email
-      await stepOTP(p, emailClient, email, config.otpTimeout, cycle); // 2. OTP
-      await stepPhone(p, cycle);                 // 3. telefone  ← ANTES da senha
-      await stepPassword(p, cycle);              // 4. senha
-      await stepPersonalInfo(p, cycle);          // 5. nome/sobrenome
-      await stepTerms(p, cycle);                 // 6. termos
-      await stepCity(p, config.inviteCode, cycle); // 7. cidade
-      await stepWhatsApp(p, cycle);              // 8. whatsapp opt-in
-      await stepHubPhotoClick(p, cycle);         // 9. hub → foto do perfil
-      await stepProfilePhoto(p, cycle);          // 10. tirar foto
+      await stepEmail(p, email, cycle);                                  // 1
+      await stepOTP(p, emailClient, email, config.otpTimeout, cycle);    // 2
+      await stepPhone(p, cycle);                                         // 3 ← telefone fixo BR
+      await stepPassword(p, cycle);                                      // 4
+      await stepPersonalInfo(p, cycle);                                  // 5
+      await stepTerms(p, cycle);                                         // 6
+      await stepCity(p, config.inviteCode, cycle);                       // 7
+      await stepWhatsApp(p, cycle);                                      // 8
+      await stepHubPhotoClick(p, cycle);                                 // 9
+      await stepProfilePhoto(p, cycle);                                  // 10
 
       if (config.extraDelay > 0) {
         globalState.addLog('info', `⏳ Extra delay: ${config.extraDelay}ms`, cycle);
