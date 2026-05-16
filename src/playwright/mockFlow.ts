@@ -247,10 +247,12 @@ async function stepPhone(p: Page, cycle: number): Promise<void> {
   const el = p.locator(phoneInput).first();
   await el.scrollIntoViewIfNeeded();
   await sleep(200);
-  await el.click({ clickCount: 3 });
-  await p.keyboard.press('Delete');
-  await sleep(80);
-  await el.pressSequentially(digits, { delay: 60 + Math.random() * 40 });
+
+  // Limpa o campo completamente com fill() antes de digitar
+  // Isso substitui qualquer valor existente (ex: prefixo +33 deixado pelo Uber)
+  await el.fill('');
+  await sleep(100);
+  await el.fill(digits);
   globalState.addLog('info', `✔️ fill telefone via: ${phoneInput}`, cycle);
 
   await sleep(400);
