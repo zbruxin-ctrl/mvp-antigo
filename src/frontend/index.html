@@ -1023,6 +1023,27 @@
         </div>
       </div>
 
+      <!-- ── Localização ── -->
+      <div class="config-section-title" style="margin-top:var(--space-2)">Localização</div>
+
+      <div class="field">
+        <label for="cfg-city">
+          Cidade
+          <span style="margin-left:var(--space-2);font-size:10px;font-weight:400;color:var(--text-faint);text-transform:none;letter-spacing:0">
+            (nome que aparece no dropdown do Uber)
+          </span>
+        </label>
+        <input
+          type="text"
+          id="cfg-city"
+          name="cityName"
+          placeholder="Ex: Paris, São Paulo, Lyon…"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <span class="field-hint">O bot vai digitar esse nome no campo de cidade e clicar na primeira sugestão do dropdown.</span>
+      </div>
+
       <!-- ── Provedor de Email ── -->
       <div class="config-section-title" style="margin-top:var(--space-2)">Provedor de Email</div>
 
@@ -1168,388 +1189,138 @@ function closeSidebar() { sidebar.classList.remove('open'); overlay.classList.re
 /* ─── TOAST ───────────────────────────────────────────────────────────────────── */
 function toast(msg, type = 'info') {
   const el = document.createElement('div');
-  el.className = 'toast ' + type;
+  el.className = `toast ${type}`;
   el.textContent = msg;
   document.getElementById('toast-container').appendChild(el);
-  setTimeout(() => el.remove(), 3200);
+  setTimeout(() => el.remove(), 3000);
 }
 
-/* ─── CONNECTION CHECK ────────────────────────────────────────────────────────── */
-let isOnline = null;
-
-function setConnection(online) {
-  if (online === isOnline) return;
-  isOnline = online;
+/* ─── CONNECTION ──────────────────────────────────────────────────────────────── */
+function setConn(online) {
   const badge = document.getElementById('conn-badge');
-  document.getElementById('conn-text').textContent = online ? 'Online' : 'Offline';
-  if (online) {
-    badge.classList.remove('offline');
-    if (!pollTimer) { pollTimer = setInterval(() => { fetchStatus(); fetchLogs(); }, 3000); }
-  } else {
-    badge.classList.add('offline');
-    clearInterval(pollTimer);
-    pollTimer = null;
-  }
+  const text  = document.getElementById('conn-text');
+  badge.className = online ? '' : 'offline';
+  text.textContent = online ? 'Conectado' : 'Offline';
 }
 
-/* ─── API ─────────────────────────────────────────────────────────────────────── */
-async function apiFetch(path, options = {}) {
-  const res = await fetch(API + path, { headers: HEADERS, ...options });
-  if (!res.ok) throw new Error('HTTP ' + res.status);
-  return res.json();
-}
-
-async function fetchStatus() {
+/* ─── POLL ────────────────────────────────────────────────────────────────────── */
+async function poll() {
   try {
-    const data = await apiFetch('/api/status');
-    setConnection(true);
-    updateDashboard(data);
+    const [statusRes, logsRes] = await Promise.all([
+      fetch(`${API}/api/status`),
+      fetch(`${API}/api/logs`),
+    ]);
+    if (!statusRes.ok || !logsRes.ok) throw new Error('API error');
+    const status = await statusRes.json();
+    const logs   = await logsRes.json();
+    setConn(true);
+    updateDashboard(status, logs);
   } catch {
-    setConnection(false);
+    setConn(false);
   }
 }
 
-async function fetchLogs() {
-  try {
-    const data = await apiFetch('/api/logs');
-    allLogs = Array.isArray(data) ? data : [];
-    renderDashLogs();
-    const active = document.querySelector('.page.active');
-    if (active && active.id === 'page-logs') renderFullLogs();
-  } catch { /* silencia */ }
+function startPoll() {
+  poll();
+  pollTimer = setInterval(poll, 2000);
 }
 
-/* ─── ACCOUNTS ────────────────────────────────────────────────────────────────── */
-async function fetchAccounts() {
-  document.getElementById('accounts-sub').textContent = 'Carregando…';
-  try {
-    const data = await apiFetch('/api/accounts');
-    allAccounts = Array.isArray(data.accounts) ? data.accounts : [];
-    renderAccounts();
-    const badge = document.getElementById('accounts-badge');
-    if (allAccounts.length > 0) {
-      badge.textContent = allAccounts.length;
-      badge.style.display = 'flex';
-    } else {
-      badge.style.display = 'none';
-    }
-  } catch (e) {
-    document.getElementById('accounts-sub').textContent = 'Erro ao carregar contas';
-    toast('Erro ao buscar contas.', 'error');
-  }
-}
+/* ─── DASHBOARD ───────────────────────────────────────────────────────────────── */
+function updateDashboard(status, logs) {
+  // last updated
+  document.getElementById('last-updated').textContent =
+    'Atualizado às ' + new Date().toLocaleTimeString('pt-BR');
 
-function renderAccounts() {
-  const q = accountSearchQ.toLowerCase();
-  const filtered = q
-    ? allAccounts.filter(a =>
-        (a.email||'').toLowerCase().includes(q) ||
-        (a.nome||'').toLowerCase().includes(q) ||
-        (a.sobrenome||'').toLowerCase().includes(q) ||
-        String(a.cycle||'').includes(q) ||
-        (a.provider||'').toLowerCase().includes(q)
-      )
-    : allAccounts;
-
-  document.getElementById('accounts-sub').textContent =
-    `${filtered.length} conta${filtered.length !== 1 ? 's' : ''} encontrada${filtered.length !== 1 ? 's' : ''}`;
-
-  const tbody = document.getElementById('accounts-tbody');
-  if (!filtered.length) {
-    tbody.innerHTML = `<tr><td colspan="8"><div class="empty">
-      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-      <p>${q ? 'Nenhuma conta corresponde à busca.' : 'Nenhuma conta registrada ainda.'}</p>
-    </div></td></tr>`;
-    return;
-  }
-
-  tbody.innerHTML = filtered.map((a, i) => `
-    <tr>
-      <td class="mono">${i + 1}</td>
-      <td><span class="account-email" title="${escHtml(a.email)}">${escHtml(a.email||'—')}</span></td>
-      <td>${escHtml((a.nome||'') + ' ' + (a.sobrenome||''))}</td>
-      <td class="mono">${escHtml(a.telefone||'—')}</td>
-      <td><span class="account-cycle">#${a.cycle||'?'}</span></td>
-      <td>${escHtml(a.provider||'—')}</td>
-      <td class="mono">${fmtDate(a.createdAt)}</td>
-      <td style="display:flex;gap:var(--space-2);justify-content:flex-end">
-        <button class="copy-btn" onclick="openAccountModal('${escHtml(a.id)}')">Ver</button>
-        <button class="del-btn" onclick="deleteAccount('${escHtml(a.id)}')">Del</button>
-      </td>
-    </tr>`).join('');
-}
-
-document.getElementById('account-search').addEventListener('input', e => {
-  accountSearchQ = e.target.value;
-  renderAccounts();
-});
-
-document.getElementById('btn-refresh-accounts').addEventListener('click', fetchAccounts);
-
-document.getElementById('btn-export-accounts').addEventListener('click', () => {
-  if (!allAccounts.length) { toast('Sem contas para exportar.', 'error'); return; }
-  const header = 'id,ciclo,provider,nome,sobrenome,email,telefone,senha,localizacao,codigoIndicacao,createdAt\n';
-  const rows = allAccounts.map(a =>
-    [a.id, a.cycle, a.provider, a.nome, a.sobrenome, a.email, a.telefone,
-     a.senha, a.localizacao, a.codigoIndicacao, a.createdAt]
-    .map(v => `"${String(v||'').replace(/"/g,'""')}"`)
-    .join(',')
-  ).join('\n');
-  const blob = new Blob([header + rows], { type: 'text/csv' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = `contas_${Date.now()}.csv`; a.click();
-  URL.revokeObjectURL(url);
-  toast('CSV exportado!', 'success');
-});
-
-/* ─── ACCOUNT MODAL ───────────────────────────────────────────────────────────── */
-function openAccountModal(id) {
-  const acc = allAccounts.find(a => a.id === id);
-  if (!acc) return;
-  selectedAccountId = id;
-
-  const fields = [
-    ['ID', acc.id],
-    ['Ciclo', '#' + (acc.cycle||'?')],
-    ['Provedor', acc.provider||'—'],
-    ['Nome', (acc.nome||'') + ' ' + (acc.sobrenome||'')],
-    ['Email', acc.email||'—'],
-    ['Telefone', acc.telefone||'—'],
-    ['Senha', acc.senha||'—'],
-    ['Localização', acc.localizacao||'—'],
-    ['Código indicação', acc.codigoIndicacao||'—'],
-    ['Criado em', fmtDate(acc.createdAt)],
-  ];
-
-  document.getElementById('modal-detail-grid').innerHTML = fields.map(([l, v]) => `
-    <div class="detail-item">
-      <span class="detail-label">${escHtml(l)}</span>
-      <span class="detail-value">${escHtml(String(v))}</span>
-    </div>`).join('');
-
-  const cookies = acc.cookies && acc.cookies.length
-    ? JSON.stringify(acc.cookies, null, 2)
-    : 'Nenhum cookie disponível';
-  document.getElementById('modal-cookie-box').textContent = cookies;
-
-  document.getElementById('account-modal').classList.add('open');
-}
-
-document.getElementById('modal-close-btn').addEventListener('click', () => {
-  document.getElementById('account-modal').classList.remove('open');
-});
-document.getElementById('account-modal').addEventListener('click', e => {
-  if (e.target === e.currentTarget) e.currentTarget.classList.remove('open');
-});
-
-document.getElementById('modal-copy-cookies').addEventListener('click', () => {
-  const acc = allAccounts.find(a => a.id === selectedAccountId);
-  if (!acc) return;
-  const txt = JSON.stringify(acc.cookies || []);
-  navigator.clipboard.writeText(txt).then(() => toast('Cookies copiados!', 'success')).catch(() => toast('Erro ao copiar.', 'error'));
-});
-
-document.getElementById('modal-delete-btn').addEventListener('click', async () => {
-  if (!selectedAccountId) return;
-  await deleteAccount(selectedAccountId);
-  document.getElementById('account-modal').classList.remove('open');
-});
-
-async function deleteAccount(id) {
-  try {
-    await apiFetch('/api/accounts/' + id, { method: 'DELETE' });
-    allAccounts = allAccounts.filter(a => a.id !== id);
-    renderAccounts();
-    toast('Conta removida.', 'success');
-  } catch {
-    toast('Erro ao remover conta.', 'error');
-  }
-}
-
-/* ─── KYC ─────────────────────────────────────────────────────────────────────── */
-async function fetchKyc() {
-  try {
-    const data = await apiFetch('/api/kyc');
-    kycData = data || { byCycle: {} };
-    renderKyc();
-    const badge = document.getElementById('kyc-badge');
-    const confirmed = Object.values(kycData.byCycle || {})
-      .flatMap(c => Object.values(c))
-      .filter(p => p.level === 'CONFIRMED').length;
-    if (confirmed > 0) {
-      badge.textContent = confirmed;
-      badge.style.display = 'flex';
-    } else {
-      badge.style.display = 'none';
-    }
-  } catch {
-    toast('Erro ao buscar KYC.', 'error');
-  }
-}
-
-function renderKyc() {
-  const byCycle = kycData.byCycle || {};
-  const cycles = Object.keys(byCycle).sort((a,b) => Number(b)-Number(a));
-
-  let weakTotal = 0, likelyTotal = 0, confirmedTotal = 0;
-  let providerSet = new Set();
-  for (const cycleProviders of Object.values(byCycle)) {
-    for (const [provName, prov] of Object.entries(cycleProviders)) {
-      providerSet.add(provName);
-      if (prov.level === 'WEAK') weakTotal++;
-      else if (prov.level === 'LIKELY') likelyTotal++;
-      else if (prov.level === 'CONFIRMED') confirmedTotal++;
-    }
-  }
-
-  document.getElementById('kyc-count-weak').textContent      = weakTotal;
-  document.getElementById('kyc-count-likely').textContent    = likelyTotal;
-  document.getElementById('kyc-count-confirmed').textContent = confirmedTotal;
-  document.getElementById('kyc-providers-count').textContent = providerSet.size;
-
-  // Tabs
-  const tabsEl = document.getElementById('kyc-cycle-tabs');
-  if (!cycles.length) {
-    tabsEl.innerHTML = '';
-  } else {
-    if (!selectedKycCycle || !byCycle[selectedKycCycle]) selectedKycCycle = cycles[0];
-    tabsEl.innerHTML = cycles.map(c => `
-      <button class="kyc-cycle-tab${c === selectedKycCycle ? ' active' : ''}" onclick="selectKycCycle('${c}')">
-        Ciclo #${c}
-      </button>`).join('');
-  }
-
-  // Provider list
-  const listEl = document.getElementById('kyc-provider-list');
-  if (!cycles.length) {
-    listEl.innerHTML = `<div class="empty">
-      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-      <p>Nenhum sinal KYC detectado ainda. Execute um ciclo para monitorar.</p>
-    </div>`;
-    return;
-  }
-
-  const cycleData = byCycle[selectedKycCycle] || {};
-  listEl.innerHTML = Object.entries(cycleData).map(([provName, prov]) => `
-    <div class="kyc-provider-card">
-      <div class="kyc-provider-header">
-        <span class="kyc-provider-name">${escHtml(provName)}</span>
-        <span class="kyc-badge ${prov.level}">${prov.level}</span>
-        <span class="kyc-score">Score: <span>${prov.score || 0}</span></span>
-      </div>
-      <div class="kyc-signals">
-        ${(prov.signals || []).map(s => `
-          <div class="kyc-signal-item">
-            <span class="kyc-signal-weight">+${s.weight}</span>
-            <span class="kyc-signal-source">${escHtml(s.source || '')}</span>
-            <span>${escHtml(s.description || '')}</span>
-            <span class="kyc-signal-cycle">#${s.cycle || '?'}</span>
-            <span class="kyc-signal-time">${fmtDate(s.timestamp)}</span>
-          </div>`).join('')}
-      </div>
-    </div>`).join('');
-}
-
-function selectKycCycle(cycle) {
-  selectedKycCycle = cycle;
-  renderKyc();
-}
-
-document.getElementById('btn-refresh-kyc').addEventListener('click', fetchKyc);
-document.getElementById('btn-clear-kyc').addEventListener('click', async () => {
-  try {
-    await apiFetch('/api/kyc', { method: 'DELETE' });
-    kycData = { byCycle: {} };
-    renderKyc();
-    toast('KYC limpo.', 'success');
-  } catch { toast('Erro ao limpar KYC.', 'error'); }
-});
-
-/* ─── DASHBOARD UPDATE ────────────────────────────────────────────────────────── */
-function updateDashboard(data) {
+  // banner
   const dot    = document.getElementById('banner-dot');
   const label  = document.getElementById('banner-status');
   const detail = document.getElementById('banner-detail');
-  const btnStart = document.getElementById('btn-start');
-  const btnStop  = document.getElementById('btn-stop');
-  const btnOnce  = document.getElementById('btn-once');
+  const s = status.status ?? 'idle';
+  dot.className = `status-dot ${s}`;
+  const labels = { idle:'Ocioso', running:'Executando', waiting:'Aguardando', error:'Erro', stopping:'Parando' };
+  label.textContent = labels[s] ?? s;
+  detail.textContent = status.lastError ?? (s === 'running' ? `Ciclo #${status.currentCycle ?? '?'}` : 'Pronto para iniciar');
 
-  dot.className = 'status-dot';
-  const st = data.status || 'idle';
-  if (st === 'running') { dot.classList.add('running'); label.textContent = 'Rodando'; }
-  else if (st === 'waiting') { dot.classList.add('waiting'); label.textContent = 'Aguardando'; }
-  else if (st === 'stopping') { dot.classList.add('stopping'); label.textContent = 'Parando…'; }
-  else if (st === 'error') { dot.classList.add('error'); label.textContent = 'Erro'; }
-  else { label.textContent = 'Parado'; }
+  // buttons
+  const running = s === 'running' || s === 'waiting';
+  document.getElementById('btn-start').disabled = running;
+  document.getElementById('btn-once').disabled  = running;
+  document.getElementById('btn-stop').disabled  = !running;
 
-  detail.textContent = data.detail || (data.currentCycle ? `Ciclo #${data.currentCycle}` : 'Aguardando dados');
+  // kpis
+  const ok    = status.successCount ?? 0;
+  const total = status.cycleCount   ?? 0;
+  document.getElementById('kpi-ok').textContent    = ok;
+  document.getElementById('kpi-total').textContent = total;
+  document.getElementById('kpi-rate').textContent  = total > 0 ? Math.round(ok/total*100) + '%' : '—';
+  document.getElementById('kpi-mode').textContent  = status.mode === 'loop' ? '🔁 Loop' : status.mode === 'once' ? '1×' : '—';
 
-  const isActive = st === 'running' || st === 'waiting' || st === 'stopping';
-  btnStart.disabled = isActive;
-  btnStop.disabled  = !isActive;
-  btnOnce.disabled  = isActive;
+  // logs
+  allLogs = Array.isArray(logs) ? logs : (logs.logs ?? []);
+  renderDashLogs();
 
-  document.getElementById('kpi-ok').textContent    = data.successCount    ?? '—';
-  document.getElementById('kpi-total').textContent = data.totalCycles      ?? '—';
-  const rate = data.totalCycles > 0
-    ? Math.round((data.successCount / data.totalCycles) * 100) + '%'
-    : '—';
-  document.getElementById('kpi-rate').textContent = rate;
-  document.getElementById('kpi-mode').textContent = data.headless ? 'Headless' : 'Visual';
+  // cycles
+  if (status.cycles) {
+    cycleHistory = status.cycles;
+    renderCycles();
+  }
 
-  document.getElementById('last-updated').textContent = 'Atualizado ' + new Date().toLocaleTimeString('pt-BR');
+  // KYC badge
+  if (status.kyc) {
+    const confirmed = Object.values(status.kyc.byCycle ?? {})
+      .flatMap(c => (c.providers ?? []))
+      .filter(p => p.level === 'CONFIRMED').length;
+    const badge = document.getElementById('kyc-badge');
+    badge.style.display = confirmed > 0 ? '' : 'none';
+    if (confirmed > 0) badge.textContent = confirmed;
+  }
 
-  if (Array.isArray(data.cycleHistory)) {
-    cycleHistory = data.cycleHistory;
-    renderCycleHistory();
+  // Accounts badge
+  if (typeof status.accountCount === 'number') {
+    const badge = document.getElementById('accounts-badge');
+    badge.style.display = status.accountCount > 0 ? '' : 'none';
+    badge.textContent = status.accountCount;
   }
 }
 
-function renderCycleHistory() {
-  const el = document.getElementById('cycle-list');
-  if (!cycleHistory.length) {
-    el.innerHTML = `<div class="empty">
-      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-      <p>Nenhum ciclo ainda. Inicie o loop para começar.</p>
-    </div>`;
-    return;
-  }
-  el.innerHTML = [...cycleHistory].reverse().slice(0, 20).map(c => `
-    <div class="cycle-item">
-      <span class="cycle-num">#${c.cycle}</span>
-      <span class="cycle-status ${c.success ? 'ok' : (c.running ? 'run' : 'fail')}">
-        ${c.success ? 'OK' : (c.running ? 'RUN' : 'FAIL')}
-      </span>
-      <span style="flex:1;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(c.message||'')}</span>
-      <span style="color:var(--text-faint);font-family:'Geist Mono',monospace;font-size:10px">${fmtDate(c.timestamp)}</span>
-    </div>`).join('');
-}
-
-/* ─── LOG RENDER ──────────────────────────────────────────────────────────────── */
 function renderDashLogs() {
   const box = document.getElementById('dash-log-box');
-  const last = allLogs.slice(-60);
-  if (!last.length) { box.innerHTML = '<div class="log-empty">Aguardando logs…</div>'; return; }
-  box.innerHTML = last.map(renderLogEntry).join('');
+  const recent = allLogs.slice(-80);
+  if (!recent.length) { box.innerHTML = '<div class="log-empty">Aguardando logs…</div>'; return; }
+  box.innerHTML = recent.map(l => logEntryHTML(l)).join('');
   box.scrollTop = box.scrollHeight;
 }
 
+function renderCycles() {
+  const el = document.getElementById('cycle-list');
+  if (!cycleHistory.length) return;
+  el.innerHTML = cycleHistory.slice(-20).reverse().map(c => `
+    <div class="cycle-item">
+      <span class="cycle-num">#${c.id}</span>
+      <span class="cycle-status ${c.status === 'ok' ? 'ok' : c.status === 'running' ? 'run' : 'fail'}">
+        ${c.status === 'ok' ? 'OK' : c.status === 'running' ? 'Em andamento' : 'Falhou'}
+      </span>
+      <span style="color:var(--text-muted);margin-left:auto;font-family:'Geist Mono',monospace;font-size:10px">
+        ${c.duration ? (c.duration/1000).toFixed(1)+'s' : ''}
+      </span>
+    </div>
+  `).join('');
+}
+
+function logEntryHTML(l) {
+  const time = l.timestamp ? new Date(l.timestamp).toLocaleTimeString('pt-BR') : '';
+  const cls  = l.level === 'success' ? 'success' : l.level === 'error' ? 'error' : l.level === 'warn' ? 'warn' : l.level === 'kyc' ? 'kyc' : 'info';
+  const msg  = (l.message ?? '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  return `<div class="log-entry"><span class="log-time">${time}</span><span class="log-msg ${cls}">${msg}</span></div>`;
+}
+
+/* ─── FULL LOGS ───────────────────────────────────────────────────────────────── */
 function renderFullLogs() {
   const box = document.getElementById('full-log-box');
-  const filtered = logFilter === 'all'
-    ? allLogs
-    : allLogs.filter(l => l.type === logFilter);
+  const filtered = logFilter === 'all' ? allLogs : allLogs.filter(l => l.level === logFilter);
   if (!filtered.length) { box.innerHTML = '<div class="log-empty">Nenhum log disponível.</div>'; return; }
-  box.innerHTML = filtered.map(renderLogEntry).join('');
+  box.innerHTML = filtered.map(l => logEntryHTML(l)).join('');
   box.scrollTop = box.scrollHeight;
-}
-
-function renderLogEntry(l) {
-  return `<div class="log-entry">
-    <span class="log-time">${fmtTime(l.timestamp)}</span>
-    <span class="log-msg ${l.type||'info'}">${escHtml(l.message||'')}</span>
-  </div>`;
 }
 
 document.querySelectorAll('.filter-btn').forEach(btn => {
@@ -1562,64 +1333,74 @@ document.querySelectorAll('.filter-btn').forEach(btn => {
 });
 
 document.getElementById('btn-clear-logs').addEventListener('click', async () => {
-  try {
-    await apiFetch('/api/logs', { method: 'DELETE' });
-    allLogs = [];
-    renderDashLogs();
-    renderFullLogs();
-    toast('Logs limpos.', 'success');
-  } catch { toast('Erro ao limpar logs.', 'error'); }
+  await fetch(`${API}/api/logs`, { method: 'DELETE', headers: HEADERS });
+  allLogs = [];
+  renderFullLogs();
+  renderDashLogs();
+  toast('Logs limpos', 'success');
 });
 
-/* ─── CONTROLS ────────────────────────────────────────────────────────────────── */
+/* ─── CONTROL BUTTONS ─────────────────────────────────────────────────────────── */
 document.getElementById('btn-start').addEventListener('click', async () => {
-  try { await apiFetch('/api/start', { method: 'POST' }); toast('Loop iniciado!', 'success'); fetchStatus(); }
-  catch { toast('Erro ao iniciar.', 'error'); }
+  await fetch(`${API}/api/start`, { method: 'POST', headers: HEADERS });
+  toast('Loop iniciado', 'success');
+  poll();
 });
 document.getElementById('btn-once').addEventListener('click', async () => {
-  try { await apiFetch('/api/run-once', { method: 'POST' }); toast('Executando 1 ciclo…', 'success'); fetchStatus(); }
-  catch { toast('Erro ao executar.', 'error'); }
+  await fetch(`${API}/api/start-once`, { method: 'POST', headers: HEADERS });
+  toast('Executando 1 ciclo…', 'success');
+  poll();
 });
 document.getElementById('btn-stop').addEventListener('click', async () => {
-  try { await apiFetch('/api/stop', { method: 'POST' }); toast('Parando…', 'success'); fetchStatus(); }
-  catch { toast('Erro ao parar.', 'error'); }
+  await fetch(`${API}/api/stop`, { method: 'POST', headers: HEADERS });
+  toast('Parando…', 'success');
+  poll();
 });
 
 /* ─── CONFIG ──────────────────────────────────────────────────────────────────── */
 async function loadConfig() {
   try {
-    const cfg = await apiFetch('/api/config');
+    const res = await fetch(`${API}/api/config`, { headers: HEADERS });
+    if (!res.ok) return;
+    const cfg = await res.json();
     configSnapshot = cfg;
-    document.getElementById('cfg-url').value      = cfg.cadastroUrl      || '';
-    document.getElementById('cfg-otp').value      = cfg.otpTimeout       || '';
-    document.getElementById('cfg-interval').value = cfg.cycleInterval    || '';
-    document.getElementById('cfg-delay').value    = cfg.extraDelay       || '';
-    document.getElementById('cfg-headless').value = String(cfg.headless !== false);
-    document.getElementById('cfg-email-provider').value = cfg.emailProvider || 'mail.tm';
-    document.getElementById('cfg-apikey').value   = cfg.tempMailApiKey   || '';
-    document.getElementById('cfg-proxy-server').value = cfg.proxyServer  || '';
-    document.getElementById('cfg-proxy-user').value   = cfg.proxyUser    || '';
-    document.getElementById('cfg-proxy-pass').value   = cfg.proxyPass    || '';
-    updateApiKeyVisibility();
-  } catch { toast('Erro ao carregar configurações.', 'error'); }
+    applyConfigToForm(cfg);
+  } catch {}
+}
+
+function applyConfigToForm(cfg) {
+  if (cfg.cadastroUrl)    document.getElementById('cfg-url').value       = cfg.cadastroUrl    ?? '';
+  if (cfg.otpTimeout)     document.getElementById('cfg-otp').value       = cfg.otpTimeout     ?? '';
+  if (cfg.cycleInterval)  document.getElementById('cfg-interval').value  = cfg.cycleInterval  ?? '';
+  if (cfg.extraDelay !== undefined) document.getElementById('cfg-delay').value = cfg.extraDelay ?? '';
+  document.getElementById('cfg-headless').value  = cfg.headless ? 'true' : 'false';
+  document.getElementById('cfg-email-provider').value = cfg.emailProvider ?? 'tempmailc';
+  if (cfg.tempMailApiKey) document.getElementById('cfg-apikey').value    = cfg.tempMailApiKey  ?? '';
+  // cidade
+  document.getElementById('cfg-city').value = cfg.cityName ?? '';
+  // proxy
+  const proxy = cfg.proxies?.[0];
+  if (proxy) {
+    document.getElementById('cfg-proxy-server').value = proxy.server ?? '';
+    document.getElementById('cfg-proxy-user').value   = proxy.username ?? '';
+    document.getElementById('cfg-proxy-pass').value   = proxy.password ?? '';
+  }
+  updateApiKeyVisibility();
 }
 
 function updateApiKeyVisibility() {
   const provider = document.getElementById('cfg-email-provider').value;
   const wrap = document.getElementById('apikey-wrap');
-  const label = document.getElementById('apikey-label');
-  const hint  = document.getElementById('apikey-hint');
-  if (provider === 'mail.tm') {
-    wrap.classList.remove('visible');
-  } else {
+  if (provider === 'tempmailc' || provider === 'temp-mail.io') {
     wrap.classList.add('visible');
-    if (provider === 'tempmailc') {
-      label.textContent = 'API Key (TempMailC)';
-      hint.textContent  = 'Necessária para private.tempmailc.com';
-    } else {
-      label.textContent = 'API Key (TempMail.io)';
-      hint.textContent  = 'Necessária para temp-mail.io';
-    }
+    document.getElementById('apikey-label').textContent =
+      provider === 'tempmailc' ? 'API Key (TempMailC)' : 'API Key (TempMail.io)';
+    document.getElementById('apikey-hint').textContent =
+      provider === 'tempmailc'
+        ? 'Chave da API private.tempmailc.com'
+        : 'Chave da API temp-mail.io';
+  } else {
+    wrap.classList.remove('visible');
   }
 }
 
@@ -1627,63 +1408,237 @@ document.getElementById('cfg-email-provider').addEventListener('change', updateA
 
 document.getElementById('config-form').addEventListener('submit', async () => {
   const body = {
-    cadastroUrl:   document.getElementById('cfg-url').value.trim(),
-    otpTimeout:    Number(document.getElementById('cfg-otp').value),
-    cycleInterval: Number(document.getElementById('cfg-interval').value),
-    extraDelay:    Number(document.getElementById('cfg-delay').value),
-    headless:      document.getElementById('cfg-headless').value === 'true',
-    emailProvider: document.getElementById('cfg-email-provider').value,
-    tempMailApiKey:document.getElementById('cfg-apikey').value.trim(),
-    proxyServer:   document.getElementById('cfg-proxy-server').value.trim(),
-    proxyUser:     document.getElementById('cfg-proxy-user').value.trim(),
-    proxyPass:     document.getElementById('cfg-proxy-pass').value.trim(),
+    otpTimeout:     Number(document.getElementById('cfg-otp').value)      || undefined,
+    cycleInterval:  Number(document.getElementById('cfg-interval').value) || undefined,
+    extraDelay:     Number(document.getElementById('cfg-delay').value)    ?? 0,
+    headless:       document.getElementById('cfg-headless').value === 'true',
+    emailProvider:  document.getElementById('cfg-email-provider').value,
+    tempMailApiKey: document.getElementById('cfg-apikey').value || undefined,
+    cityName:       document.getElementById('cfg-city').value.trim() || undefined,
+    proxyServer:    document.getElementById('cfg-proxy-server').value.trim() || undefined,
+    proxyUser:      document.getElementById('cfg-proxy-user').value.trim()   || undefined,
+    proxyPass:      document.getElementById('cfg-proxy-pass').value.trim()   || undefined,
   };
   try {
-    await apiFetch('/api/config', { method: 'POST', body: JSON.stringify(body) });
-    configSnapshot = body;
-    toast('Configurações salvas!', 'success');
-  } catch { toast('Erro ao salvar configurações.', 'error'); }
-});
-
-document.getElementById('btn-reset-config').addEventListener('click', () => {
-  if (configSnapshot) {
-    document.getElementById('cfg-url').value      = configSnapshot.cadastroUrl      || '';
-    document.getElementById('cfg-otp').value      = configSnapshot.otpTimeout       || '';
-    document.getElementById('cfg-interval').value = configSnapshot.cycleInterval    || '';
-    document.getElementById('cfg-delay').value    = configSnapshot.extraDelay       || '';
-    document.getElementById('cfg-headless').value = String(configSnapshot.headless !== false);
-    document.getElementById('cfg-email-provider').value = configSnapshot.emailProvider || 'mail.tm';
-    document.getElementById('cfg-apikey').value   = configSnapshot.tempMailApiKey   || '';
-    document.getElementById('cfg-proxy-server').value = configSnapshot.proxyServer  || '';
-    document.getElementById('cfg-proxy-user').value   = configSnapshot.proxyUser    || '';
-    document.getElementById('cfg-proxy-pass').value   = configSnapshot.proxyPass    || '';
-    updateApiKeyVisibility();
-    toast('Configurações restauradas.', 'success');
+    const res = await fetch(`${API}/api/config`, { method: 'POST', headers: HEADERS, body: JSON.stringify(body) });
+    const data = await res.json();
+    if (data.ok) {
+      toast('Configurações salvas ✓', 'success');
+      configSnapshot = { ...configSnapshot, ...body };
+    } else {
+      toast('Erro: ' + data.error, 'error');
+    }
+  } catch {
+    toast('Falha ao salvar', 'error');
   }
 });
 
-/* ─── UTILS ───────────────────────────────────────────────────────────────────── */
-function escHtml(s) {
-  return String(s)
-    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
-}
-function fmtDate(ts) {
-  if (!ts) return '—';
-  try { return new Date(ts).toLocaleString('pt-BR', { dateStyle:'short', timeStyle:'short' }); }
-  catch { return ts; }
-}
-function fmtTime(ts) {
-  if (!ts) return '—';
-  try { return new Date(ts).toLocaleTimeString('pt-BR'); }
-  catch { return ts; }
+document.getElementById('btn-reset-config').addEventListener('click', () => {
+  if (configSnapshot) applyConfigToForm(configSnapshot);
+  toast('Configurações restauradas', 'success');
+});
+
+/* ─── ACCOUNTS ────────────────────────────────────────────────────────────────── */
+async function fetchAccounts() {
+  try {
+    const res = await fetch(`${API}/api/accounts`, { headers: HEADERS });
+    const data = await res.json();
+    allAccounts = data.accounts ?? [];
+    renderAccounts();
+    document.getElementById('accounts-sub').textContent = `${allAccounts.length} conta(s) registrada(s)`;
+  } catch {
+    toast('Erro ao carregar contas', 'error');
+  }
 }
 
+function renderAccounts() {
+  const q   = accountSearchQ.toLowerCase();
+  const list = q ? allAccounts.filter(a =>
+    (a.email ?? '').toLowerCase().includes(q) ||
+    (a.firstName ?? '').toLowerCase().includes(q) ||
+    (a.lastName ?? '').toLowerCase().includes(q) ||
+    String(a.cycle ?? '').includes(q)
+  ) : allAccounts;
+
+  const tbody = document.getElementById('accounts-tbody');
+  if (!list.length) {
+    tbody.innerHTML = `<tr><td colspan="8"><div class="empty">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+      <p>Nenhuma conta encontrada.</p>
+    </div></td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = list.map((a, i) => `
+    <tr style="cursor:pointer" onclick="openAccountModal('${a.id}')">
+      <td class="mono">${i+1}</td>
+      <td><div class="account-email" title="${a.email ?? ''}">${a.email ?? '—'}</div></td>
+      <td>${[a.firstName, a.lastName].filter(Boolean).join(' ') || '—'}</td>
+      <td class="mono">${a.phone ?? '—'}</td>
+      <td class="account-cycle">#${a.cycle ?? '?'}</td>
+      <td class="mono">${a.emailProvider ?? '—'}</td>
+      <td class="mono">${a.createdAt ? new Date(a.createdAt).toLocaleString('pt-BR') : '—'}</td>
+      <td><button class="del-btn" onclick="event.stopPropagation();deleteAccount('${a.id}')">Deletar</button></td>
+    </tr>
+  `).join('');
+}
+
+document.getElementById('account-search').addEventListener('input', e => {
+  accountSearchQ = e.target.value;
+  renderAccounts();
+});
+
+document.getElementById('btn-refresh-accounts').addEventListener('click', fetchAccounts);
+
+document.getElementById('btn-export-accounts').addEventListener('click', () => {
+  if (!allAccounts.length) { toast('Nenhuma conta para exportar', 'error'); return; }
+  const rows = [['email','firstName','lastName','phone','cycle','emailProvider','createdAt']];
+  allAccounts.forEach(a => rows.push([a.email,a.firstName,a.lastName,a.phone,a.cycle,a.emailProvider,a.createdAt]));
+  const csv  = rows.map(r => r.map(v => `"${v ?? ''}"`).join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url; a.download = 'contas.csv'; a.click();
+  URL.revokeObjectURL(url);
+});
+
+function openAccountModal(id) {
+  const a = allAccounts.find(x => x.id === id);
+  if (!a) return;
+  selectedAccountId = id;
+  const grid = document.getElementById('modal-detail-grid');
+  const fields = [
+    ['Email', a.email], ['Ciclo', `#${a.cycle ?? '?'}`],
+    ['Nome', [a.firstName, a.lastName].filter(Boolean).join(' ') || '—'],
+    ['Telefone', a.phone ?? '—'],
+    ['Provedor', a.emailProvider ?? '—'],
+    ['Criado em', a.createdAt ? new Date(a.createdAt).toLocaleString('pt-BR') : '—'],
+    ['Senha', a.password ?? '—'], ['Invite Code', a.inviteCode ?? '—'],
+  ];
+  grid.innerHTML = fields.map(([l,v]) => `
+    <div class="detail-item">
+      <span class="detail-label">${l}</span>
+      <span class="detail-value">${v}</span>
+    </div>
+  `).join('');
+  document.getElementById('modal-cookie-box').textContent =
+    a.cookies ? JSON.stringify(a.cookies, null, 2) : '—';
+  document.getElementById('account-modal').classList.add('open');
+}
+
+document.getElementById('modal-close-btn').addEventListener('click', () => {
+  document.getElementById('account-modal').classList.remove('open');
+});
+document.getElementById('account-modal').addEventListener('click', e => {
+  if (e.target === e.currentTarget) e.currentTarget.classList.remove('open');
+});
+
+document.getElementById('modal-copy-cookies').addEventListener('click', () => {
+  const text = document.getElementById('modal-cookie-box').textContent;
+  navigator.clipboard.writeText(text).then(() => toast('Cookies copiados', 'success'));
+});
+
+document.getElementById('modal-delete-btn').addEventListener('click', () => {
+  if (selectedAccountId) {
+    deleteAccount(selectedAccountId);
+    document.getElementById('account-modal').classList.remove('open');
+  }
+});
+
+async function deleteAccount(id) {
+  await fetch(`${API}/api/accounts/${id}`, { method: 'DELETE', headers: HEADERS });
+  allAccounts = allAccounts.filter(a => a.id !== id);
+  renderAccounts();
+  toast('Conta removida', 'success');
+}
+
+/* ─── KYC ─────────────────────────────────────────────────────────────────────── */
+async function fetchKyc() {
+  try {
+    const res = await fetch(`${API}/api/kyc`);
+    kycData = await res.json();
+    renderKyc();
+  } catch { toast('Erro ao carregar KYC', 'error'); }
+}
+
+function renderKyc() {
+  const byCycle = kycData.byCycle ?? {};
+  const allProviders = Object.values(byCycle).flatMap(c => c.providers ?? []);
+  let weak = 0, likely = 0, confirmed = 0;
+  allProviders.forEach(p => {
+    if (p.level === 'WEAK') weak++;
+    else if (p.level === 'LIKELY') likely++;
+    else if (p.level === 'CONFIRMED') confirmed++;
+  });
+  document.getElementById('kyc-count-weak').textContent      = weak;
+  document.getElementById('kyc-count-likely').textContent    = likely;
+  document.getElementById('kyc-count-confirmed').textContent = confirmed;
+  document.getElementById('kyc-providers-count').textContent = new Set(allProviders.map(p => p.name)).size;
+
+  const cycles = Object.keys(byCycle).sort((a,b) => Number(a)-Number(b));
+  const tabsEl = document.getElementById('kyc-cycle-tabs');
+  if (!cycles.length) {
+    tabsEl.innerHTML = '';
+    document.getElementById('kyc-provider-list').innerHTML = `<div class="empty">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+      <p>Nenhum sinal KYC detectado ainda.</p>
+    </div>`;
+    return;
+  }
+  if (!selectedKycCycle || !byCycle[selectedKycCycle]) selectedKycCycle = cycles[cycles.length-1];
+  tabsEl.innerHTML = cycles.map(c => `
+    <button class="kyc-cycle-tab ${c === selectedKycCycle ? 'active' : ''}" onclick="selectKycCycle('${c}')">
+      Ciclo #${c}
+    </button>
+  `).join('');
+  renderKycCycle(byCycle[selectedKycCycle]);
+}
+
+function selectKycCycle(c) {
+  selectedKycCycle = c;
+  renderKyc();
+}
+
+function renderKycCycle(cycleData) {
+  const el = document.getElementById('kyc-provider-list');
+  const providers = cycleData?.providers ?? [];
+  if (!providers.length) {
+    el.innerHTML = '<div class="empty"><p>Nenhum provedor neste ciclo.</p></div>';
+    return;
+  }
+  el.innerHTML = providers.map(p => `
+    <div class="kyc-provider-card">
+      <div class="kyc-provider-header">
+        <span class="kyc-provider-name">${p.name ?? '—'}</span>
+        <span class="kyc-badge ${p.level ?? 'WEAK'}">${p.level ?? 'WEAK'}</span>
+        <span class="kyc-score">Score: <span>${p.score ?? 0}</span></span>
+      </div>
+      <div class="kyc-signals">
+        ${(p.signals ?? []).map(s => `
+          <div class="kyc-signal-item">
+            <span class="kyc-signal-weight">+${s.weight ?? 0}</span>
+            <span class="kyc-signal-source">${s.source ?? ''}</span>
+            <span>${s.description ?? ''}</span>
+            <span class="kyc-signal-time">${s.timestamp ? new Date(s.timestamp).toLocaleTimeString('pt-BR') : ''}</span>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `).join('');
+}
+
+document.getElementById('btn-refresh-kyc').addEventListener('click', fetchKyc);
+document.getElementById('btn-clear-kyc').addEventListener('click', async () => {
+  await fetch(`${API}/api/kyc`, { method: 'DELETE', headers: HEADERS });
+  kycData = { byCycle: {} };
+  selectedKycCycle = null;
+  renderKyc();
+  toast('KYC limpo', 'success');
+});
+
 /* ─── INIT ────────────────────────────────────────────────────────────────────── */
-fetchStatus();
-fetchLogs();
 loadConfig();
-pollTimer = setInterval(() => { fetchStatus(); fetchLogs(); }, 3000);
+startPoll();
 </script>
 </body>
 </html>
