@@ -599,7 +599,6 @@ async function tratarTelaSenhaFluxo(
     .first().isVisible({ timeout: 1000 }).catch(() => false);
   if (!temSenha) return false;
 
-  // FIX A: se o input de cidade ainda está visível, NÃO tratar como tela de senha.
   const cidadeAindaVisivel = await p.locator(
     '[data-testid="flow-type-city-selector-v2-input"]'
   ).first().isVisible({ timeout: 300 }).catch(() => false);
@@ -694,7 +693,6 @@ async function tratarTelaReAuth(
 
   if (!temEmail || !temSenha) return false;
 
-  // FIX A: guard secundário — cidade visível → não é tela de re-auth
   const cidadeAindaVisivelReAuth = await p.locator(
     '[data-testid="flow-type-city-selector-v2-input"]'
   ).first().isVisible({ timeout: 300 }).catch(() => false);
@@ -984,7 +982,7 @@ async function etapa_digitarSenha(p: Page, senha: string, cycle: number): Promis
 
 async function etapa_aguardarOTP(
   p: Page, emailClient: IEmailClient, email: string,
-  cycle: number, otpTimeoutMs = 60_000
+  cycle: number, otpTimeoutMs = 180_000
 ): Promise<string> {
   log('info', 'Aguardando OTP no email...', cycle);
   const otp = await emailClient.waitForOTP(email, otpTimeoutMs, cycle);
@@ -1054,7 +1052,6 @@ async function processarTelaOnboarding(
   state: { otpDigitado: boolean; senhaDigitada: boolean; cidadePreenchida: boolean }
 ): Promise<'continua' | 'sucesso' | 'kyc' | 'erro'> {
 
-  // FIX A: verificar cidade ANTES de qualquer lógica de senha
   const cidadeInputVisivel = await p.locator(
     '[data-testid="flow-type-city-selector-v2-input"]'
   ).first().isVisible({ timeout: 500 }).catch(() => false);
@@ -1091,7 +1088,8 @@ async function processarTelaOnboarding(
   ).first().isVisible({ timeout: 1000 }).catch(() => false);
 
   if (temOtpField && !state.otpDigitado) {
-    const otp = await etapa_aguardarOTP(p, emailClient, payload.email, cycle);
+    // OTP timeout: 3 minutos — tempo suficiente para o Uber enviar o email
+    const otp = await etapa_aguardarOTP(p, emailClient, payload.email, cycle, 180_000);
     await etapa_digitarOTP(p, otp, cycle);
     state.otpDigitado = true;
     await cogPause(120, 250);
@@ -1188,7 +1186,7 @@ export interface RunCycleConfig {
   headless: boolean;
   proxy?: string;
   emailProvider: EmailProvider;
-  tempMailApiKey?: string;       // ← ADICIONADO: API key/code do provedor
+  tempMailApiKey?: string;
   tempmailcDomain?: string;
   inviteCode?: string;
   speedMode?: boolean;
@@ -1217,7 +1215,7 @@ export class MockPlaywrightFlow {
         urlCadastro,
         headless: false,
         emailProvider: opts.emailProvider,
-        tempMailApiKey: opts.tempMailApiKey,  // ← CORRIGIDO: repassar a apiKey
+        tempMailApiKey: opts.tempMailApiKey,
         inviteCode: opts.inviteCode,
         speedMode: false,
       },
@@ -1234,8 +1232,8 @@ export async function runCycle(config: RunCycleConfig, cycle: number): Promise<v
   const state = globalState.getState();
   (state.config as any) = { ...state.config, speedMode: config.speedMode ?? false };
 
-  // FIX D: timeout total do ciclo = 90s
-  const CYCLE_TIMEOUT_MS = 90_000;
+  // Timeout total do ciclo: 5 minutos (comporta 3min de espera do OTP + resto do fluxo)
+  const CYCLE_TIMEOUT_MS = 5 * 60_000;
 
   const cycleTimer = setTimeout(() => {
     log('warn', `Ciclo #${cycle} excedeu ${CYCLE_TIMEOUT_MS / 1000}s — abortando`, cycle);
@@ -1247,18 +1245,16 @@ export async function runCycle(config: RunCycleConfig, cycle: number): Promise<v
     const ctx = await criarContextoCiclo(cycle);
     const p = await ctx.newPage();
 
-    p.setDefaultTimeout(20_000);
-    p.setDefaultNavigationTimeout(20_000);
+    // Timeouts de navegação e elemento: 45s — página do Uber pode ser lenta
+    p.setDefaultTimeout(45_000);
+    p.setDefaultNavigationTimeout(45_000);
 
-    // ─── CORRIGIDO: ordem correta dos argumentos (provider, apiKey, domain) ───
     const emailClient = createEmailClient(
       config.emailProvider,
       config.tempMailApiKey ?? '',
       config.tempmailcDomain ?? ''
     );
 
-    // FIX Bug1+Bug2: criar o email real ANTES de gerar o payload,
-    // para que payload.email contenha o endereço correto do provedor.
     log('info', 'Criando email no provedor...', cycle);
     const emailAccount = await emailClient.createRandomEmail();
     log('info', `Email criado: ${emailAccount.email}`, cycle);
@@ -1271,7 +1267,7 @@ export async function runCycle(config: RunCycleConfig, cycle: number): Promise<v
     try {
       await pageWarmup(p);
       log('info', `Navegando para: ${config.urlCadastro}`, cycle);
-      await p.goto(config.urlCadastro, { waitUntil: 'domcontentloaded', timeout: 20_000 });
+      await p.goto(config.urlCadastro, { waitUntil: 'domcontentloaded', timeout: 45_000 });
       await humanPause(randInt(sp(200), sp(400)));
 
       await dispensarCookies(p);
@@ -1286,7 +1282,8 @@ export async function runCycle(config: RunCycleConfig, cycle: number): Promise<v
 
       const flowState = { otpDigitado: false, senhaDigitada: false, cidadePreenchida: false };
       let iteracoes = 0;
-      const MAX_ITER = 40;
+      // MAX_ITER aumentado para acomodar fluxos longos
+      const MAX_ITER = 60;
 
       while (iteracoes < MAX_ITER) {
         iteracoes++;
@@ -1297,13 +1294,11 @@ export async function runCycle(config: RunCycleConfig, cycle: number): Promise<v
         if (resultado === 'sucesso') {
           log('success', `Conta criada com sucesso: ${payload.email}`, cycle);
 
-          // FIX B: Account.cookies é Cookie[] — passar array bruto
           const cookies: Cookie[] = await ctx.cookies();
           const tmScript = gerarTampermonkeyScript(cookies, payload.email);
 
           ArtifactsManager.init();
 
-          // FIX B: campos em português conforme interface Account do mvp-antigo
           accountStore.save({
             cycle,
             provider: config.emailProvider,
@@ -1314,10 +1309,9 @@ export async function runCycle(config: RunCycleConfig, cycle: number): Promise<v
             senha: payload.senha,
             localizacao: payload.cidade,
             codigoIndicacao: (payload as any).inviteCode ?? '',
-            cookies,               // Cookie[] ✓
+            cookies,
           });
 
-          // FIX C: usar incrementSuccess() em vez de acessar successCount diretamente
           globalState.incrementSuccess(cycle);
           break;
         }
