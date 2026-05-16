@@ -1405,7 +1405,6 @@ function renderKyc() {
   document.getElementById('kyc-count-confirmed').textContent = confirmedTotal;
   document.getElementById('kyc-providers-count').textContent = providerSet.size;
 
-  // tabs
   const tabsEl = document.getElementById('kyc-cycle-tabs');
   if (!cycles.length) {
     tabsEl.innerHTML = '';
@@ -1565,7 +1564,7 @@ document.getElementById('btn-start').addEventListener('click', async () => {
   catch { toast('Erro ao iniciar.', 'error'); }
 });
 document.getElementById('btn-once').addEventListener('click', async () => {
-  try { await apiFetch('/api/once', { method: 'POST' }); toast('Executando 1 ciclo…', 'success'); fetchStatus(); }
+  try { await apiFetch('/api/run-once', { method: 'POST' }); toast('Executando 1 ciclo…', 'success'); fetchStatus(); }
   catch { toast('Erro ao executar.', 'error'); }
 });
 document.getElementById('btn-stop').addEventListener('click', async () => {
