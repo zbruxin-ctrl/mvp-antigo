@@ -36,6 +36,7 @@ globalState.setExecutor(async (config, cycle) => {
       otpTimeout:     config.otpTimeout,
       extraDelay:     config.extraDelay,
       inviteCode:     config.inviteCode,
+      cityName:       config.cityName,
     },
     cycle
   );
@@ -112,6 +113,9 @@ function validateConfig(body: Partial<Config> & { proxyServer?: string; proxyUse
   }
   if ('proxies' in body && body.proxies !== undefined && !Array.isArray(body.proxies)) {
     errors.push('proxies deve ser array');
+  }
+  if ('cityName' in body && body.cityName !== undefined) {
+    body.cityName = String(body.cityName).trim() || undefined;
   }
 
   if (errors.length > 0) return { ok: false, error: errors.join('; ') };

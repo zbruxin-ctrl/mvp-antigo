@@ -32,6 +32,8 @@ export interface Config {
    */
   tempmailcDomain?: string;
   inviteCode: string;
+  /** Nome da cidade a digitar no step de seleção de cidade do Uber. */
+  cityName?: string;
   otpTimeout: number;
   cycleInterval: number;
   extraDelay: number;

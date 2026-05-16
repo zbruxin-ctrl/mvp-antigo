@@ -379,7 +379,12 @@ async function stepTerms(p: Page, cycle: number): Promise<void> {
   await waitForSpinner(p, cycle, 45_000);
 }
 
-async function stepCity(p: Page, inviteCode: string, cycle: number): Promise<void> {
+async function stepCity(
+  p: Page,
+  inviteCode: string,
+  cycle: number,
+  cityName = 'Paris'
+): Promise<void> {
   globalState.addLog('info', '🏢 [7] Cidade...', cycle);
   await waitForSpinner(p, cycle, 20_000);
 
@@ -417,22 +422,37 @@ async function stepCity(p: Page, inviteCode: string, cycle: number): Promise<voi
   await el.click({ clickCount: 3 });
   await p.keyboard.press('Delete');
   await sleep(200);
-  await el.pressSequentially('Paris', { delay: 60 + Math.random() * 40 });
-  globalState.addLog('info', '✔️ fill cidade: Paris', cycle);
+  await el.pressSequentially(cityName, { delay: 60 + Math.random() * 40 });
+  globalState.addLog('info', `✔️ fill cidade: ${cityName}`, cycle);
+
+  // Aguarda o dropdown aparecer (até 5s)
   await sleep(1500);
 
+  // Seleciona a PRIMEIRA opção do dropdown do Uber
   const OPTION_CANDIDATES = [
-    '[role="option"]', '[role="listitem"]',
-    '[data-testid*="suggestion"]', '[data-testid*="option"]',
-    'li[data-value]', 'ul li',
+    '[data-testid="flow-type-city-selector-v2-option"]',
+    '[data-testid*="city-selector"][data-testid*="option"]',
+    '[role="option"]',
+    '[role="listitem"]',
+    '[data-testid*="suggestion"]',
+    '[data-testid*="option"]',
+    'li[data-value]',
+    'ul li',
   ];
+
+  let optionClicked = false;
   for (const sel of OPTION_CANDIDATES) {
     const opt = p.locator(sel).first();
-    if (await opt.isVisible({ timeout: 2000 }).catch(() => false)) {
+    if (await opt.isVisible({ timeout: 2500 }).catch(() => false)) {
       await opt.click();
-      globalState.addLog('info', `✔️ cidade selecionada via: ${sel}`, cycle);
+      globalState.addLog('info', `✔️ cidade selecionada (1ª opção) via: ${sel}`, cycle);
+      optionClicked = true;
       break;
     }
+  }
+
+  if (!optionClicked) {
+    globalState.addLog('warn', '⚠️ Dropdown de cidade não apareceu — tentando continuar sem selecionar', cycle);
   }
 
   await sleep(500);
@@ -600,7 +620,7 @@ export class MockPlaywrightFlow {
 
   static async execute(
     cadastroUrl: string,
-    config: { emailProvider: EmailProvider; tempMailApiKey: string; otpTimeout: number; extraDelay: number; inviteCode: string },
+    config: { emailProvider: EmailProvider; tempMailApiKey: string; otpTimeout: number; extraDelay: number; inviteCode: string; cityName?: string },
     cycle: number
   ): Promise<void> {
     if (!browserInstance) throw new Error('Browser não iniciado');
@@ -616,7 +636,7 @@ export class MockPlaywrightFlow {
 
   private static async _run(
     cadastroUrl: string,
-    config: { emailProvider: EmailProvider; tempMailApiKey: string; otpTimeout: number; extraDelay: number; inviteCode: string },
+    config: { emailProvider: EmailProvider; tempMailApiKey: string; otpTimeout: number; extraDelay: number; inviteCode: string; cityName?: string },
     cycle: number
   ): Promise<void> {
     const state = globalState.getState() as State & { proxies?: string[] };
@@ -665,16 +685,16 @@ export class MockPlaywrightFlow {
       await sleep(600);
       await dismissModals(p, cycle);
 
-      await stepEmail(p, email, cycle);                                  // 1
-      await stepOTP(p, emailClient, email, config.otpTimeout, cycle);    // 2
-      await stepPhone(p, cycle);                                         // 3
-      await stepPassword(p, cycle);                                      // 4
-      await stepPersonalInfo(p, cycle);                                  // 5
-      await stepTerms(p, cycle);                                         // 6
-      await stepCity(p, config.inviteCode, cycle);                       // 7
-      await stepWhatsApp(p, cycle);                                      // 8
-      await stepHubPhotoClick(p, cycle);                                 // 9
-      await stepProfilePhoto(p, cycle);                                  // 10
+      await stepEmail(p, email, cycle);                                      // 1
+      await stepOTP(p, emailClient, email, config.otpTimeout, cycle);        // 2
+      await stepPhone(p, cycle);                                             // 3
+      await stepPassword(p, cycle);                                          // 4
+      await stepPersonalInfo(p, cycle);                                      // 5
+      await stepTerms(p, cycle);                                             // 6
+      await stepCity(p, config.inviteCode, cycle, config.cityName);          // 7
+      await stepWhatsApp(p, cycle);                                          // 8
+      await stepHubPhotoClick(p, cycle);                                     // 9
+      await stepProfilePhoto(p, cycle);                                      // 10
 
       if (config.extraDelay > 0) {
         globalState.addLog('info', `⏳ Extra delay: ${config.extraDelay}ms`, cycle);
