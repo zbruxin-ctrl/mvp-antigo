@@ -114,14 +114,16 @@ async function clickForward(p: Page, cycle: number): Promise<void> {
 }
 
 /**
- * Gera número de celular francês válido para o campo de telefone do Uber.
- * O campo já tem +33 selecionado, então enviamos 9 dígitos sem o zero inicial.
- * Formato: 6XXXXXXXX ou 7XXXXXXXX (06xx ou 07xx no formato nacional).
+ * Gera número de celular francês válido.
+ * O campo #PHONE_NUMBER do Uber espera o número COMPLETO no formato local:
+ * 0XXXXXXXXX (10 dígitos, com o zero inicial / indicativo de cidade).
+ * Ex: 0644905143, 0712345678
  */
 function gerarTelefoneFR(): { display: string; digits: string } {
   const prefix = Math.random() < 0.5 ? '6' : '7';
   const rest = Array.from({ length: 8 }, () => Math.floor(Math.random() * 10)).join('');
-  const digits = prefix + rest; // 9 dígitos — o que vai no campo (após +33)
+  // 10 dígitos com zero inicial — formato exigido pelo campo
+  const digits = `0${prefix}${rest}`;
   const display = `0${prefix} ${rest.slice(0, 2)} ${rest.slice(2, 4)} ${rest.slice(4, 6)} ${rest.slice(6, 8)}`;
   return { display, digits };
 }
@@ -240,7 +242,7 @@ async function stepPhone(p: Page, cycle: number): Promise<void> {
   }
 
   const { display, digits } = gerarTelefoneFR();
-  globalState.addLog('info', `📞 Telefone gerado: ${display} (+33 ${digits})`, cycle);
+  globalState.addLog('info', `📞 Telefone gerado: ${display} (enviando: ${digits})`, cycle);
 
   const el = p.locator(phoneInput).first();
   await el.scrollIntoViewIfNeeded();
@@ -253,7 +255,6 @@ async function stepPhone(p: Page, cycle: number): Promise<void> {
 
   await sleep(400);
 
-  // Verifica se o Uber mostrou erro de número inválido antes de avançar
   const hasError = await hasElement(p, '[data-testid="phone-number-error"]', 800);
   if (hasError) {
     const errMsg = await p.locator('[data-testid="phone-number-error"]').first().innerText().catch(() => '');
@@ -263,7 +264,6 @@ async function stepPhone(p: Page, cycle: number): Promise<void> {
 
   await clickForward(p, cycle);
 
-  // Checa erro novamente após clicar Avançar (Uber valida no submit também)
   await sleep(600);
   const hasErrorAfter = await hasElement(p, '[data-testid="phone-number-error"]', 800);
   if (hasErrorAfter) {
