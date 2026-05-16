@@ -35,7 +35,6 @@ const SPINNER_SEL = [
   '[data-testid="loading_component"]',
   '[data-testid="spinner"]',
   '[data-testid="loading_component_SessionVerification"]',
-  '[data-testid="app"][data-testid="loader"]',
   '[data-testid="loader"]',
 ].join(', ');
 
@@ -65,8 +64,8 @@ async function waitForPageSettle(p: Page, cycle: number, ms = 3000): Promise<voi
 }
 
 /**
- * Aguarda ativamente até que um dos seletores concretos apareça na tela
- * ou o spinner desapareça — o que acontecer primeiro.
+ * Aguarda ativamente até que um dos seletores concretos apareça na tela.
+ * Resolve o problema de networkidle nunca disparar no Uber.
  */
 async function waitForNextScreen(
   p: Page,
@@ -91,23 +90,51 @@ async function waitForNextScreen(
   globalState.addLog('warn', '⚠️ Timeout aguardando próxima tela — continuando mesmo assim', cycle);
 }
 
-// Seletores que indicam "ainda carregando" — usado como set de telas de destino
-const NEXT_SCREEN_ANY = [
-  'input[type="email"]',
-  'input[autocomplete="one-time-code"]',
-  '#PHONE_NUMBER',
-  'input[autocomplete="tel-national"]',
-  '#PASSWORD',
-  '#FIRST_NAME',
-  'input[type="checkbox"]',
-  '[role="checkbox"]',
-  '[data-testid*="city"]',
-  'input[placeholder*="cidade" i]',
-  '[data-testid="step-bottom-navigation"]',
-  '[data-testid="hub"]',
-  '[data-testid*="profilePhoto"]',
-  '[data-testid="forward-button"]',
-];
+/**
+ * Tenta detectar os seletores por até `quickMs`.
+ * Se não encontrar (tela presa no spinner), faz reload e aguarda até `afterReloadMs`.
+ * Retorna true se encontrou, false caso contrário.
+ */
+async function waitOrReload(
+  p: Page,
+  cycle: number,
+  selectors: string[],
+  quickMs = 8_000,
+  afterReloadMs = 30_000
+): Promise<boolean> {
+  // Tentativa rápida
+  const start = Date.now();
+  while (Date.now() - start < quickMs) {
+    if (isStopped()) throw new Error('Parado pelo usuário');
+    for (const sel of selectors) {
+      if (await hasElement(p, sel, 400)) return true;
+    }
+    await sleep(500);
+  }
+
+  // Não apareceu — recarrega
+  globalState.addLog('warn', '⚠️ Tela presa no spinner — recarregando página...', cycle);
+  await p.reload({ waitUntil: 'domcontentloaded', timeout: 20_000 }).catch(() => {});
+  globalState.addLog('info', '🔄 Página recarregada', cycle);
+  await sleep(1_500);
+
+  // Segunda tentativa pós-reload
+  const start2 = Date.now();
+  while (Date.now() - start2 < afterReloadMs) {
+    if (isStopped()) throw new Error('Parado pelo usuário');
+    for (const sel of selectors) {
+      if (await hasElement(p, sel, 400)) {
+        globalState.addLog('info', '✔️ Tela detectada após reload', cycle);
+        return true;
+      }
+    }
+    await waitForSpinner(p, cycle, 5_000);
+    await sleep(500);
+  }
+
+  globalState.addLog('warn', '⚠️ Tela não apareceu nem após reload — continuando mesmo assim', cycle);
+  return false;
+}
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 
@@ -153,7 +180,6 @@ async function clickForward(p: Page, cycle: number): Promise<void> {
   await sleep(200 + Math.random() * 100);
   await el.click();
   globalState.addLog('info', '✔️ click: Avançar (forward-button)', cycle);
-  // Não chama waitForPageSettle aqui — cada etapa chama waitForNextScreen explicitamente
 }
 
 function gerarTelefoneBR(): { display: string; digits: string } {
@@ -295,17 +321,13 @@ async function stepPhone(p: Page, cycle: number): Promise<void> {
   await el.scrollIntoViewIfNeeded();
   await el.click();
   await sleep(150);
-
   await p.keyboard.press('Control+a');
   await p.keyboard.press('Delete');
   await sleep(80);
-
   await reactFill(p, phoneInput, digits);
   await sleep(150);
-
   await el.evaluate((node: HTMLInputElement) => { node.blur(); node.focus(); });
   await sleep(200);
-
   globalState.addLog('info', `✔️ fill telefone via: ${phoneInput}`, cycle);
 
   const hasError = await hasElement(p, '[data-testid="phone-number-error"]', 800);
@@ -464,7 +486,8 @@ async function stepTerms(p: Page, cycle: number): Promise<void> {
   await sleep(600);
   await clickForward(p, cycle);
 
-  // Aguarda ativamente a tela de cidade após os termos (pode demorar bastante)
+  // Aguarda a tela de cidade. Não usa waitOrReload aqui pois o estado de sessão
+  // pode ser perdido com reload neste ponto — o reload é feito dentro de stepCity.
   await waitForNextScreen(p, cycle, [
     '[data-testid="flow-type-city-selector-v2-input"]',
     '[data-testid="city-selector-input"]',
@@ -475,8 +498,19 @@ async function stepTerms(p: Page, cycle: number): Promise<void> {
     '[data-testid="hub"]',
     '[data-testid*="profilePhoto"]',
     SPINNER_SEL,
-  ]);
+  ], 20_000);
 }
+
+const CITY_INPUT_SELS = [
+  '[data-testid="flow-type-city-selector-v2-input"]',
+  '[data-testid="city-selector-input"]',
+  '[data-testid*="city"]',
+  'input[placeholder*="cidade" i]',
+  'input[placeholder*="city" i]',
+  'input[placeholder*="ville" i]',
+  'input[aria-label*="cidade" i]',
+  'input[aria-label*="city" i]',
+];
 
 async function stepCity(
   p: Page,
@@ -486,39 +520,27 @@ async function stepCity(
 ): Promise<void> {
   globalState.addLog('info', '🏢 [7] Cidade...', cycle);
 
-  await waitForNextScreen(p, cycle, [
-    '[data-testid="flow-type-city-selector-v2-input"]',
-    '[data-testid="city-selector-input"]',
-    '[data-testid*="city"]',
-    'input[placeholder*="cidade" i]',
-    'input[placeholder*="city" i]',
-    'input[aria-label*="cidade" i]',
-    'input[aria-label*="city" i]',
-  ]);
+  // Aguarda o input de cidade aparecer.
+  // Se ficar preso (spinner infinito), recarrega a página e tenta novamente.
+  const found = await waitOrReload(p, cycle, CITY_INPUT_SELS, 8_000, 30_000);
 
-  const CITY_CANDIDATES = [
-    '[data-testid="flow-type-city-selector-v2-input"]',
-    '[data-testid="city-selector-input"]',
-    '[data-testid*="city"]',
-    'input[placeholder*="cidade" i]',
-    'input[placeholder*="city" i]',
-    'input[placeholder*="ville" i]',
-    'input[aria-label*="cidade" i]',
-    'input[aria-label*="city" i]',
-  ];
-
-  let cityInput: string | null = null;
-  for (const sel of CITY_CANDIDATES) {
-    if (await hasElement(p, sel, 5_000)) { cityInput = sel; break; }
-  }
-
-  if (!cityInput) {
+  if (!found) {
     const testIds = await p.evaluate(() =>
       Array.from(document.querySelectorAll('[data-testid]'))
         .map(el => (el as HTMLElement).dataset['testid'])
         .filter(Boolean).slice(0, 20)
     ).catch(() => []);
-    globalState.addLog('warn', `⏩ Cidade não encontrada. testids: ${JSON.stringify(testIds)}`, cycle);
+    globalState.addLog('warn', `⏩ Cidade não encontrada após reload. testids: ${JSON.stringify(testIds)}`, cycle);
+    return;
+  }
+
+  let cityInput: string | null = null;
+  for (const sel of CITY_INPUT_SELS) {
+    if (await hasElement(p, sel, 3_000)) { cityInput = sel; break; }
+  }
+
+  if (!cityInput) {
+    globalState.addLog('warn', '⏩ Input de cidade não encontrado após detecção — pulando', cycle);
     return;
   }
 
