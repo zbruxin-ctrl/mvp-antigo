@@ -8,7 +8,7 @@ import {
 } from '../types/tempMail';
 import { OTPParser } from '../utils/otpParser';
 
-// ────────────────────────────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────────────────────────────
 function isStopped(): boolean {
   return !!(globalState.getState() as { shouldStop?: boolean }).shouldStop;
 }
@@ -61,9 +61,9 @@ async function withRetry<T>(
   throw lastErr;
 }
 
-// ────────────────────────────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────────────────────────────
 // TempMailClient  (temp-mail.io)
-// ────────────────────────────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────────────────────────────
 export class TempMailClient implements IEmailClient {
   private config: TempMailConfig;
 
@@ -157,9 +157,9 @@ export class TempMailClient implements IEmailClient {
   }
 }
 
-// ────────────────────────────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────────────────────────────
 // MailTmClient  (mail.tm)
-// ────────────────────────────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────────────────────────────
 
 interface MailTmMessageSummary {
   id: string;
@@ -370,25 +370,24 @@ export class MailTmClient implements IEmailClient {
   }
 }
 
-// ────────────────────────────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────────────────────────────
 // TempMailCClient  (tempmailc.com)
-// ────────────────────────────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────────────────────────────
 
 export class TempMailCClient implements IEmailClient {
-  // URL correta conforme documentação privada
-  private readonly baseUrl = 'https://private.tempmailc.com';
+  private readonly baseUrl = 'https://tempmailc.com';
   private readonly apiCode: string;
-  private readonly fixedDomain: string | undefined;
+  private readonly fixedDomain: string;
 
+  // FIX: trata string vazia como ausente — garante que o domínio padrão seja usado
   constructor(apiCode: string, fixedDomain?: string) {
     this.apiCode = apiCode;
-    this.fixedDomain = fixedDomain;
+    this.fixedDomain = (fixedDomain && fixedDomain.trim() !== '') ? fixedDomain.trim() : 'kaamoolzy.it.com';
   }
 
   async createRandomEmail(): Promise<EmailAccount> {
-    const domain = this.fixedDomain ?? 'kaamoolzy.it.com';
     const localPart = 'user' + Math.random().toString(36).slice(2, 10);
-    const email = `${localPart}@${domain}`;
+    const email = `${localPart}@${this.fixedDomain}`;
     globalState.addLog('info', `✅ [tempmailc] Email gerado: ${email}`);
     return { email, token: email };
   }
@@ -445,9 +444,9 @@ export class TempMailCClient implements IEmailClient {
   }
 }
 
-// ────────────────────────────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────────────────────────────
 // Factory
-// ────────────────────────────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────────────────────────────
 
 export function createEmailClient(
   provider: 'temp-mail.io' | 'mail.tm' | 'tempmailc',
