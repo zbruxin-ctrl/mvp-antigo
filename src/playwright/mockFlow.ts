@@ -1,6 +1,6 @@
 import { chromium as chromiumExtra } from 'playwright-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
-import { Browser, Page, devices } from 'playwright';
+import { Browser, Page } from 'playwright';
 import type { BrowserType } from 'playwright';
 import { globalState } from '../state/globalState';
 import { EmailProvider } from '../types';
@@ -29,6 +29,14 @@ async function hasElement(p: Page, sel: string, timeout = 600): Promise<boolean>
   return p.locator(sel).first().isVisible({ timeout }).catch(() => false);
 }
 
+// ─── MOBILE CONTEXT ──────────────────────────────────────────────────────────
+// UA de Chrome Mobile Android — compatível com Chromium (sem conflito Safari/WebKit)
+const MOBILE_UA =
+  'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) ' +
+  'Chrome/124.0.0.0 Mobile Safari/537.36';
+
+const MOBILE_VIEWPORT = { width: 390, height: 844 };
+
 // ─── SPINNER ──────────────────────────────────────────────────────────────────
 
 const SPINNER_SEL = [
@@ -52,15 +60,6 @@ async function waitForSpinner(p: Page, cycle: number, maxMs = 30_000): Promise<v
     await sleep(400);
   }
   globalState.addLog('warn', '⚠️ Spinner timeout — continuando mesmo assim', cycle);
-}
-
-async function waitForPageSettle(p: Page, cycle: number, ms = 3000): Promise<void> {
-  await Promise.race([
-    p.waitForLoadState('networkidle', { timeout: ms }).catch(() => {}),
-    sleep(ms),
-  ]);
-  await waitForSpinner(p, cycle);
-  await sleep(300);
 }
 
 /**
@@ -133,11 +132,6 @@ async function waitOrReload(
 
 // ─── COOKIE BANNER ──────────────────────────────────────────────────────────
 
-/**
- * Fecha o banner de cookies/privacidade do Uber que bloqueia cliques.
- * Tenta vários seletores de botão de aceite. Se nenhum funcionar,
- * remove o elemento do DOM via JS como fallback.
- */
 async function dismissCookieBanner(p: Page, cycle: number): Promise<void> {
   const BANNER_SEL = '#privacy-cookie-banners-root';
   const bannerVisible = await hasElement(p, BANNER_SEL, 1_500);
@@ -596,7 +590,6 @@ async function stepCity(
     return;
   }
 
-  // Fecha banner de cookies ANTES de qualquer interação
   await dismissCookieBanner(p, cycle);
 
   let cityInput: string | null = null;
@@ -706,7 +699,6 @@ async function stepWhatsApp(p: Page, cycle: number): Promise<void> {
   ]);
 }
 
-// Seletores do item "Foto do perfil" no hub
 const PHOTO_ITEM_SELS = [
   '[data-testid="stepItem profilePhoto"]',
   '[data-testid*="profilePhoto"]',
@@ -719,7 +711,6 @@ const PHOTO_ITEM_SELS = [
   'button:has-text("Foto do perfil")',
 ];
 
-// Seletores da tela de upload/captura de foto
 const PHOTO_SCREEN_SELS = [
   '[data-testid="step profilePhoto"]',
   '[data-testid="docUploadButton"]',
@@ -734,7 +725,6 @@ const PHOTO_SCREEN_SELS = [
 async function stepHubPhotoClick(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '🏠 [9] Hub — aguardando...', cycle);
 
-  // Aguarda o hub ou o item de foto aparecer (até 45s — pode demorar após verificação de sessão)
   const HUB_CANDIDATES = [
     '[data-testid="hub"]',
     '[data-testid="stepItem profilePhoto"]',
@@ -773,23 +763,18 @@ async function stepHubPhotoClick(p: Page, cycle: number): Promise<void> {
   }
 
   await sleep(800);
-
-  // Fecha cookies caso apareçam no hub também
   await dismissCookieBanner(p, cycle);
 
-  // Procura o item "Foto do perfil" e clica nele
   let photoItemClicked = false;
   for (const sel of PHOTO_ITEM_SELS) {
     const el = p.locator(sel).first();
     if (await el.isVisible({ timeout: 2000 }).catch(() => false)) {
-      // Tenta clique normal primeiro, depois force
       try {
         await el.scrollIntoViewIfNeeded();
         await sleep(300);
         await el.click({ timeout: 5_000 });
       } catch {
         await el.click({ force: true, timeout: 5_000 }).catch(async () => {
-          // Último recurso: clique via JS
           await p.evaluate((s: string) => {
             const node = document.querySelector(s) as HTMLElement | null;
             if (node) node.click();
@@ -803,7 +788,6 @@ async function stepHubPhotoClick(p: Page, cycle: number): Promise<void> {
   }
 
   if (!photoItemClicked) {
-    // Tenta encontrar por texto via JS como último recurso
     const jsClicked = await p.evaluate(() => {
       const all = Array.from(document.querySelectorAll('*')) as HTMLElement[];
       const el = all.find(e =>
@@ -824,21 +808,18 @@ async function stepHubPhotoClick(p: Page, cycle: number): Promise<void> {
 
   if (!photoItemClicked) return;
 
-  // Aguarda a tela de foto abrir
   await waitForNextScreen(p, cycle, PHOTO_SCREEN_SELS, 15_000);
 }
 
 async function stepProfilePhoto(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '📸 [10] Tirar foto do perfil...', cycle);
 
-  // Aguarda a tela de foto (pode ter chegado aqui após stepHubPhotoClick)
   const visible = await hasElement(p, PHOTO_SCREEN_SELS.join(', '), 8_000);
   if (!visible) {
     globalState.addLog('info', '⏩ Tela de foto não encontrada — pulando', cycle);
     return;
   }
 
-  // Fecha cookies se aparecerem aqui também
   await dismissCookieBanner(p, cycle);
 
   const TAKE_PHOTO_SELS = [
@@ -967,8 +948,13 @@ export class MockPlaywrightFlow {
     const proxies: string[] = state.proxies ?? [];
     const proxyUrl = proxies.length > 0 ? proxies[cycle % proxies.length] : undefined;
 
+    // Contexto Android/Chrome — UA compatível com Chromium, sem conflito Safari/WebKit
     const ctxOpts: Parameters<Browser['newContext']>[0] = {
-      ...devices['iPhone 13'],
+      userAgent: MOBILE_UA,
+      viewport: MOBILE_VIEWPORT,
+      deviceScaleFactor: 3,
+      isMobile: true,
+      hasTouch: true,
       locale: 'pt-BR',
       timezoneId: 'America/Sao_Paulo',
       permissions: ['geolocation'],
