@@ -81,10 +81,7 @@ async function detectCurrentStep(p: Page): Promise<string> {
 async function stepEmail(p: Page, email: string, cycle: number): Promise<void> {
   globalState.addLog('info', '📧 Preenchendo email...', cycle);
   const INPUT_SEL = 'input[type="email"], input[name="email"], input[placeholder*="email" i], input[autocomplete="email"]';
-
-  // Aguarda até 15s pelo campo de email — dá tempo ao site de carregar completamente
   await p.waitForSelector(INPUT_SEL, { state: 'visible', timeout: 15000 });
-
   await safeFill(p, INPUT_SEL, email, 'email', cycle);
   const BTN_SELS = [
     'button[type="submit"]',
@@ -125,6 +122,80 @@ async function stepPassword(p: Page, password: string, cycle: number): Promise<v
   throw new Error('Nenhum botão de avançar encontrado na etapa de senha');
 }
 
+/**
+ * Preenche o OTP lidando com dois layouts:
+ * 1. Input único (autocomplete="one-time-code", inputmode="numeric", etc.)
+ * 2. Inputs separados por dígito (um <input maxlength="1"> por caractere)
+ */
+async function fillOTP(p: Page, otp: string, cycle: number): Promise<void> {
+  // --- Layout 1: input único com autocomplete ou inputmode ---
+  const SINGLE_SELS = [
+    'input[autocomplete="one-time-code"]',
+    'input[inputmode="numeric"][maxlength]',
+    'input[name*="otp" i]',
+    'input[name*="code" i]',
+    'input[name*="token" i]',
+    'input[placeholder*="code" i]',
+    'input[placeholder*="otp" i]',
+  ];
+
+  for (const sel of SINGLE_SELS) {
+    const el = p.locator(sel).first();
+    const visible = await el.isVisible({ timeout: 800 }).catch(() => false);
+    if (!visible) continue;
+
+    const maxlen = await el.getAttribute('maxlength').catch(() => null);
+    // Se maxlength == 1, provavelmente é split — trata abaixo
+    if (maxlen === '1') break;
+
+    globalState.addLog('info', `✔️ OTP input único: ${sel}`, cycle);
+    await el.scrollIntoViewIfNeeded();
+    await sleep(200);
+    await el.click();
+    await sleep(100);
+    await el.fill('');
+    // Digita com delay humano
+    for (const ch of otp) {
+      await el.type(ch, { delay: 50 + Math.random() * 60 });
+    }
+    globalState.addLog('info', `✔️ fill: OTP`, cycle);
+    return;
+  }
+
+  // --- Layout 2: inputs separados por dígito (maxlength="1") ---
+  // Tenta selectors comuns de containers de OTP
+  const SPLIT_CONTAINER_SELS = [
+    'input[maxlength="1"]',
+    'input[data-index]',
+    'input[inputmode="numeric"][maxlength="1"]',
+    'input[type="tel"][maxlength="1"]',
+    'input[type="number"][maxlength="1"]',
+    'input[type="text"][maxlength="1"]',
+  ];
+
+  for (const baseSel of SPLIT_CONTAINER_SELS) {
+    const inputs = p.locator(baseSel);
+    const count = await inputs.count().catch(() => 0);
+    if (count >= 4) {
+      globalState.addLog('info', `✔️ OTP split detectado: ${count} inputs (${baseSel})`, cycle);
+      const digits = otp.split('');
+      for (let i = 0; i < Math.min(count, digits.length); i++) {
+        const box = inputs.nth(i);
+        await box.scrollIntoViewIfNeeded();
+        await box.click();
+        await sleep(80 + Math.random() * 60);
+        await box.fill('');
+        await box.type(digits[i], { delay: 50 + Math.random() * 50 });
+        await sleep(60);
+      }
+      globalState.addLog('info', `✔️ fill: OTP (split ${digits.length} dígitos)`, cycle);
+      return;
+    }
+  }
+
+  throw new Error('Não foi possível encontrar o campo OTP (nem single nem split)');
+}
+
 async function stepOTP(
   p: Page,
   emailClient: ReturnType<typeof createEmailClient>,
@@ -133,39 +204,47 @@ async function stepOTP(
   cycle: number
 ): Promise<void> {
   globalState.addLog('info', '🔢 Aguardando tela de OTP...', cycle);
-  const OTP_INPUT_SELS = [
+
+  // Aguarda qualquer input de OTP aparecer (single ou split)
+  const ANY_OTP_SEL = [
     'input[autocomplete="one-time-code"]',
     'input[inputmode="numeric"]',
-    'input[type="number"]',
+    'input[maxlength="1"]',
     'input[name*="otp" i]',
     'input[name*="code" i]',
-    'input[name*="token" i]',
-    'input[placeholder*="code" i]',
-    'input[placeholder*="otp" i]',
-  ];
-  let otpInputFound = false;
-  for (const sel of OTP_INPUT_SELS) {
-    if (await hasElement(p, sel, 2000)) {
-      otpInputFound = true;
-      globalState.addLog('info', `✔️ Campo OTP encontrado: ${sel}`, cycle);
-      break;
-    }
+  ].join(', ');
+
+  const appeared = await p.waitForSelector(ANY_OTP_SEL, { state: 'visible', timeout: 20000 })
+    .then(() => true)
+    .catch(() => false);
+
+  if (!appeared) {
+    globalState.addLog('warn', '⚠️ Tela de OTP não detectada — tentando mesmo assim...', cycle);
+  } else {
+    globalState.addLog('info', '✔️ Tela de OTP detectada', cycle);
   }
-  if (!otpInputFound) globalState.addLog('warn', '⚠️ Campo OTP não detectado — tentando mesmo assim...', cycle);
 
   const otp = await emailClient.waitForOTP(email, otpTimeout, cycle);
   globalState.addLog('info', `🔢 Preenchendo OTP: ${otp}`, cycle);
-  for (const sel of OTP_INPUT_SELS) {
-    if (await hasElement(p, sel, 500)) {
-      await safeFill(p, sel, otp, 'OTP', cycle);
-      const BTN_SELS = ['button[type="submit"]', 'button:has-text("Verify")', 'button:has-text("Confirm")', 'button:has-text("Continue")', 'button:has-text("Verificar")',];
-      for (const btnSel of BTN_SELS) {
-        if (await hasElement(p, btnSel, 300)) { await safeClick(p, btnSel, 'confirmar-otp', cycle); break; }
-      }
-      return;
+
+  await fillOTP(p, otp, cycle);
+
+  // Clica em confirmar (não necessário em split OTP — mas tenta mesmo assim)
+  await sleep(500);
+  const BTN_SELS = [
+    'button[type="submit"]',
+    'button:has-text("Verify")',
+    'button:has-text("Confirm")',
+    'button:has-text("Continue")',
+    'button:has-text("Verificar")',
+    'button:has-text("Valider")',
+  ];
+  for (const btnSel of BTN_SELS) {
+    if (await hasElement(p, btnSel, 400)) {
+      await safeClick(p, btnSel, 'confirmar-otp', cycle);
+      break;
     }
   }
-  throw new Error('Não foi possível preencher o OTP');
 }
 
 async function stepCitySelection(p: Page, cycle: number): Promise<void> {
@@ -391,7 +470,6 @@ export class MockPlaywrightFlow {
     const context = await browserInstance!.newContext(contextOptions);
     const p = await context.newPage();
 
-    // Timeouts por ação de UI
     p.setDefaultTimeout(20_000);
     p.setDefaultNavigationTimeout(30_000);
 
@@ -401,13 +479,7 @@ export class MockPlaywrightFlow {
       globalState.addLog('info', `📧 Email: ${email}`, cycle);
 
       globalState.addLog('info', `🌐 Navegando para ${cadastroUrl}...`, cycle);
-
-      // FIX: usa 'networkidle' para garantir que o SPA terminou de renderizar
-      // antes de tentar interagir com os elementos da página.
       await p.goto(cadastroUrl, { waitUntil: 'networkidle', timeout: 45_000 });
-
-      // Aguarda extra após navegação para sites React/SPA que renderizam após
-      // o evento networkidle (ex: Uber usa lazy hydration)
       await sleep(2500);
 
       await dismissModals(p, cycle);
