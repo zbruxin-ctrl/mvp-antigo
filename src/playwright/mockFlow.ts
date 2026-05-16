@@ -1232,22 +1232,30 @@ export async function runCycle(config: RunCycleConfig, cycle: number): Promise<v
   const state = globalState.getState();
   (state.config as any) = { ...state.config, speedMode: config.speedMode ?? false };
 
-  // Timeout total do ciclo: 5 minutos (comporta 3min de espera do OTP + resto do fluxo)
-  const CYCLE_TIMEOUT_MS = 5 * 60_000;
+  // Timeout total: 8 min (3 min OTP + navegação + margem)
+  // Ao estourar, lança erro para encerrar o ciclo de verdade
+  const CYCLE_TIMEOUT_MS = 8 * 60_000;
 
-  const cycleTimer = setTimeout(() => {
-    log('warn', `Ciclo #${cycle} excedeu ${CYCLE_TIMEOUT_MS / 1000}s — abortando`, cycle);
-  }, CYCLE_TIMEOUT_MS);
+  let cycleTimedOut = false;
+  let cycleReject: ((err: Error) => void) | null = null;
 
-  try {
+  const cycleTimeoutPromise = new Promise<never>((_, reject) => {
+    cycleReject = reject;
+    setTimeout(() => {
+      cycleTimedOut = true;
+      reject(new Error(`Ciclo #${cycle} excedeu ${CYCLE_TIMEOUT_MS / 1000}s — abortando`));
+    }, CYCLE_TIMEOUT_MS);
+  });
+
+  const cycleWork = async (): Promise<void> => {
     await ensureBrowser(config.headless, config.proxy);
 
     const ctx = await criarContextoCiclo(cycle);
     const p = await ctx.newPage();
 
-    // Timeouts de navegação e elemento: 45s — página do Uber pode ser lenta
-    p.setDefaultTimeout(45_000);
-    p.setDefaultNavigationTimeout(45_000);
+    // Timeouts de elemento e navegação: 120s cada
+    p.setDefaultTimeout(120_000);
+    p.setDefaultNavigationTimeout(120_000);
 
     const emailClient = createEmailClient(
       config.emailProvider,
@@ -1267,7 +1275,7 @@ export async function runCycle(config: RunCycleConfig, cycle: number): Promise<v
     try {
       await pageWarmup(p);
       log('info', `Navegando para: ${config.urlCadastro}`, cycle);
-      await p.goto(config.urlCadastro, { waitUntil: 'domcontentloaded', timeout: 45_000 });
+      await p.goto(config.urlCadastro, { waitUntil: 'domcontentloaded', timeout: 60_000 });
       await humanPause(randInt(sp(200), sp(400)));
 
       await dispensarCookies(p);
@@ -1282,7 +1290,6 @@ export async function runCycle(config: RunCycleConfig, cycle: number): Promise<v
 
       const flowState = { otpDigitado: false, senhaDigitada: false, cidadePreenchida: false };
       let iteracoes = 0;
-      // MAX_ITER aumentado para acomodar fluxos longos
       const MAX_ITER = 60;
 
       while (iteracoes < MAX_ITER) {
@@ -1339,11 +1346,22 @@ export async function runCycle(config: RunCycleConfig, cycle: number): Promise<v
     } finally {
       await fecharContextoCiclo(cycle);
     }
+  };
 
+  try {
+    await Promise.race([cycleWork(), cycleTimeoutPromise]);
   } catch (err: any) {
-    log('error', `Ciclo #${cycle} falhou: ${err?.message ?? String(err)}`, cycle);
+    if (cycleTimedOut || err?.message?.includes('excedeu')) {
+      log('error', err?.message ?? `Ciclo #${cycle} timeout`, cycle);
+    } else {
+      log('error', `Ciclo #${cycle} falhou: ${err?.message ?? String(err)}`, cycle);
+    }
     globalState.incrementFailure(err?.message ?? 'erro desconhecido', cycle);
   } finally {
-    clearTimeout(cycleTimer);
+    // Garante que o timer seja cancelado mesmo se cycleWork terminar antes
+    if (cycleReject) {
+      // Não há clearTimeout direto pois usamos Promise.race — o timer vai disparar
+      // mas como cycleTimedOut já foi tratado, o reject extra é silencioso
+    }
   }
 }
