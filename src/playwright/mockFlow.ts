@@ -31,15 +31,44 @@ async function hasElement(p: Page, sel: string, timeout = 600): Promise<boolean>
 }
 
 /**
- * Aguarda a página estabilizar após um clique de navegação.
- * Espera o networkidle OU pelo menos 1.5s — o que vier primeiro não crashar.
+ * Aguarda o spinner/loading do Uber desaparecer.
+ * O Uber usa polling XHR (não fica networkidle), então precisamos
+ * esperar o elemento de loading sair do DOM / ficar hidden.
+ * Timeout máximo: 30s.
  */
-async function waitForPageSettle(p: Page, ms = 3000): Promise<void> {
+async function waitForSpinner(p: Page, cycle: number, maxMs = 30_000): Promise<void> {
+  const SPINNER_SEL = '[data-testid="loading_component"], [data-testid="spinner"], [data-testid="loading_component_SessionVerification"]';
+  const start = Date.now();
+
+  // Só espera se o spinner estiver visível agora
+  const visible = await hasElement(p, SPINNER_SEL, 1000);
+  if (!visible) return;
+
+  globalState.addLog('info', '⏳ Aguardando spinner desaparecer...', cycle);
+
+  while (Date.now() - start < maxMs) {
+    const still = await hasElement(p, SPINNER_SEL, 400);
+    if (!still) {
+      globalState.addLog('info', '✔️ Spinner sumiu', cycle);
+      await sleep(600); // margem extra para React re-renderizar
+      return;
+    }
+    await sleep(500);
+  }
+  globalState.addLog('warn', '⚠️ Spinner ainda visível após timeout — continuando mesmo assim', cycle);
+}
+
+/**
+ * Aguarda a página estabilizar após clique de navegação.
+ * Primeiro deixa o networkidle tentar (2s), depois chama waitForSpinner.
+ */
+async function waitForPageSettle(p: Page, cycle: number, ms = 3000): Promise<void> {
   await Promise.race([
     p.waitForLoadState('networkidle', { timeout: ms }).catch(() => {}),
     sleep(ms),
   ]);
-  await sleep(500); // margem extra para React/SPA renderizar
+  await waitForSpinner(p, cycle);
+  await sleep(300);
 }
 
 async function fillById(p: Page, id: string, value: string, label: string, cycle: number): Promise<void> {
@@ -70,8 +99,7 @@ async function clickForward(p: Page, cycle: number): Promise<void> {
   await sleep(200 + Math.random() * 100);
   await el.click();
   globalState.addLog('info', '✔️ click: Avançar (forward-button)', cycle);
-  // Aguarda a SPA navegar para o próximo passo
-  await waitForPageSettle(p, 4000);
+  await waitForPageSettle(p, cycle, 3000);
 }
 
 function gerarTelefoneFixoBR(): string {
@@ -147,7 +175,7 @@ async function stepOTP(
     if (await btn.isVisible({ timeout: 2000 }).catch(() => false)) {
       await btn.click();
       globalState.addLog('info', '✔️ confirmar-otp via submit', cycle);
-      await waitForPageSettle(p, 4000);
+      await waitForPageSettle(p, cycle, 4000);
     }
   }
 }
@@ -257,11 +285,13 @@ async function stepTerms(p: Page, cycle: number): Promise<void> {
 
   await sleep(600);
   await clickForward(p, cycle);
+  // Após termos o Uber faz verificação de sessão — esperar spinner sumir
+  await waitForSpinner(p, cycle, 45_000);
 }
 
 /**
  * [7] Cidade + código de indicação
- * Aguarda até 12s pela tela de cidade — SPA pode demorar após termos.
+ * Aguarda spinner antes de tentar detectar o campo.
  */
 async function stepCity(p: Page, inviteCode: string, cycle: number): Promise<void> {
   globalState.addLog('info', '🏢 [7] Cidade...', cycle);
@@ -279,11 +309,10 @@ async function stepCity(p: Page, inviteCode: string, cycle: number): Promise<voi
 
   let cityInput: string | null = null;
   for (const sel of CITY_CANDIDATES) {
-    if (await hasElement(p, sel, 12_000)) { cityInput = sel; break; }
+    if (await hasElement(p, sel, 15_000)) { cityInput = sel; break; }
   }
 
   if (!cityInput) {
-    // Última tentativa: dump dos data-testids visíveis para diagnóstico
     const testIds = await p.evaluate(() =>
       Array.from(document.querySelectorAll('[data-testid]'))
         .map(el => (el as HTMLElement).dataset['testid'])
@@ -304,7 +333,7 @@ async function stepCity(p: Page, inviteCode: string, cycle: number): Promise<voi
   await sleep(200);
   await el.pressSequentially('Paris', { delay: 60 + Math.random() * 40 });
   globalState.addLog('info', '✔️ fill cidade: Paris', cycle);
-  await sleep(1500); // aguarda lista de sugestões
+  await sleep(1500);
 
   const OPTION_CANDIDATES = [
     '[role="option"]',
@@ -349,7 +378,7 @@ async function stepCity(p: Page, inviteCode: string, cycle: number): Promise<voi
   if (await submitBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
     await submitBtn.click();
     globalState.addLog('info', '✔️ click: submit-button (cidade)', cycle);
-    await waitForPageSettle(p, 4000);
+    await waitForPageSettle(p, cycle, 4000);
   } else {
     await clickForward(p, cycle);
   }
@@ -358,6 +387,7 @@ async function stepCity(p: Page, inviteCode: string, cycle: number): Promise<voi
 /** [8] WhatsApp opt-in */
 async function stepWhatsApp(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '📲 [8] WhatsApp opt-in...', cycle);
+  await waitForSpinner(p, cycle, 10_000);
   const visible = await hasElement(p, '[data-testid="step-bottom-navigation"]', 8000);
   if (!visible) {
     globalState.addLog('info', '⏩ Tela WhatsApp não encontrada — pulando', cycle);
@@ -367,13 +397,14 @@ async function stepWhatsApp(p: Page, cycle: number): Promise<void> {
   if (await naoAtivar.first().isVisible({ timeout: 1500 }).catch(() => false)) {
     await naoAtivar.first().click();
     globalState.addLog('info', '✔️ click: NÃO ATIVAR (WhatsApp)', cycle);
-    await waitForPageSettle(p, 3000);
+    await waitForPageSettle(p, cycle, 3000);
   }
 }
 
 /** [9] Hub — clica em Foto do perfil (OPCIONAL) */
 async function stepHubPhotoClick(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '🏠 [9] Hub — aguardando...', cycle);
+  await waitForSpinner(p, cycle, 15_000);
 
   const HUB_CANDIDATES = [
     '[data-testid="hub"]',
@@ -407,7 +438,7 @@ async function stepHubPhotoClick(p: Page, cycle: number): Promise<void> {
   if (await photoItem.isVisible({ timeout: 2000 }).catch(() => false)) {
     await photoItem.click();
     globalState.addLog('info', '✔️ click: Foto do perfil', cycle);
-    await waitForPageSettle(p, 3000);
+    await waitForPageSettle(p, cycle, 3000);
   }
 }
 
