@@ -74,10 +74,6 @@ async function clickForward(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '✔️ click: Avançar (forward-button)', cycle);
 }
 
-/**
- * Gera número de telefone fixo brasileiro válido.
- * Formato: (XX) XXXX-XXXX  — 8 dígitos, primeiro entre 2-5
- */
 function gerarTelefoneFixoBR(): string {
   const ddds = ['11','21','22','24','27','28','31','32','33','34','35','37','38',
                 '41','42','43','44','45','46','47','48','49','51','53','54','55',
@@ -92,7 +88,6 @@ function gerarTelefoneFixoBR(): string {
 
 // ─── ETAPAS ──────────────────────────────────────────────────────────────────
 
-/** [1] Email */
 async function stepEmail(p: Page, email: string, cycle: number): Promise<void> {
   globalState.addLog('info', '📧 [1] Email...', cycle);
   const EMAIL_SEL = 'input[type="email"], input[autocomplete="email"], #EMAIL, #EMAIL_ADDRESS';
@@ -106,7 +101,6 @@ async function stepEmail(p: Page, email: string, cycle: number): Promise<void> {
   await sleep(1000);
 }
 
-/** [2] OTP */
 async function stepOTP(
   p: Page,
   emailClient: ReturnType<typeof createEmailClient>,
@@ -159,7 +153,6 @@ async function stepOTP(
   await sleep(1000);
 }
 
-/** [3] Telefone fixo brasileiro */
 async function stepPhone(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '📱 [3] Telefone...', cycle);
   const visible = await hasElement(p, '#PHONE_NUMBER, input[autocomplete="tel-national"]', 3000);
@@ -174,7 +167,6 @@ async function stepPhone(p: Page, cycle: number): Promise<void> {
   await sleep(1000);
 }
 
-/** [4] Criar senha */
 async function stepPassword(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '🔒 [4] Senha...', cycle);
   const visible = await hasElement(p, '#PASSWORD, input[autocomplete="new-password"]', 3000);
@@ -187,7 +179,6 @@ async function stepPassword(p: Page, cycle: number): Promise<void> {
   await sleep(1000);
 }
 
-/** [5] Nome e Sobrenome */
 async function stepPersonalInfo(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '👤 [5] Nome...', cycle);
   const visible = await hasElement(p, '#FIRST_NAME, input[autocomplete="given-name"]', 3000);
@@ -206,20 +197,9 @@ async function stepPersonalInfo(p: Page, cycle: number): Promise<void> {
   await sleep(1000);
 }
 
-/**
- * [6] Aceitar termos
- *
- * O Uber usa um checkbox CUSTOMIZADO — não é um <input type="checkbox"> nativo.
- * O JSON mostra:
- *   { testId: "accept-terms", tag: "P" }  ← é o contêiner do texto
- *   { checkboxes: [{ label: "Concordo" }] } ← o checkbox é renderizado como div/span
- *
- * Estratégia: tentar vários seletores em ordem até um clicar com sucesso.
- */
 async function stepTerms(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '📝 [6] Termos...', cycle);
 
-  // Detecta a tela pelos candidatos mais estáveis
   const TELA_SEL = [
     '[data-testid="accept-terms"]',
     'text=Concordo',
@@ -237,18 +217,12 @@ async function stepTerms(p: Page, cycle: number): Promise<void> {
 
   await sleep(500);
 
-  // Candidatos para o checkbox/label "Concordo" — do mais específico ao mais genérico
   const CHECKBOX_CANDIDATES = [
-    // checkbox nativo
     'input[type="checkbox"]',
-    // label com texto
     'label:has-text("Concordo")',
-    // qualquer elemento com texto exato
     'text=Concordo',
-    // div/span que é filho do bloco de termos
     '[data-testid="accept-terms"] ~ * input',
     '[data-testid="accept-terms"] ~ * label',
-    // fallback: qualquer checkbox na página
     '[role="checkbox"]',
   ];
 
@@ -259,7 +233,7 @@ async function stepTerms(p: Page, cycle: number): Promise<void> {
       if (await el.isVisible({ timeout: 800 }).catch(() => false)) {
         await el.scrollIntoViewIfNeeded();
         await sleep(200);
-        await el.click({ force: true }); // force ignora pointer-events bloqueados
+        await el.click({ force: true });
         globalState.addLog('info', `✔️ checkbox clicado via: ${sel}`, cycle);
         clicked = true;
         break;
@@ -268,13 +242,11 @@ async function stepTerms(p: Page, cycle: number): Promise<void> {
   }
 
   if (!clicked) {
-    // Último recurso: clicar via JS no primeiro checkbox encontrado
     const jsClicked = await p.evaluate(() => {
       const cb = document.querySelector('input[type="checkbox"]') as HTMLInputElement | null;
       if (cb) { cb.click(); return true; }
       const role = document.querySelector('[role="checkbox"]') as HTMLElement | null;
       if (role) { role.click(); return true; }
-      // tenta clicar no label "Concordo"
       const labels = Array.from(document.querySelectorAll('label, span, p, div'));
       const concordo = labels.find(el => el.textContent?.trim() === 'Concordo') as HTMLElement | null;
       if (concordo) { concordo.click(); return true; }
@@ -292,31 +264,91 @@ async function stepTerms(p: Page, cycle: number): Promise<void> {
   await sleep(1000);
 }
 
-/** [7] Cidade + código de indicação */
+/**
+ * [7] Cidade + código de indicação
+ *
+ * Seletores em cascata — o testid do Uber muda entre versões.
+ * Timeout aumentado para 8s pois a transição após termos pode ser lenta.
+ */
 async function stepCity(p: Page, inviteCode: string, cycle: number): Promise<void> {
   globalState.addLog('info', '🏢 [7] Cidade...', cycle);
-  const visible = await hasElement(p, '[data-testid="flow-type-city-selector-v2-input"]', 3000);
-  if (!visible) {
-    globalState.addLog('info', '⏩ Tela de cidade não encontrada — pulando', cycle);
+
+  // Candidatos para o campo de cidade — do mais específico ao mais genérico
+  const CITY_CANDIDATES = [
+    '[data-testid="flow-type-city-selector-v2-input"]',
+    '[data-testid="city-selector-input"]',
+    '[data-testid*="city"]',
+    'input[placeholder*="cidade" i]',
+    'input[placeholder*="city" i]',
+    'input[placeholder*="ville" i]',
+    'input[aria-label*="cidade" i]',
+    'input[aria-label*="city" i]',
+  ];
+
+  let cityInput: string | null = null;
+  for (const sel of CITY_CANDIDATES) {
+    if (await hasElement(p, sel, 8000)) { cityInput = sel; break; }
+  }
+
+  if (!cityInput) {
+    globalState.addLog('warn', '⏩ Tela de cidade não encontrada — pulando', cycle);
     return;
   }
-  await fillByTestId(p, 'flow-type-city-selector-v2-input', '', 'limpar cidade', cycle);
+
+  globalState.addLog('info', `✔️ Campo cidade encontrado: ${cityInput}`, cycle);
+
+  const el = p.locator(cityInput).first();
+  await el.scrollIntoViewIfNeeded();
   await sleep(300);
-  await fillByTestId(p, 'flow-type-city-selector-v2-input', 'Paris', 'cidade', cycle);
-  await sleep(1000);
-  const option = p.locator('[role="option"], [role="listitem"], [data-testid*="suggestion"]').first();
-  if (await option.isVisible({ timeout: 2000 }).catch(() => false)) {
-    await option.click();
-    globalState.addLog('info', '✔️ cidade selecionada da lista', cycle);
-  }
-  await sleep(500);
-  if (inviteCode) {
-    const codeVisible = await hasElement(p, '[data-testid="signup-step::invite-code-input"]', 1000);
-    if (codeVisible) {
-      await fillByTestId(p, 'signup-step::invite-code-input', inviteCode, 'invite code', cycle);
-      await sleep(300);
+  await el.click({ clickCount: 3 });
+  await p.keyboard.press('Delete');
+  await sleep(200);
+  await el.pressSequentially('Paris', { delay: 60 + Math.random() * 40 });
+  globalState.addLog('info', '✔️ fill cidade: Paris', cycle);
+  await sleep(1200);
+
+  // Selecionar da lista de sugestões
+  const OPTION_CANDIDATES = [
+    '[role="option"]',
+    '[role="listitem"]',
+    '[data-testid*="suggestion"]',
+    '[data-testid*="option"]',
+    'li[data-value]',
+    'ul li',
+  ];
+  for (const sel of OPTION_CANDIDATES) {
+    const opt = p.locator(sel).first();
+    if (await opt.isVisible({ timeout: 1500 }).catch(() => false)) {
+      await opt.click();
+      globalState.addLog('info', `✔️ cidade selecionada da lista via: ${sel}`, cycle);
+      break;
     }
   }
+
+  await sleep(500);
+
+  // Código de indicação
+  if (inviteCode) {
+    const CODE_CANDIDATES = [
+      '[data-testid="signup-step::invite-code-input"]',
+      '[data-testid*="invite"]',
+      '[data-testid*="referral"]',
+      'input[placeholder*="código" i]',
+      'input[placeholder*="code" i]',
+    ];
+    for (const sel of CODE_CANDIDATES) {
+      if (await hasElement(p, sel, 1000)) {
+        const codeEl = p.locator(sel).first();
+        await codeEl.click({ clickCount: 3 });
+        await codeEl.pressSequentially(inviteCode, { delay: 60 });
+        globalState.addLog('info', `✔️ invite code preenchido via: ${sel}`, cycle);
+        break;
+      }
+    }
+    await sleep(300);
+  }
+
+  // Avançar
   const submitBtn = p.locator('[data-testid="submit-button"]').first();
   if (await submitBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
     await submitBtn.click();
@@ -343,22 +375,56 @@ async function stepWhatsApp(p: Page, cycle: number): Promise<void> {
   await sleep(1200);
 }
 
-/** [9] Hub — clica em Foto do perfil */
+/**
+ * [9] Hub — clica em Foto do perfil (OPCIONAL)
+ * Se o hub não aparecer em 8s, considera ciclo concluído.
+ */
 async function stepHubPhotoClick(p: Page, cycle: number): Promise<void> {
-  globalState.addLog('info', '🏠 [9] Hub — clicando em Foto do perfil...', cycle);
-  await p.waitForSelector('[data-testid="hub"], [data-testid="stepItem profilePhoto"]', { state: 'visible', timeout: 15_000 });
-  const photoLink = p.locator('[data-testid="stepItem profilePhoto"]').first();
-  await photoLink.waitFor({ state: 'visible', timeout: 10_000 });
-  await photoLink.click();
-  globalState.addLog('info', '✔️ click: Foto do perfil', cycle);
+  globalState.addLog('info', '🏠 [9] Hub — aguardando...', cycle);
+
+  const HUB_CANDIDATES = [
+    '[data-testid="hub"]',
+    '[data-testid="stepItem profilePhoto"]',
+    '[data-testid*="profilePhoto"]',
+    '[data-testid*="profile-photo"]',
+    'text=Foto do perfil',
+    'text=Photo de profil',
+  ];
+
+  let hubSel: string | null = null;
+  for (const sel of HUB_CANDIDATES) {
+    if (await hasElement(p, sel, 8000)) { hubSel = sel; break; }
+  }
+
+  if (!hubSel) {
+    globalState.addLog('info', '⏩ Hub não encontrado — ciclo concluído sem foto', cycle);
+    return;
+  }
+
+  globalState.addLog('info', `✔️ Hub encontrado via: ${hubSel}`, cycle);
+
+  // Tenta clicar no item de foto especificamente
+  const PHOTO_ITEM = '[data-testid="stepItem profilePhoto"], [data-testid*="profilePhoto"], text=Foto do perfil, text=Photo de profil';
+  const photoItem = p.locator(PHOTO_ITEM).first();
+  if (await photoItem.isVisible({ timeout: 2000 }).catch(() => false)) {
+    await photoItem.click();
+    globalState.addLog('info', '✔️ click: Foto do perfil', cycle);
+  }
   await sleep(1500);
 }
 
-/** [10] Foto do perfil — clica em Tirar foto */
+/** [10] Foto do perfil — clica em Tirar foto (OPCIONAL) */
 async function stepProfilePhoto(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '📸 [10] Tirar foto do perfil...', cycle);
-  await p.waitForSelector('[data-testid="step profilePhoto"], [data-testid="docUploadButton"]', { state: 'visible', timeout: 15_000 });
-  const btn = p.locator('[data-testid="docUploadButton"], button:has-text("Tirar foto")').first();
+
+  const PHOTO_PAGE = '[data-testid="step profilePhoto"], [data-testid="docUploadButton"], button:has-text("Tirar foto"), button:has-text("Prendre une photo")';
+  const visible = await hasElement(p, PHOTO_PAGE, 5000);
+  if (!visible) {
+    globalState.addLog('info', '⏩ Tela de foto não encontrada — pulando', cycle);
+    return;
+  }
+
+  const btn = p.locator('[data-testid="docUploadButton"], button:has-text("Tirar foto"), button:has-text("Prendre une photo")').first();
   if (await btn.isVisible({ timeout: 3000 }).catch(() => false)) {
     await btn.click();
     globalState.addLog('info', '✔️ click: Tirar foto', cycle);
