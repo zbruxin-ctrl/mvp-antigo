@@ -87,14 +87,11 @@ async function detectScreen(p: Page): Promise<string> {
 
 /**
  * Injeta um valor em um campo React controlado.
- * O React usa nativeInputValueSetter internamente — sem isso,
- * input.value = x não dispara onChange e o estado interno do React não atualiza.
  */
 async function reactFill(p: Page, selector: string, value: string): Promise<void> {
   await p.evaluate(({ sel, val }: { sel: string; val: string }) => {
     const el = document.querySelector(sel) as HTMLInputElement | null;
     if (!el) throw new Error(`reactFill: elemento não encontrado — "${sel}"`);
-    // Usa o setter nativo do HTMLInputElement para bypassar o React
     const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
       window.HTMLInputElement.prototype, 'value'
     )?.set;
@@ -103,7 +100,6 @@ async function reactFill(p: Page, selector: string, value: string): Promise<void
     } else {
       el.value = val;
     }
-    // Dispara os eventos que o React escuta
     el.dispatchEvent(new Event('input',  { bubbles: true }));
     el.dispatchEvent(new Event('change', { bubbles: true }));
   }, { sel: selector, val: value });
@@ -138,14 +134,17 @@ async function clickForward(p: Page, cycle: number): Promise<void> {
 }
 
 /**
- * Gera número de celular francês válido.
- * Formato local: 0XXXXXXXXX (10 dígitos, zero inicial obrigatório).
+ * Gera número de celular brasileiro válido.
+ * O campo do Uber BR já tem +55 como prefixo — envia só o DDD + número (11 dígitos, sem zero inicial).
+ * Exemplo: 11987654321
  */
-function gerarTelefoneFR(): { display: string; digits: string } {
-  const prefix = Math.random() < 0.5 ? '6' : '7';
+function gerarTelefoneBR(): { display: string; digits: string } {
+  const ddds = ['11','21','31','41','51','61','71','81','85','91'];
+  const ddd = ddds[Math.floor(Math.random() * ddds.length)];
+  // Celular: 9 + 8 dígitos
   const rest = Array.from({ length: 8 }, () => Math.floor(Math.random() * 10)).join('');
-  const digits = `0${prefix}${rest}`;
-  const display = `0${prefix} ${rest.slice(0, 2)} ${rest.slice(2, 4)} ${rest.slice(4, 6)} ${rest.slice(6, 8)}`;
+  const digits = `${ddd}9${rest}`;
+  const display = `(${ddd}) 9${rest.slice(0,4)}-${rest.slice(4)}`;
   return { display, digits };
 }
 
@@ -228,9 +227,8 @@ async function stepPhone(p: Page, cycle: number): Promise<void> {
     '[data-testid="PHONE_COUNTRY_CODE"] ~ input',
     '[data-testid="PHONE_COUNTRY_CODE"] + input',
     'input[data-testid*="phone" i]',
-    'input[placeholder*="phone" i]',
-    'input[placeholder*="téléphone" i]',
     'input[placeholder*="telefone" i]',
+    'input[placeholder*="phone" i]',
     'input[type="tel"]',
   ];
 
@@ -262,7 +260,7 @@ async function stepPhone(p: Page, cycle: number): Promise<void> {
     return;
   }
 
-  const { display, digits } = gerarTelefoneFR();
+  const { display, digits } = gerarTelefoneBR();
   globalState.addLog('info', `📞 Telefone gerado: ${display} (enviando: ${digits})`, cycle);
 
   const el = p.locator(phoneInput).first();
@@ -270,16 +268,13 @@ async function stepPhone(p: Page, cycle: number): Promise<void> {
   await el.click();
   await sleep(150);
 
-  // 1. Seleciona todo o texto existente e apaga via teclado
   await p.keyboard.press('Control+a');
   await p.keyboard.press('Delete');
   await sleep(80);
 
-  // 2. Injeta o valor via nativeInputValueSetter (compatível com React controlled inputs)
   await reactFill(p, phoneInput, digits);
   await sleep(150);
 
-  // 3. Dispara blur+focus para garantir que o React processe o novo valor
   await el.evaluate((node: HTMLInputElement) => { node.blur(); node.focus(); });
   await sleep(200);
 
@@ -333,8 +328,8 @@ async function stepPersonalInfo(p: Page, cycle: number): Promise<void> {
     globalState.addLog('info', '⏩ Tela de nome não encontrada — pulando', cycle);
     return;
   }
-  const firstNames = ['Thomas', 'Lucas', 'Hugo', 'Maxime', 'Antoine', 'Nicolas', 'Alexandre'];
-  const lastNames  = ['Martin', 'Bernard', 'Dubois', 'Laurent', 'Fontaine', 'Girard', 'Rousseau'];
+  const firstNames = ['Lucas', 'Pedro', 'Matheus', 'Gabriel', 'Rafael', 'Felipe', 'Bruno'];
+  const lastNames  = ['Silva', 'Santos', 'Oliveira', 'Souza', 'Lima', 'Ferreira', 'Costa'];
   const fn = firstNames[Math.floor(Math.random() * firstNames.length)];
   const ln = lastNames[Math.floor(Math.random() * lastNames.length)];
   await fillById(p, 'FIRST_NAME', fn, 'primeiro nome', cycle);
@@ -414,7 +409,7 @@ async function stepCity(
   p: Page,
   inviteCode: string,
   cycle: number,
-  cityName = 'Paris'
+  cityName = 'São Paulo'
 ): Promise<void> {
   globalState.addLog('info', '🏢 [7] Cidade...', cycle);
   await waitForSpinner(p, cycle, 45_000);
@@ -676,10 +671,10 @@ export class MockPlaywrightFlow {
 
     const ctxOpts: Parameters<Browser['newContext']>[0] = {
       ...devices['Desktop Chrome'],
-      locale: 'fr-FR',
-      timezoneId: 'Europe/Paris',
+      locale: 'pt-BR',
+      timezoneId: 'America/Sao_Paulo',
       permissions: ['geolocation'],
-      geolocation: { latitude: 48.8566, longitude: 2.3522 },
+      geolocation: { latitude: -23.5505, longitude: -46.6333 },
     };
 
     if (proxyUrl) {
@@ -722,7 +717,7 @@ export class MockPlaywrightFlow {
       await stepPassword(p, cycle);                                          // 4
       await stepPersonalInfo(p, cycle);                                      // 5
       await stepTerms(p, cycle);                                             // 6
-      await stepCity(p, config.inviteCode, cycle, config.cityName);          // 7
+      await stepCity(p, config.inviteCode, cycle, config.cityName ?? 'São Paulo'); // 7
       await stepWhatsApp(p, cycle);                                          // 8
       await stepHubPhotoClick(p, cycle);                                     // 9
       await stepProfilePhoto(p, cycle);                                      // 10
