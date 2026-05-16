@@ -85,9 +85,6 @@ async function detectScreen(p: Page): Promise<string> {
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 
-/**
- * Injeta um valor em um campo React controlado.
- */
 async function reactFill(p: Page, selector: string, value: string): Promise<void> {
   await p.evaluate(({ sel, val }: { sel: string; val: string }) => {
     const el = document.querySelector(sel) as HTMLInputElement | null;
@@ -133,15 +130,9 @@ async function clickForward(p: Page, cycle: number): Promise<void> {
   await waitForPageSettle(p, cycle, 3000);
 }
 
-/**
- * Gera número de celular brasileiro válido.
- * O campo do Uber BR já tem +55 como prefixo — envia só o DDD + número (11 dígitos, sem zero inicial).
- * Exemplo: 11987654321
- */
 function gerarTelefoneBR(): { display: string; digits: string } {
   const ddds = ['11','21','31','41','51','61','71','81','85','91'];
   const ddd = ddds[Math.floor(Math.random() * ddds.length)];
-  // Celular: 9 + 8 dígitos
   const rest = Array.from({ length: 8 }, () => Math.floor(Math.random() * 10)).join('');
   const digits = `${ddd}9${rest}`;
   const display = `(${ddd}) 9${rest.slice(0,4)}-${rest.slice(4)}`;
@@ -298,25 +289,37 @@ async function stepPhone(p: Page, cycle: number): Promise<void> {
   }
 }
 
+const PASSWORD = 'connect@10';
+
 async function stepPassword(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '🔒 [4] Senha...', cycle);
   await waitForSpinner(p, cycle, 10_000);
-  const visible = await hasElement(p, '#PASSWORD, input[autocomplete="new-password"], input[type="password"]', 8000);
+
+  const PWD_SEL = '#PASSWORD, input[autocomplete="new-password"], input[type="password"]';
+  const visible = await hasElement(p, PWD_SEL, 8000);
   if (!visible) {
     globalState.addLog('info', '⏩ Tela de senha não encontrada — pulando', cycle);
     return;
   }
+
+  // Tenta pelo ID primeiro; se não tiver, usa o seletor genérico
   const hasPwdId = await hasElement(p, '#PASSWORD', 500);
-  if (hasPwdId) {
-    await fillById(p, 'PASSWORD', 'Uber2024@', 'senha', cycle);
-  } else {
-    const el = p.locator('input[autocomplete="new-password"], input[type="password"]').first();
-    await el.click({ clickCount: 3 });
-    await p.keyboard.press('Delete');
-    await sleep(60);
-    await el.pressSequentially('Uber2024@', { delay: 60 });
-    globalState.addLog('info', '✔️ fill [password]: senha', cycle);
-  }
+  const el = hasPwdId
+    ? p.locator('#PASSWORD').first()
+    : p.locator('input[autocomplete="new-password"], input[type="password"]').first();
+
+  await el.waitFor({ state: 'visible', timeout: 10_000 });
+  await el.scrollIntoViewIfNeeded();
+  await el.click();
+  await sleep(100);
+  // Seleciona tudo e apaga qualquer conteúdo preexistente
+  await p.keyboard.press('Control+a');
+  await p.keyboard.press('Delete');
+  await sleep(80);
+  // Digita caractere a caractere para garantir que o React processa cada tecla
+  await el.pressSequentially(PASSWORD, { delay: 60 + Math.random() * 40 });
+  globalState.addLog('info', '✔️ fill [password]: senha digitada', cycle);
+
   await clickForward(p, cycle);
 }
 
