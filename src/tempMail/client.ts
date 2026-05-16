@@ -117,7 +117,7 @@ export class TempMailClient implements IEmailClient {
     return this.request<{ body_text: string; body_html: string }>(`/v1/messages/${messageId}`);
   }
 
-  async waitForOTP(email: string, timeoutMs = 90000, cycle?: number): Promise<string> {
+  async waitForOTP(email: string, timeoutMs = 180_000, cycle?: number): Promise<string> {
     const startTime = Date.now();
     let lastMessageCount = 0;
     const POLL_INTERVAL_MS = 6_000;
@@ -300,7 +300,7 @@ export class MailTmClient implements IEmailClient {
     return { html, text };
   }
 
-  async waitForOTP(email: string, timeoutMs = 90000, cycle?: number): Promise<string> {
+  async waitForOTP(email: string, timeoutMs = 180_000, cycle?: number): Promise<string> {
     const startTime = Date.now();
     let lastMessageCount = 0;
     const POLL_INTERVAL_MS = 5_000;
@@ -392,7 +392,7 @@ export class TempMailCClient implements IEmailClient {
     return { email, token: email };
   }
 
-  async waitForOTP(email: string, timeoutMs = 90000, cycle?: number): Promise<string> {
+  async waitForOTP(email: string, timeoutMs = 180_000, cycle?: number): Promise<string> {
     const startTime = Date.now();
     const POLL_INTERVAL_MS = 4_000;
     const INITIAL_WAIT_MS  = 6_000;
