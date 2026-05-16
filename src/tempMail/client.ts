@@ -2,9 +2,9 @@ import fetch from 'node-fetch';
 import { globalState } from '../state/globalState';
 import { EmailProvider } from '../types';
 
-// ──────────────────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────────────────────────
 // Shared helpers
-// ──────────────────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────────────────────────
 
 function isStopped(): boolean {
   return !!(globalState.getState() as any).shouldStop;
@@ -47,9 +47,9 @@ async function safeFetch(
   }
 }
 
-// ──────────────────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────────────────────────
 // Types
-// ──────────────────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────────────────────────
 
 export interface EmailAccount {
   email: string;
@@ -72,9 +72,9 @@ export interface TempMailConfig {
   apiKey: string;
 }
 
-// ──────────────────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────────────────────────
 // TempMailClient  (temp-mail.io)
-// ──────────────────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────────────────────────
 
 export class TempMailClient implements IEmailClient {
   private config: TempMailConfig;
@@ -155,9 +155,9 @@ export class TempMailClient implements IEmailClient {
   }
 }
 
-// ──────────────────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────────────────────────
 // MailTmClient  (mail.tm)
-// ──────────────────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────────────────────────
 
 interface MailTmMessageSummary {
   '@id': string;
@@ -178,7 +178,6 @@ interface MailTmMessageFull extends MailTmMessageSummary {
 export class MailTmClient implements IEmailClient {
   private readonly baseUrl = 'https://api.mail.tm';
   private token: string | null = null;
-  private accountEmail: string | null = null;
 
   private async request<T>(
     path: string,
@@ -208,7 +207,6 @@ export class MailTmClient implements IEmailClient {
     await this.request('/accounts', 'POST', { address: email, password });
     const auth = await this.request<{ token: string }>('/token', 'POST', { address: email, password });
     this.token = auth.token;
-    this.accountEmail = email;
     globalState.addLog('info', `✅ [mail.tm] Email gerado: ${email}`);
     return { email, token: auth.token };
   }
@@ -221,8 +219,7 @@ export class MailTmClient implements IEmailClient {
   }
 
   private async getFullMessage(id: string): Promise<MailTmMessageFull> {
-    const resp = await this.request<MailTmMessageFull>(`/messages/${id}`, 'GET', undefined, true);
-    return resp;
+    return this.request<MailTmMessageFull>(`/messages/${id}`, 'GET', undefined, true);
   }
 
   async waitForOTP(email: string, timeoutMs = 180_000, cycle?: number): Promise<string> {
@@ -237,7 +234,6 @@ export class MailTmClient implements IEmailClient {
       globalState.addLog('info', `🔄 [mail.tm] Poll #${tentativaPoll} — buscando mensagens...`, cycle);
       try {
         const messages = await withRetry('mail.tm listMessages', () => this.listMessages(), 3, 1500);
-        globalState.addLog('info', `📬 [mail.tm] ${messages.length} mensagem(s) (anterior: ${lastMessageCount})`, cycle);
         if (messages.length > lastMessageCount) {
           const novas = messages.slice(lastMessageCount);
           for (const msg of novas) {
@@ -264,51 +260,25 @@ export class MailTmClient implements IEmailClient {
   }
 }
 
-// ──────────────────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────────────────────────
 // TempMailCClient  (tempmailc.com)
-// Endpoints: GET /api/v1/domains?code=X  →  GET /api/v1/code?email=X&code=X
-// Todos os requests exigem o parâmetro &code= (API key do usuário).
-// ──────────────────────────────────────────────────────────────────────────────────
+// Endpoint OTP: GET /api/v1/code?email=X&code=APIKEY
+// Domínio fixo: kaamoolzy.it.com (licença trial)
+// ────────────────────────────────────────────────────────────────────────────────
 
 export class TempMailCClient implements IEmailClient {
   private readonly baseUrl = 'https://tempmailc.com';
   private readonly apiCode: string;
-  private cachedDomain: string | null = null;
+  // Domínio fixo da licença trial — não depende de /api/v1/domains
+  private readonly domain = 'kaamoolzy.it.com';
 
   constructor(apiCode: string, _fixedDomain?: string) {
     this.apiCode = apiCode;
   }
 
-  /**
-   * Busca o primeiro domínio permitido via GET /api/v1/domains?code=APIKEY.
-   * Armazena em cache para não repetir a chamada a cada ciclo.
-   * Fallback: kaamoolzy.it.com (domínio trial).
-   */
-  private async getActiveDomain(): Promise<string> {
-    if (this.cachedDomain) return this.cachedDomain;
-    try {
-      const res = await safeFetch(
-        `${this.baseUrl}/api/v1/domains?code=${encodeURIComponent(this.apiCode)}`,
-        { method: 'GET', timeoutMs: 10000 }
-      );
-      if (res && res.ok) {
-        const body = JSON.parse(await res.text()) as { ok: boolean; domains: string[] };
-        if (body.ok && body.domains && body.domains.length > 0) {
-          this.cachedDomain = body.domains[0];
-          globalState.addLog('info', `🌐 [tempmailc] Domínio ativo: ${this.cachedDomain}`);
-          return this.cachedDomain;
-        }
-      }
-    } catch { /* usa fallback */ }
-    this.cachedDomain = 'kaamoolzy.it.com';
-    globalState.addLog('warn', `⚠️ [tempmailc] Não foi possível buscar domínios — usando fallback: ${this.cachedDomain}`);
-    return this.cachedDomain;
-  }
-
   async createRandomEmail(): Promise<EmailAccount> {
-    const domain = await this.getActiveDomain();
     const localPart = 'user' + Math.random().toString(36).slice(2, 10);
-    const email = `${localPart}@${domain}`;
+    const email = `${localPart}@${this.domain}`;
     globalState.addLog('info', `✅ [tempmailc] Email gerado: ${email}`);
     return { email, token: email };
   }
@@ -365,9 +335,9 @@ export class TempMailCClient implements IEmailClient {
   }
 }
 
-// ──────────────────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────────────────────────
 // Factory
-// ──────────────────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────────────────────────
 
 export function createEmailClient(
   provider: 'temp-mail.io' | 'mail.tm' | 'tempmailc',
