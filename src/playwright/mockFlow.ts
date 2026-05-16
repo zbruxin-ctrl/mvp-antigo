@@ -35,6 +35,8 @@ const SPINNER_SEL = [
   '[data-testid="loading_component"]',
   '[data-testid="spinner"]',
   '[data-testid="loading_component_SessionVerification"]',
+  '[data-testid="app"][data-testid="loader"]',
+  '[data-testid="loader"]',
 ].join(', ');
 
 async function waitForSpinner(p: Page, cycle: number, maxMs = 30_000): Promise<void> {
@@ -65,13 +67,12 @@ async function waitForPageSettle(p: Page, cycle: number, ms = 3000): Promise<voi
 /**
  * Aguarda ativamente até que um dos seletores concretos apareça na tela
  * ou o spinner desapareça — o que acontecer primeiro.
- * Resolve o problema de networkidle nunca disparar no Uber.
  */
 async function waitForNextScreen(
   p: Page,
   cycle: number,
   selectors: string[],
-  maxMs = 45_000
+  maxMs = 60_000
 ): Promise<void> {
   globalState.addLog('info', '⏳ Aguardando próxima tela...', cycle);
   const start = Date.now();
@@ -84,33 +85,29 @@ async function waitForNextScreen(
         return;
       }
     }
-    // se ainda há spinner, aguarda ele sumir (máx 5s desta rodada)
     await waitForSpinner(p, cycle, 5_000);
     await sleep(500);
   }
   globalState.addLog('warn', '⚠️ Timeout aguardando próxima tela — continuando mesmo assim', cycle);
 }
 
-// ─── DETECÇÃO DE TELA ATUAL ───────────────────────────────────────────────────
-
-async function detectScreen(p: Page): Promise<string> {
-  const checks: Array<[string, string]> = [
-    ['otp',      'input[autocomplete="one-time-code"], input[inputmode="numeric"][maxlength]'],
-    ['phone',    '[data-testid="PHONE_COUNTRY_CODE"], [data-testid="country-code"], #PHONE_NUMBER, input[autocomplete="tel-national"]'],
-    ['password', '#PASSWORD, input[autocomplete="new-password"], input[type="password"]'],
-    ['name',     '#FIRST_NAME, input[autocomplete="given-name"]'],
-    ['terms',    'input[type="checkbox"], [role="checkbox"], [data-testid="accept-terms"]'],
-    ['city',     '[data-testid*="city"], input[placeholder*="city" i], input[placeholder*="ville" i], input[placeholder*="cidade" i]'],
-    ['whatsapp', '[data-testid="step-bottom-navigation"]'],
-    ['hub',      '[data-testid="hub"], [data-testid*="profilePhoto"], [data-testid*="stepItem"]'],
-    ['photo',    '[data-testid="step profilePhoto"], [data-testid="docUploadButton"]'],
-    ['email',    'input[type="email"], input[autocomplete="email"], #EMAIL'],
-  ];
-  for (const [name, sel] of checks) {
-    if (await hasElement(p, sel, 800)) return name;
-  }
-  return 'unknown';
-}
+// Seletores que indicam "ainda carregando" — usado como set de telas de destino
+const NEXT_SCREEN_ANY = [
+  'input[type="email"]',
+  'input[autocomplete="one-time-code"]',
+  '#PHONE_NUMBER',
+  'input[autocomplete="tel-national"]',
+  '#PASSWORD',
+  '#FIRST_NAME',
+  'input[type="checkbox"]',
+  '[role="checkbox"]',
+  '[data-testid*="city"]',
+  'input[placeholder*="cidade" i]',
+  '[data-testid="step-bottom-navigation"]',
+  '[data-testid="hub"]',
+  '[data-testid*="profilePhoto"]',
+  '[data-testid="forward-button"]',
+];
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 
@@ -156,7 +153,7 @@ async function clickForward(p: Page, cycle: number): Promise<void> {
   await sleep(200 + Math.random() * 100);
   await el.click();
   globalState.addLog('info', '✔️ click: Avançar (forward-button)', cycle);
-  await waitForPageSettle(p, cycle, 3000);
+  // Não chama waitForPageSettle aqui — cada etapa chama waitForNextScreen explicitamente
 }
 
 function gerarTelefoneBR(): { display: string; digits: string } {
@@ -180,6 +177,12 @@ async function stepEmail(p: Page, email: string, cycle: number): Promise<void> {
   await el.pressSequentially(email, { delay: 55 + Math.random() * 45 });
   globalState.addLog('info', '✔️ fill: email', cycle);
   await clickForward(p, cycle);
+  await waitForNextScreen(p, cycle, [
+    'input[autocomplete="one-time-code"]',
+    'input[inputmode="numeric"][maxlength]',
+    'input[maxlength="1"]',
+    SPINNER_SEL,
+  ]);
 }
 
 async function stepOTP(
@@ -230,11 +233,16 @@ async function stepOTP(
     if (await btn.isVisible({ timeout: 2000 }).catch(() => false)) {
       await btn.click();
       globalState.addLog('info', '✔️ confirmar-otp via submit', cycle);
-      await waitForPageSettle(p, cycle, 4000);
     }
   }
 
-  await waitForSpinner(p, cycle, 20_000);
+  await waitForNextScreen(p, cycle, [
+    '#PHONE_NUMBER',
+    'input[autocomplete="tel-national"]',
+    'input[type="tel"]',
+    '#PASSWORD',
+    SPINNER_SEL,
+  ]);
 }
 
 async function stepPhone(p: Page, cycle: number): Promise<void> {
@@ -316,6 +324,14 @@ async function stepPhone(p: Page, cycle: number): Promise<void> {
     globalState.addLog('warn', `⚠️ Erro pós-submit no telefone: "${errMsg.trim()}" — abortando ciclo`, cycle);
     throw new Error(`Telefone rejeitado pós-submit: ${errMsg.trim()}`);
   }
+
+  await waitForNextScreen(p, cycle, [
+    '#PASSWORD',
+    'input[autocomplete="new-password"]',
+    'input[type="password"]',
+    '#FIRST_NAME',
+    SPINNER_SEL,
+  ]);
 }
 
 const PASSWORD = 'connect@10';
@@ -347,6 +363,12 @@ async function stepPassword(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '✔️ fill [password]: senha digitada', cycle);
 
   await clickForward(p, cycle);
+  await waitForNextScreen(p, cycle, [
+    '#FIRST_NAME',
+    'input[autocomplete="given-name"]',
+    '#LAST_NAME',
+    SPINNER_SEL,
+  ]);
 }
 
 async function stepPersonalInfo(p: Page, cycle: number): Promise<void> {
@@ -366,16 +388,15 @@ async function stepPersonalInfo(p: Page, cycle: number): Promise<void> {
   if (hasLast) await fillById(p, 'LAST_NAME', ln, 'sobrenome', cycle);
 
   await clickForward(p, cycle);
-
-  // Aguarda ativamente a próxima tela (termos, cidade ou spinner)
   await waitForNextScreen(p, cycle, [
     'input[type="checkbox"]',
     '[role="checkbox"]',
     '[data-testid="accept-terms"]',
+    'text=Concordo',
     '[data-testid*="city"]',
     'input[placeholder*="cidade" i]',
     SPINNER_SEL,
-  ], 45_000);
+  ]);
 }
 
 async function stepTerms(p: Page, cycle: number): Promise<void> {
@@ -443,8 +464,7 @@ async function stepTerms(p: Page, cycle: number): Promise<void> {
   await sleep(600);
   await clickForward(p, cycle);
 
-  // Aguarda ativamente a tela de cidade após os termos
-  // O Uber mostra spinner após aceitar os termos que pode durar vários segundos
+  // Aguarda ativamente a tela de cidade após os termos (pode demorar bastante)
   await waitForNextScreen(p, cycle, [
     '[data-testid="flow-type-city-selector-v2-input"]',
     '[data-testid="city-selector-input"]',
@@ -453,8 +473,9 @@ async function stepTerms(p: Page, cycle: number): Promise<void> {
     'input[placeholder*="city" i]',
     '[data-testid="step-bottom-navigation"]',
     '[data-testid="hub"]',
+    '[data-testid*="profilePhoto"]',
     SPINNER_SEL,
-  ], 60_000);
+  ]);
 }
 
 async function stepCity(
@@ -465,8 +486,6 @@ async function stepCity(
 ): Promise<void> {
   globalState.addLog('info', '🏢 [7] Cidade...', cycle);
 
-  // Aguarda o spinner sumir E o input de cidade aparecer
-  // (o Uber pode demorar bastante para carregar esta tela após os termos)
   await waitForNextScreen(p, cycle, [
     '[data-testid="flow-type-city-selector-v2-input"]',
     '[data-testid="city-selector-input"]',
@@ -475,7 +494,7 @@ async function stepCity(
     'input[placeholder*="city" i]',
     'input[aria-label*="cidade" i]',
     'input[aria-label*="city" i]',
-  ], 60_000);
+  ]);
 
   const CITY_CANDIDATES = [
     '[data-testid="flow-type-city-selector-v2-input"]',
@@ -566,10 +585,17 @@ async function stepCity(
   if (await submitBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
     await submitBtn.click();
     globalState.addLog('info', '✔️ click: submit-button (cidade)', cycle);
-    await waitForPageSettle(p, cycle, 4000);
   } else {
     await clickForward(p, cycle);
   }
+
+  await waitForNextScreen(p, cycle, [
+    '[data-testid="step-bottom-navigation"]',
+    '[data-testid="hub"]',
+    '[data-testid*="profilePhoto"]',
+    '[data-testid*="stepItem"]',
+    SPINNER_SEL,
+  ]);
 }
 
 async function stepWhatsApp(p: Page, cycle: number): Promise<void> {
@@ -584,8 +610,13 @@ async function stepWhatsApp(p: Page, cycle: number): Promise<void> {
   if (await naoAtivar.first().isVisible({ timeout: 1500 }).catch(() => false)) {
     await naoAtivar.first().click();
     globalState.addLog('info', '✔️ click: NÃO ATIVAR (WhatsApp)', cycle);
-    await waitForPageSettle(p, cycle, 3000);
   }
+  await waitForNextScreen(p, cycle, [
+    '[data-testid="hub"]',
+    '[data-testid*="profilePhoto"]',
+    '[data-testid*="stepItem"]',
+    SPINNER_SEL,
+  ]);
 }
 
 async function stepHubPhotoClick(p: Page, cycle: number): Promise<void> {
@@ -623,7 +654,12 @@ async function stepHubPhotoClick(p: Page, cycle: number): Promise<void> {
   if (await photoItem.isVisible({ timeout: 2000 }).catch(() => false)) {
     await photoItem.click();
     globalState.addLog('info', '✔️ click: Foto do perfil', cycle);
-    await waitForPageSettle(p, cycle, 3000);
+    await waitForNextScreen(p, cycle, [
+      '[data-testid="step profilePhoto"]',
+      '[data-testid="docUploadButton"]',
+      'button:has-text("Tirar foto")',
+      SPINNER_SEL,
+    ]);
   }
 }
 
@@ -732,8 +768,9 @@ export class MockPlaywrightFlow {
     const proxies: string[] = state.proxies ?? [];
     const proxyUrl = proxies.length > 0 ? proxies[cycle % proxies.length] : undefined;
 
+    // Emula iPhone 13 para que o Uber sirva o layout mobile
     const ctxOpts: Parameters<Browser['newContext']>[0] = {
-      ...devices['Desktop Chrome'],
+      ...devices['iPhone 13'],
       locale: 'pt-BR',
       timezoneId: 'America/Sao_Paulo',
       permissions: ['geolocation'],
