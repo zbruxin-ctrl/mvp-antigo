@@ -60,11 +60,6 @@ async function safeFill(
   globalState.addLog('info', `✔️ fill: ${label}`, cycle);
 }
 
-async function isOnLoginPage(p: Page): Promise<boolean> {
-  const url = p.url();
-  return url.includes('login') || url.includes('auth') || url.includes('signin');
-}
-
 async function detectCurrentStep(p: Page): Promise<string> {
   const url = p.url();
   if (url.includes('otp') || url.includes('verify') || url.includes('code')) return 'otp';
@@ -123,15 +118,44 @@ async function stepPassword(p: Page, password: string, cycle: number): Promise<v
 }
 
 /**
- * Preenche o OTP lidando com dois layouts:
- * 1. Input único (autocomplete="one-time-code", inputmode="numeric", etc.)
- * 2. Inputs separados por dígito (um <input maxlength="1"> por caractere)
+ * Preenche OTP usando pressSequentially para disparar eventos React/Vue.
+ * Suporta input único e inputs split (um box por dígito).
  */
 async function fillOTP(p: Page, otp: string, cycle: number): Promise<void> {
-  // --- Layout 1: input único com autocomplete ou inputmode ---
+  // --- Tenta detectar split (4+ inputs maxlength=1) primeiro ---
+  const SPLIT_SELS = [
+    'input[maxlength="1"]',
+    'input[data-index]',
+    'input[inputmode="numeric"][maxlength="1"]',
+    'input[type="tel"][maxlength="1"]',
+    'input[type="number"][maxlength="1"]',
+    'input[type="text"][maxlength="1"]',
+  ];
+
+  for (const baseSel of SPLIT_SELS) {
+    const inputs = p.locator(baseSel);
+    const count = await inputs.count().catch(() => 0);
+    if (count >= 4) {
+      globalState.addLog('info', `✔️ OTP split detectado: ${count} inputs (${baseSel})`, cycle);
+      const digits = otp.split('');
+      for (let i = 0; i < Math.min(count, digits.length); i++) {
+        const box = inputs.nth(i);
+        await box.scrollIntoViewIfNeeded();
+        await box.click();
+        await sleep(60 + Math.random() * 40);
+        // pressSequentially dispara eventos de input/change corretamente
+        await box.pressSequentially(digits[i], { delay: 60 + Math.random() * 50 });
+        await sleep(50);
+      }
+      globalState.addLog('info', `✔️ OTP preenchido (split ${digits.length} dígitos)`, cycle);
+      return;
+    }
+  }
+
+  // --- Input único ---
   const SINGLE_SELS = [
     'input[autocomplete="one-time-code"]',
-    'input[inputmode="numeric"][maxlength]',
+    'input[inputmode="numeric"]',
     'input[name*="otp" i]',
     'input[name*="code" i]',
     'input[name*="token" i]',
@@ -144,56 +168,21 @@ async function fillOTP(p: Page, otp: string, cycle: number): Promise<void> {
     const visible = await el.isVisible({ timeout: 800 }).catch(() => false);
     if (!visible) continue;
 
-    const maxlen = await el.getAttribute('maxlength').catch(() => null);
-    // Se maxlength == 1, provavelmente é split — trata abaixo
-    if (maxlen === '1') break;
-
     globalState.addLog('info', `✔️ OTP input único: ${sel}`, cycle);
     await el.scrollIntoViewIfNeeded();
-    await sleep(200);
     await el.click();
     await sleep(100);
-    await el.fill('');
-    // Digita com delay humano
-    for (const ch of otp) {
-      await el.type(ch, { delay: 50 + Math.random() * 60 });
-    }
-    globalState.addLog('info', `✔️ fill: OTP`, cycle);
+    // Limpa campo existente via triple-click + Delete
+    await el.click({ clickCount: 3 });
+    await p.keyboard.press('Delete');
+    await sleep(80);
+    // pressSequentially: dispara keydown/input/keyup — habilita botão React
+    await el.pressSequentially(otp, { delay: 60 + Math.random() * 50 });
+    globalState.addLog('info', `✔️ OTP preenchido (input único)`, cycle);
     return;
   }
 
-  // --- Layout 2: inputs separados por dígito (maxlength="1") ---
-  // Tenta selectors comuns de containers de OTP
-  const SPLIT_CONTAINER_SELS = [
-    'input[maxlength="1"]',
-    'input[data-index]',
-    'input[inputmode="numeric"][maxlength="1"]',
-    'input[type="tel"][maxlength="1"]',
-    'input[type="number"][maxlength="1"]',
-    'input[type="text"][maxlength="1"]',
-  ];
-
-  for (const baseSel of SPLIT_CONTAINER_SELS) {
-    const inputs = p.locator(baseSel);
-    const count = await inputs.count().catch(() => 0);
-    if (count >= 4) {
-      globalState.addLog('info', `✔️ OTP split detectado: ${count} inputs (${baseSel})`, cycle);
-      const digits = otp.split('');
-      for (let i = 0; i < Math.min(count, digits.length); i++) {
-        const box = inputs.nth(i);
-        await box.scrollIntoViewIfNeeded();
-        await box.click();
-        await sleep(80 + Math.random() * 60);
-        await box.fill('');
-        await box.type(digits[i], { delay: 50 + Math.random() * 50 });
-        await sleep(60);
-      }
-      globalState.addLog('info', `✔️ fill: OTP (split ${digits.length} dígitos)`, cycle);
-      return;
-    }
-  }
-
-  throw new Error('Não foi possível encontrar o campo OTP (nem single nem split)');
+  throw new Error('Não foi possível encontrar campo OTP (nem single nem split)');
 }
 
 async function stepOTP(
@@ -205,7 +194,6 @@ async function stepOTP(
 ): Promise<void> {
   globalState.addLog('info', '🔢 Aguardando tela de OTP...', cycle);
 
-  // Aguarda qualquer input de OTP aparecer (single ou split)
   const ANY_OTP_SEL = [
     'input[autocomplete="one-time-code"]',
     'input[inputmode="numeric"]',
@@ -229,18 +217,19 @@ async function stepOTP(
 
   await fillOTP(p, otp, cycle);
 
-  // Clica em confirmar (não necessário em split OTP — mas tenta mesmo assim)
-  await sleep(500);
+  // Aguarda botão habilitar após preencher OTP (React valida assincronamente)
+  await sleep(800);
+
   const BTN_SELS = [
-    'button[type="submit"]',
+    'button[type="submit"]:not([disabled])',
     'button:has-text("Verify")',
     'button:has-text("Confirm")',
     'button:has-text("Continue")',
-    'button:has-text("Verificar")',
     'button:has-text("Valider")',
+    'button:has-text("Verificar")',
   ];
   for (const btnSel of BTN_SELS) {
-    if (await hasElement(p, btnSel, 400)) {
+    if (await hasElement(p, btnSel, 1500)) {
       await safeClick(p, btnSel, 'confirmar-otp', cycle);
       break;
     }
@@ -315,10 +304,16 @@ async function dismissModals(p: Page, cycle: number): Promise<void> {
 
 async function clickForwardButton(p: Page, cycle: number, label = 'avançar'): Promise<boolean> {
   const FWD_SELS = [
-    'button[type="submit"]', '[data-testid*="forward"]', '[data-testid*="next"]',
-    '[data-testid*="submit"]', '[data-testid*="continue"]',
-    'button:has-text("Continue")', 'button:has-text("Next")',
-    'button:has-text("Suivant")', 'button:has-text("Submit")', 'button:has-text("Próximo")',
+    'button[type="submit"]:not([disabled])',
+    '[data-testid*="forward"]:not([disabled])',
+    '[data-testid*="next"]:not([disabled])',
+    '[data-testid*="submit"]:not([disabled])',
+    '[data-testid*="continue"]:not([disabled])',
+    'button:has-text("Continue")',
+    'button:has-text("Next")',
+    'button:has-text("Suivant")',
+    'button:has-text("Submit")',
+    'button:has-text("Próximo")',
   ];
   for (const sel of FWD_SELS) {
     const el = p.locator(sel).first();
@@ -479,8 +474,15 @@ export class MockPlaywrightFlow {
       globalState.addLog('info', `📧 Email: ${email}`, cycle);
 
       globalState.addLog('info', `🌐 Navegando para ${cadastroUrl}...`, cycle);
-      await p.goto(cadastroUrl, { waitUntil: 'networkidle', timeout: 45_000 });
-      await sleep(2500);
+
+      // domcontentloaded é instantâneo; aguarda o campo de email manualmente
+      // para evitar timeout de networkidle em conexões lentas.
+      await p.goto(cadastroUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+
+      // Aguarda o SPA hidratar (campo de email ou botão visível)
+      const READY_SEL = 'input[type="email"], input[name="email"], input[placeholder*="email" i], input[autocomplete="email"], button[type="submit"]';
+      await p.waitForSelector(READY_SEL, { state: 'visible', timeout: 20_000 });
+      await sleep(800);
 
       await dismissModals(p, cycle);
 
