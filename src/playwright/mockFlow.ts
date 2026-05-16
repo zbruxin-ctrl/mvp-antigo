@@ -580,6 +580,7 @@ async function dismissModals(p: Page, cycle: number): Promise<void> {
 
 let browserInstance: Browser | null = null;
 let lastProxyConfig: string | null = null;
+let lastHeadless: boolean | null = null;
 
 export class MockPlaywrightFlow {
   static async init(headless = true): Promise<void> {
@@ -587,8 +588,9 @@ export class MockPlaywrightFlow {
     const proxies: string[] = state.proxies ?? [];
     const proxyKey = proxies[0] ?? '';
 
-    if (browserInstance && lastProxyConfig !== proxyKey) {
-      globalState.addLog('info', '🔄 Proxy mudou — reiniciando browser...');
+    // Reinicia o browser se o proxy OU o modo headless mudou
+    if (browserInstance && (lastProxyConfig !== proxyKey || lastHeadless !== headless)) {
+      globalState.addLog('info', '🔄 Configuração mudou — reiniciando browser...');
       await browserInstance.close().catch(() => {});
       browserInstance = null;
     }
@@ -618,6 +620,7 @@ export class MockPlaywrightFlow {
       ],
     });
     lastProxyConfig = proxyKey;
+    lastHeadless = headless;
     globalState.addLog('info', '✅ Browser iniciado');
   }
 
