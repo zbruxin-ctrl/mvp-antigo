@@ -1184,9 +1184,11 @@ function setConnection(online) {
   document.getElementById('conn-text').textContent = online ? 'Online' : 'Offline';
   if (online) {
     badge.classList.remove('offline');
+    if (!pollTimer) { pollTimer = setInterval(() => { fetchStatus(); fetchLogs(); }, 3000); }
   } else {
     badge.classList.add('offline');
     clearInterval(pollTimer);
+    pollTimer = null;
   }
 }
 
@@ -1521,8 +1523,8 @@ function renderDashLogs() {
   if (!recent.length) { box.innerHTML = '<div class="log-empty">Aguardando logs…</div>'; return; }
   box.innerHTML = recent.map(l => `
     <div class="log-entry">
-      <span class="log-time">${fmtTime(l.ts)}</span>
-      <span class="log-msg ${l.level||'info'}">${escHtml(l.msg||'')}</span>
+      <span class="log-time">${fmtTime(l.timestamp)}</span>
+      <span class="log-msg ${l.level||'info'}">${escHtml(l.message||'')}</span>
     </div>`).join('');
 }
 
@@ -1532,8 +1534,8 @@ function renderFullLogs() {
   if (!filtered.length) { box.innerHTML = '<div class="log-empty">Nenhum log disponível.</div>'; return; }
   box.innerHTML = [...filtered].reverse().map(l => `
     <div class="log-entry">
-      <span class="log-time">${fmtDate(l.ts)}</span>
-      <span class="log-msg ${l.level||'info'}">${escHtml(l.msg||'')}</span>
+      <span class="log-time">${fmtDate(l.timestamp)}</span>
+      <span class="log-msg ${l.level||'info'}">${escHtml(l.message||'')}</span>
     </div>`).join('');
 }
 
