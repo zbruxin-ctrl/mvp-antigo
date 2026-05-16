@@ -375,7 +375,8 @@ async function stepTerms(p: Page, cycle: number): Promise<void> {
 
   await sleep(600);
   await clickForward(p, cycle);
-  // Após termos o Uber faz verificação de sessão — pode demorar até 45s
+  // CRÍTICO: após termos o Uber executa verificação de sessão (SessionVerification)
+  // — pode demorar até 45s; não pular este wait ou stepCity vai falhar.
   await waitForSpinner(p, cycle, 45_000);
 }
 
@@ -386,7 +387,8 @@ async function stepCity(
   cityName = 'Paris'
 ): Promise<void> {
   globalState.addLog('info', '🏢 [7] Cidade...', cycle);
-  await waitForSpinner(p, cycle, 20_000);
+  // Spinner pós-termos pode ainda estar ativo — aguardar com folga
+  await waitForSpinner(p, cycle, 45_000);
 
   const CITY_CANDIDATES = [
     '[data-testid="flow-type-city-selector-v2-input"]',
@@ -401,7 +403,7 @@ async function stepCity(
 
   let cityInput: string | null = null;
   for (const sel of CITY_CANDIDATES) {
-    if (await hasElement(p, sel, 12_000)) { cityInput = sel; break; }
+    if (await hasElement(p, sel, 20_000)) { cityInput = sel; break; }
   }
 
   if (!cityInput) {
@@ -503,7 +505,8 @@ async function stepWhatsApp(p: Page, cycle: number): Promise<void> {
 
 async function stepHubPhotoClick(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '🏠 [9] Hub — aguardando...', cycle);
-  await waitForSpinner(p, cycle, 15_000);
+  // Hub pode demorar a carregar após a tela de cidade — usar timeout generoso
+  await waitForSpinner(p, cycle, 30_000);
 
   const HUB_CANDIDATES = [
     '[data-testid="hub"]',
