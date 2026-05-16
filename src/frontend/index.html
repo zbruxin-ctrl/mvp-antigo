@@ -1394,69 +1394,66 @@ function renderKyc() {
 
   let weakTotal = 0, likelyTotal = 0, confirmedTotal = 0;
   let providerSet = new Set();
-  for (const cycle of cycles) {
-    for (const [prov, info] of Object.entries(byCycle[cycle])) {
-      providerSet.add(prov);
-      if (info.level === 'WEAK') weakTotal++;
-      else if (info.level === 'LIKELY') likelyTotal++;
-      else if (info.level === 'CONFIRMED') confirmedTotal++;
+  for (const cycleProviders of Object.values(byCycle)) {
+    for (const [provName, prov] of Object.entries(cycleProviders)) {
+      providerSet.add(provName);
+      if (prov.level === 'WEAK') weakTotal++;
+      else if (prov.level === 'LIKELY') likelyTotal++;
+      else if (prov.level === 'CONFIRMED') confirmedTotal++;
     }
   }
-  document.getElementById('kyc-count-weak').textContent = weakTotal;
-  document.getElementById('kyc-count-likely').textContent = likelyTotal;
+
+  document.getElementById('kyc-count-weak').textContent      = weakTotal;
+  document.getElementById('kyc-count-likely').textContent    = likelyTotal;
   document.getElementById('kyc-count-confirmed').textContent = confirmedTotal;
   document.getElementById('kyc-providers-count').textContent = providerSet.size;
 
+  // Tabs
   const tabsEl = document.getElementById('kyc-cycle-tabs');
   if (!cycles.length) {
     tabsEl.innerHTML = '';
-    document.getElementById('kyc-provider-list').innerHTML = `<div class="empty">
+  } else {
+    if (!selectedKycCycle || !byCycle[selectedKycCycle]) selectedKycCycle = cycles[0];
+    tabsEl.innerHTML = cycles.map(c => `
+      <button class="kyc-cycle-tab${c === selectedKycCycle ? ' active' : ''}" onclick="selectKycCycle('${c}')">
+        Ciclo #${c}
+      </button>`).join('');
+  }
+
+  // Provider list
+  const listEl = document.getElementById('kyc-provider-list');
+  if (!cycles.length) {
+    listEl.innerHTML = `<div class="empty">
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
       <p>Nenhum sinal KYC detectado ainda. Execute um ciclo para monitorar.</p>
     </div>`;
     return;
   }
 
-  if (!selectedKycCycle || !byCycle[selectedKycCycle]) selectedKycCycle = cycles[0];
-  tabsEl.innerHTML = cycles.map(c => `
-    <button class="kyc-cycle-tab${c === selectedKycCycle ? ' active' : ''}" onclick="selectKycCycle('${c}')">Ciclo #${c}</button>
-  `).join('');
-
-  renderKycProviders(byCycle[selectedKycCycle] || {});
-}
-
-function selectKycCycle(c) {
-  selectedKycCycle = c;
-  document.querySelectorAll('.kyc-cycle-tab').forEach(t => {
-    t.classList.toggle('active', t.textContent.trim() === 'Ciclo #' + c);
-  });
-  renderKycProviders((kycData.byCycle || {})[c] || {});
-}
-
-function renderKycProviders(providers) {
-  const el = document.getElementById('kyc-provider-list');
-  const entries = Object.entries(providers);
-  if (!entries.length) {
-    el.innerHTML = `<div class="empty"><p>Nenhum sinal neste ciclo.</p></div>`;
-    return;
-  }
-  el.innerHTML = entries.map(([name, info]) => `
+  const cycleData = byCycle[selectedKycCycle] || {};
+  listEl.innerHTML = Object.entries(cycleData).map(([provName, prov]) => `
     <div class="kyc-provider-card">
       <div class="kyc-provider-header">
-        <span class="kyc-provider-name">${escHtml(name)}</span>
-        <span class="kyc-badge ${info.level}">${info.level}</span>
-        <span class="kyc-score">Score: <span>${info.score ?? '—'}</span></span>
+        <span class="kyc-provider-name">${escHtml(provName)}</span>
+        <span class="kyc-badge ${prov.level}">${prov.level}</span>
+        <span class="kyc-score">Score: <span>${prov.score || 0}</span></span>
       </div>
       <div class="kyc-signals">
-        ${(info.signals || []).map(s => `
+        ${(prov.signals || []).map(s => `
           <div class="kyc-signal-item">
             <span class="kyc-signal-weight">+${s.weight}</span>
-            <span class="kyc-signal-source">${escHtml(s.source||'—')}</span>
-            <span>${escHtml(s.description||'')}</span>
+            <span class="kyc-signal-source">${escHtml(s.source || '')}</span>
+            <span>${escHtml(s.description || '')}</span>
+            <span class="kyc-signal-cycle">#${s.cycle || '?'}</span>
             <span class="kyc-signal-time">${fmtDate(s.timestamp)}</span>
           </div>`).join('')}
       </div>
     </div>`).join('');
+}
+
+function selectKycCycle(cycle) {
+  selectedKycCycle = cycle;
+  renderKyc();
 }
 
 document.getElementById('btn-refresh-kyc').addEventListener('click', fetchKyc);
@@ -1464,79 +1461,95 @@ document.getElementById('btn-clear-kyc').addEventListener('click', async () => {
   try {
     await apiFetch('/api/kyc', { method: 'DELETE' });
     kycData = { byCycle: {} };
-    selectedKycCycle = null;
     renderKyc();
-    toast('Dados KYC limpos.', 'success');
-  } catch {
-    toast('Erro ao limpar KYC.', 'error');
-  }
+    toast('KYC limpo.', 'success');
+  } catch { toast('Erro ao limpar KYC.', 'error'); }
 });
 
-/* ─── DASHBOARD ───────────────────────────────────────────────────────────────── */
-function updateDashboard(d) {
+/* ─── DASHBOARD UPDATE ────────────────────────────────────────────────────────── */
+function updateDashboard(data) {
+  const dot    = document.getElementById('banner-dot');
+  const label  = document.getElementById('banner-status');
+  const detail = document.getElementById('banner-detail');
+  const btnStart = document.getElementById('btn-start');
+  const btnStop  = document.getElementById('btn-stop');
+  const btnOnce  = document.getElementById('btn-once');
+
+  dot.className = 'status-dot';
+  const st = data.status || 'idle';
+  if (st === 'running') { dot.classList.add('running'); label.textContent = 'Rodando'; }
+  else if (st === 'waiting') { dot.classList.add('waiting'); label.textContent = 'Aguardando'; }
+  else if (st === 'stopping') { dot.classList.add('stopping'); label.textContent = 'Parando…'; }
+  else if (st === 'error') { dot.classList.add('error'); label.textContent = 'Erro'; }
+  else { label.textContent = 'Parado'; }
+
+  detail.textContent = data.detail || (data.currentCycle ? `Ciclo #${data.currentCycle}` : 'Aguardando dados');
+
+  const isActive = st === 'running' || st === 'waiting' || st === 'stopping';
+  btnStart.disabled = isActive;
+  btnStop.disabled  = !isActive;
+  btnOnce.disabled  = isActive;
+
+  document.getElementById('kpi-ok').textContent    = data.successCount    ?? '—';
+  document.getElementById('kpi-total').textContent = data.totalCycles      ?? '—';
+  const rate = data.totalCycles > 0
+    ? Math.round((data.successCount / data.totalCycles) * 100) + '%'
+    : '—';
+  document.getElementById('kpi-rate').textContent = rate;
+  document.getElementById('kpi-mode').textContent = data.headless ? 'Headless' : 'Visual';
+
   document.getElementById('last-updated').textContent = 'Atualizado ' + new Date().toLocaleTimeString('pt-BR');
 
-  const dot = document.getElementById('banner-dot');
-  const label = document.getElementById('banner-status');
-  const detail = document.getElementById('banner-detail');
-
-  dot.className = 'status-dot ' + (d.status || '');
-  const statusMap = { idle: 'Ocioso', running: 'Executando', waiting: 'Aguardando OTP', error: 'Erro', stopping: 'Parando' };
-  label.textContent = statusMap[d.status] || d.status || '—';
-  detail.textContent = d.currentAction || (d.status === 'idle' ? 'Nenhum ciclo em execução' : '');
-
-  const running = d.status === 'running' || d.status === 'waiting';
-  document.getElementById('btn-start').disabled = running;
-  document.getElementById('btn-once').disabled  = running;
-  document.getElementById('btn-stop').disabled  = !running;
-
-  const stats = d.stats || {};
-  document.getElementById('kpi-ok').textContent    = stats.success ?? '0';
-  document.getElementById('kpi-total').textContent = stats.total   ?? '0';
-  const rate = stats.total ? Math.round((stats.success / stats.total) * 100) : 0;
-  document.getElementById('kpi-rate').textContent  = stats.total ? rate + '%' : '—';
-  document.getElementById('kpi-mode').textContent  = d.mode === 'loop' ? '∞ Loop' : d.mode === 'once' ? '1× Ciclo' : '—';
-
-  if (Array.isArray(d.cycleHistory) && d.cycleHistory.length) {
-    cycleHistory = d.cycleHistory;
+  if (Array.isArray(data.cycleHistory)) {
+    cycleHistory = data.cycleHistory;
     renderCycleHistory();
   }
 }
 
 function renderCycleHistory() {
   const el = document.getElementById('cycle-list');
-  if (!cycleHistory.length) return;
-  const recent = [...cycleHistory].reverse().slice(0, 12);
-  el.innerHTML = recent.map(c => `
+  if (!cycleHistory.length) {
+    el.innerHTML = `<div class="empty">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+      <p>Nenhum ciclo ainda. Inicie o loop para começar.</p>
+    </div>`;
+    return;
+  }
+  el.innerHTML = [...cycleHistory].reverse().slice(0, 20).map(c => `
     <div class="cycle-item">
       <span class="cycle-num">#${c.cycle}</span>
-      <span class="cycle-status ${c.ok ? 'ok' : c.running ? 'run' : 'fail'}">${c.ok ? 'OK' : c.running ? 'Run' : 'Fail'}</span>
-      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-muted)">${escHtml(c.label||'')}</span>
-      <span style="color:var(--text-faint);font-family:'Geist Mono',monospace;font-size:10px">${fmtDate(c.ts)}</span>
+      <span class="cycle-status ${c.success ? 'ok' : (c.running ? 'run' : 'fail')}">
+        ${c.success ? 'OK' : (c.running ? 'RUN' : 'FAIL')}
+      </span>
+      <span style="flex:1;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(c.message||'')}</span>
+      <span style="color:var(--text-faint);font-family:'Geist Mono',monospace;font-size:10px">${fmtDate(c.timestamp)}</span>
     </div>`).join('');
 }
 
-/* ─── LOGS ────────────────────────────────────────────────────────────────────── */
+/* ─── LOG RENDER ──────────────────────────────────────────────────────────────── */
 function renderDashLogs() {
   const box = document.getElementById('dash-log-box');
-  const recent = allLogs.slice(-60).reverse();
-  if (!recent.length) { box.innerHTML = '<div class="log-empty">Aguardando logs…</div>'; return; }
-  box.innerHTML = recent.map(l => `
-    <div class="log-entry">
-      <span class="log-time">${fmtTime(l.timestamp)}</span>
-      <span class="log-msg ${l.level||'info'}">${escHtml(l.message||'')}</span>
-    </div>`).join('');
+  const last = allLogs.slice(-60);
+  if (!last.length) { box.innerHTML = '<div class="log-empty">Aguardando logs…</div>'; return; }
+  box.innerHTML = last.map(renderLogEntry).join('');
+  box.scrollTop = box.scrollHeight;
 }
 
 function renderFullLogs() {
   const box = document.getElementById('full-log-box');
-  const filtered = logFilter === 'all' ? allLogs : allLogs.filter(l => l.level === logFilter);
+  const filtered = logFilter === 'all'
+    ? allLogs
+    : allLogs.filter(l => l.type === logFilter);
   if (!filtered.length) { box.innerHTML = '<div class="log-empty">Nenhum log disponível.</div>'; return; }
-  box.innerHTML = [...filtered].reverse().map(l => `
-    <div class="log-entry">
-      <span class="log-time">${fmtDate(l.timestamp)}</span>
-      <span class="log-msg ${l.level||'info'}">${escHtml(l.message||'')}</span>
-    </div>`).join('');
+  box.innerHTML = filtered.map(renderLogEntry).join('');
+  box.scrollTop = box.scrollHeight;
+}
+
+function renderLogEntry(l) {
+  return `<div class="log-entry">
+    <span class="log-time">${fmtTime(l.timestamp)}</span>
+    <span class="log-msg ${l.type||'info'}">${escHtml(l.message||'')}</span>
+  </div>`;
 }
 
 document.querySelectorAll('.filter-btn').forEach(btn => {
@@ -1555,12 +1568,10 @@ document.getElementById('btn-clear-logs').addEventListener('click', async () => 
     renderDashLogs();
     renderFullLogs();
     toast('Logs limpos.', 'success');
-  } catch {
-    toast('Erro ao limpar logs.', 'error');
-  }
+  } catch { toast('Erro ao limpar logs.', 'error'); }
 });
 
-/* ─── BOT CONTROLS ────────────────────────────────────────────────────────────── */
+/* ─── CONTROLS ────────────────────────────────────────────────────────────────── */
 document.getElementById('btn-start').addEventListener('click', async () => {
   try { await apiFetch('/api/start', { method: 'POST' }); toast('Loop iniciado!', 'success'); fetchStatus(); }
   catch { toast('Erro ao iniciar.', 'error'); }
@@ -1579,92 +1590,100 @@ async function loadConfig() {
   try {
     const cfg = await apiFetch('/api/config');
     configSnapshot = cfg;
-    applyConfigToForm(cfg);
-  } catch { /* silencia */ }
+    document.getElementById('cfg-url').value      = cfg.cadastroUrl      || '';
+    document.getElementById('cfg-otp').value      = cfg.otpTimeout       || '';
+    document.getElementById('cfg-interval').value = cfg.cycleInterval    || '';
+    document.getElementById('cfg-delay').value    = cfg.extraDelay       || '';
+    document.getElementById('cfg-headless').value = String(cfg.headless !== false);
+    document.getElementById('cfg-email-provider').value = cfg.emailProvider || 'mail.tm';
+    document.getElementById('cfg-apikey').value   = cfg.tempMailApiKey   || '';
+    document.getElementById('cfg-proxy-server').value = cfg.proxyServer  || '';
+    document.getElementById('cfg-proxy-user').value   = cfg.proxyUser    || '';
+    document.getElementById('cfg-proxy-pass').value   = cfg.proxyPass    || '';
+    updateApiKeyVisibility();
+  } catch { toast('Erro ao carregar configurações.', 'error'); }
 }
 
-function applyConfigToForm(cfg) {
-  if (!cfg) return;
-  const f = document.getElementById('config-form');
-  if (cfg.cadastroUrl)    f.cadastroUrl.value    = cfg.cadastroUrl;
-  if (cfg.otpTimeout)     f.otpTimeout.value     = cfg.otpTimeout;
-  if (cfg.cycleInterval)  f.cycleInterval.value  = cfg.cycleInterval;
-  if (cfg.extraDelay !== undefined) f.extraDelay.value = cfg.extraDelay;
-  if (cfg.headless !== undefined) f.headless.value = String(cfg.headless);
-  if (cfg.emailProvider)  f.emailProvider.value  = cfg.emailProvider;
-  if (cfg.tempMailApiKey) f.tempMailApiKey.value  = cfg.tempMailApiKey;
-  if (cfg.proxyServer)    f.proxyServer.value     = cfg.proxyServer;
-  if (cfg.proxyUser)      f.proxyUser.value       = cfg.proxyUser;
-  if (cfg.proxyPass)      f.proxyPass.value       = cfg.proxyPass;
-  updateApikeyVisibility(cfg.emailProvider);
-}
-
-function updateApikeyVisibility(provider) {
+function updateApiKeyVisibility() {
+  const provider = document.getElementById('cfg-email-provider').value;
   const wrap = document.getElementById('apikey-wrap');
-  const needsKey = provider === 'tempmailc' || provider === 'temp-mail.io';
-  wrap.classList.toggle('visible', needsKey);
-  if (provider === 'tempmailc') {
-    document.getElementById('apikey-label').textContent = 'API Key (TempMailC)';
-    document.getElementById('apikey-hint').textContent = 'Chave para private.tempmailc.com';
-  } else if (provider === 'temp-mail.io') {
-    document.getElementById('apikey-label').textContent = 'API Key (TempMail.io)';
-    document.getElementById('apikey-hint').textContent = 'Chave para temp-mail.io';
+  const label = document.getElementById('apikey-label');
+  const hint  = document.getElementById('apikey-hint');
+  if (provider === 'mail.tm') {
+    wrap.classList.remove('visible');
+  } else {
+    wrap.classList.add('visible');
+    if (provider === 'tempmailc') {
+      label.textContent = 'API Key (TempMailC)';
+      hint.textContent  = 'Necessária para private.tempmailc.com';
+    } else {
+      label.textContent = 'API Key (TempMail.io)';
+      hint.textContent  = 'Necessária para temp-mail.io';
+    }
   }
 }
 
-document.getElementById('cfg-email-provider').addEventListener('change', e => updateApikeyVisibility(e.target.value));
+document.getElementById('cfg-email-provider').addEventListener('change', updateApiKeyVisibility);
 
 document.getElementById('config-form').addEventListener('submit', async () => {
-  const f = document.getElementById('config-form');
   const body = {
-    cadastroUrl:    f.cadastroUrl.value.trim(),
-    otpTimeout:     Number(f.otpTimeout.value),
-    cycleInterval:  Number(f.cycleInterval.value),
-    extraDelay:     Number(f.extraDelay.value),
-    headless:       f.headless.value === 'true',
-    emailProvider:  f.emailProvider.value,
-    tempMailApiKey: f.tempMailApiKey.value.trim(),
-    proxyServer:    f.proxyServer.value.trim(),
-    proxyUser:      f.proxyUser.value.trim(),
-    proxyPass:      f.proxyPass.value.trim(),
+    cadastroUrl:   document.getElementById('cfg-url').value.trim(),
+    otpTimeout:    Number(document.getElementById('cfg-otp').value),
+    cycleInterval: Number(document.getElementById('cfg-interval').value),
+    extraDelay:    Number(document.getElementById('cfg-delay').value),
+    headless:      document.getElementById('cfg-headless').value === 'true',
+    emailProvider: document.getElementById('cfg-email-provider').value,
+    tempMailApiKey:document.getElementById('cfg-apikey').value.trim(),
+    proxyServer:   document.getElementById('cfg-proxy-server').value.trim(),
+    proxyUser:     document.getElementById('cfg-proxy-user').value.trim(),
+    proxyPass:     document.getElementById('cfg-proxy-pass').value.trim(),
   };
   try {
     await apiFetch('/api/config', { method: 'POST', body: JSON.stringify(body) });
     configSnapshot = body;
     toast('Configurações salvas!', 'success');
-  } catch {
-    toast('Erro ao salvar configurações.', 'error');
-  }
+  } catch { toast('Erro ao salvar configurações.', 'error'); }
 });
 
 document.getElementById('btn-reset-config').addEventListener('click', () => {
-  if (configSnapshot) applyConfigToForm(configSnapshot);
-  toast('Configurações restauradas.', 'success');
+  if (configSnapshot) {
+    document.getElementById('cfg-url').value      = configSnapshot.cadastroUrl      || '';
+    document.getElementById('cfg-otp').value      = configSnapshot.otpTimeout       || '';
+    document.getElementById('cfg-interval').value = configSnapshot.cycleInterval    || '';
+    document.getElementById('cfg-delay').value    = configSnapshot.extraDelay       || '';
+    document.getElementById('cfg-headless').value = String(configSnapshot.headless !== false);
+    document.getElementById('cfg-email-provider').value = configSnapshot.emailProvider || 'mail.tm';
+    document.getElementById('cfg-apikey').value   = configSnapshot.tempMailApiKey   || '';
+    document.getElementById('cfg-proxy-server').value = configSnapshot.proxyServer  || '';
+    document.getElementById('cfg-proxy-user').value   = configSnapshot.proxyUser    || '';
+    document.getElementById('cfg-proxy-pass').value   = configSnapshot.proxyPass    || '';
+    updateApiKeyVisibility();
+    toast('Configurações restauradas.', 'success');
+  }
 });
 
 /* ─── UTILS ───────────────────────────────────────────────────────────────────── */
 function escHtml(s) {
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  return String(s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 function fmtDate(ts) {
   if (!ts) return '—';
   try { return new Date(ts).toLocaleString('pt-BR', { dateStyle:'short', timeStyle:'short' }); }
-  catch { return String(ts); }
+  catch { return ts; }
 }
 function fmtTime(ts) {
   if (!ts) return '—';
-  try { return new Date(ts).toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit', second:'2-digit' }); }
-  catch { return String(ts); }
+  try { return new Date(ts).toLocaleTimeString('pt-BR'); }
+  catch { return ts; }
 }
 
 /* ─── INIT ────────────────────────────────────────────────────────────────────── */
-loadConfig();
 fetchStatus();
 fetchLogs();
-pollTimer = setInterval(() => {
-  fetchStatus();
-  fetchLogs();
-}, 3000);
+loadConfig();
+pollTimer = setInterval(() => { fetchStatus(); fetchLogs(); }, 3000);
 </script>
 </body>
 </html>
