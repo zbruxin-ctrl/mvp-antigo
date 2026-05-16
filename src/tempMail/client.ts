@@ -262,14 +262,14 @@ export class MailTmClient implements IEmailClient {
 
 // ────────────────────────────────────────────────────────────────────────────────
 // TempMailCClient  (tempmailc.com)
+// Base URL correto: https://private.tempmailc.com  (conforme documentação)
 // Endpoint OTP: GET /api/v1/code?email=X&code=APIKEY
 // Domínio fixo: kaamoolzy.it.com (licença trial)
 // ────────────────────────────────────────────────────────────────────────────────
 
 export class TempMailCClient implements IEmailClient {
-  private readonly baseUrl = 'https://tempmailc.com';
+  private readonly baseUrl = 'https://private.tempmailc.com';  // ← corrigido
   private readonly apiCode: string;
-  // Domínio fixo da licença trial — não depende de /api/v1/domains
   private readonly domain = 'kaamoolzy.it.com';
 
   constructor(apiCode: string, _fixedDomain?: string) {
