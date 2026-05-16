@@ -76,9 +76,7 @@ async function clickForward(p: Page, cycle: number): Promise<void> {
 
 /**
  * Gera número de telefone fixo brasileiro válido.
- * Formato esperado pelo campo: (XX) XXXX-XXXX
- * - DDD: 11, 21, 31, 41, 51, 61, 71, 81, 91...
- * - 8 dígitos, primeiro dígito entre 2-5 (fixo, não celular)
+ * Formato: (XX) XXXX-XXXX  — 8 dígitos, primeiro entre 2-5
  */
 function gerarTelefoneFixoBR(): string {
   const ddds = ['11','21','22','24','27','28','31','32','33','34','35','37','38',
@@ -87,14 +85,12 @@ function gerarTelefoneFixoBR(): string {
                 '77','79','81','82','83','84','85','86','87','88','89','91','92',
                 '93','94','95','96','97','98','99'];
   const ddd = ddds[Math.floor(Math.random() * ddds.length)];
-  // Primeiro dígito: 2, 3, 4 ou 5 (telefone fixo)
   const primeiro = String(2 + Math.floor(Math.random() * 4));
   const resto = Array.from({ length: 7 }, () => Math.floor(Math.random() * 10)).join('');
-  // Formato: (11) 3456-7890 → campo aceita sem parênteses/traço também
   return `(${ddd}) ${primeiro}${resto.slice(0, 3)}-${resto.slice(3)}`;
 }
 
-// ─── ETAPAS ───────────────────────────────────────────────────────────────────
+// ─── ETAPAS ──────────────────────────────────────────────────────────────────
 
 /** [1] Email */
 async function stepEmail(p: Page, email: string, cycle: number): Promise<void> {
@@ -163,7 +159,7 @@ async function stepOTP(
   await sleep(1000);
 }
 
-/** [3] Telefone FIXO brasileiro — vem logo após OTP */
+/** [3] Telefone fixo brasileiro */
 async function stepPhone(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '📱 [3] Telefone...', cycle);
   const visible = await hasElement(p, '#PHONE_NUMBER, input[autocomplete="tel-national"]', 3000);
@@ -210,20 +206,88 @@ async function stepPersonalInfo(p: Page, cycle: number): Promise<void> {
   await sleep(1000);
 }
 
-/** [6] Aceitar termos */
+/**
+ * [6] Aceitar termos
+ *
+ * O Uber usa um checkbox CUSTOMIZADO — não é um <input type="checkbox"> nativo.
+ * O JSON mostra:
+ *   { testId: "accept-terms", tag: "P" }  ← é o contêiner do texto
+ *   { checkboxes: [{ label: "Concordo" }] } ← o checkbox é renderizado como div/span
+ *
+ * Estratégia: tentar vários seletores em ordem até um clicar com sucesso.
+ */
 async function stepTerms(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '📝 [6] Termos...', cycle);
-  const visible = await hasElement(p, '[data-testid="accept-terms"], input[type="checkbox"]', 3000);
-  if (!visible) {
+
+  // Detecta a tela pelos candidatos mais estáveis
+  const TELA_SEL = [
+    '[data-testid="accept-terms"]',
+    'text=Concordo',
+    'text=Aceite os Termos',
+    'input[type="checkbox"]',
+  ];
+  let telaFound = false;
+  for (const sel of TELA_SEL) {
+    if (await hasElement(p, sel, 1500)) { telaFound = true; break; }
+  }
+  if (!telaFound) {
     globalState.addLog('info', '⏩ Tela de termos não encontrada — pulando', cycle);
     return;
   }
-  const checkbox = p.locator('input[type="checkbox"]').first();
-  if (await checkbox.isVisible({ timeout: 1000 }).catch(() => false)) {
-    await checkbox.click();
-    globalState.addLog('info', '✔️ checkbox: Concordo', cycle);
-    await sleep(400);
+
+  await sleep(500);
+
+  // Candidatos para o checkbox/label "Concordo" — do mais específico ao mais genérico
+  const CHECKBOX_CANDIDATES = [
+    // checkbox nativo
+    'input[type="checkbox"]',
+    // label com texto
+    'label:has-text("Concordo")',
+    // qualquer elemento com texto exato
+    'text=Concordo',
+    // div/span que é filho do bloco de termos
+    '[data-testid="accept-terms"] ~ * input',
+    '[data-testid="accept-terms"] ~ * label',
+    // fallback: qualquer checkbox na página
+    '[role="checkbox"]',
+  ];
+
+  let clicked = false;
+  for (const sel of CHECKBOX_CANDIDATES) {
+    try {
+      const el = p.locator(sel).first();
+      if (await el.isVisible({ timeout: 800 }).catch(() => false)) {
+        await el.scrollIntoViewIfNeeded();
+        await sleep(200);
+        await el.click({ force: true }); // force ignora pointer-events bloqueados
+        globalState.addLog('info', `✔️ checkbox clicado via: ${sel}`, cycle);
+        clicked = true;
+        break;
+      }
+    } catch { /* tenta próximo */ }
   }
+
+  if (!clicked) {
+    // Último recurso: clicar via JS no primeiro checkbox encontrado
+    const jsClicked = await p.evaluate(() => {
+      const cb = document.querySelector('input[type="checkbox"]') as HTMLInputElement | null;
+      if (cb) { cb.click(); return true; }
+      const role = document.querySelector('[role="checkbox"]') as HTMLElement | null;
+      if (role) { role.click(); return true; }
+      // tenta clicar no label "Concordo"
+      const labels = Array.from(document.querySelectorAll('label, span, p, div'));
+      const concordo = labels.find(el => el.textContent?.trim() === 'Concordo') as HTMLElement | null;
+      if (concordo) { concordo.click(); return true; }
+      return false;
+    });
+    if (jsClicked) {
+      globalState.addLog('info', '✔️ checkbox clicado via JS evaluate', cycle);
+    } else {
+      globalState.addLog('warn', '⚠️ Não encontrou checkbox — tentando forward mesmo assim', cycle);
+    }
+  }
+
+  await sleep(600);
   await clickForward(p, cycle);
   await sleep(1000);
 }
@@ -431,10 +495,9 @@ export class MockPlaywrightFlow {
       await sleep(600);
       await dismissModals(p, cycle);
 
-      // ── Ordem correta do fluxo Uber ──
       await stepEmail(p, email, cycle);                                  // 1
       await stepOTP(p, emailClient, email, config.otpTimeout, cycle);    // 2
-      await stepPhone(p, cycle);                                         // 3 ← telefone fixo BR
+      await stepPhone(p, cycle);                                         // 3
       await stepPassword(p, cycle);                                      // 4
       await stepPersonalInfo(p, cycle);                                  // 5
       await stepTerms(p, cycle);                                         // 6
