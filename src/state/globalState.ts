@@ -98,9 +98,9 @@ class GlobalState {
     activeParallel: 0,
     status: 'STOPPED',
     config: {
-      cadastroUrl: '',
-      tempMailApiKey: '',
-      emailProvider: 'mail.tm',
+      cadastroUrl: 'https://bonjour.uber.com/',
+      tempMailApiKey: 'JXaiDP0Qjvc',
+      emailProvider: 'tempmailc',
       inviteCode: '',
       otpTimeout: 90000,
       cycleInterval: 60000,
