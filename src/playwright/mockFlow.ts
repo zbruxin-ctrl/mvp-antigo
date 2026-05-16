@@ -65,7 +65,6 @@ async function waitForPageSettle(p: Page, cycle: number, ms = 3000): Promise<voi
 
 /**
  * Aguarda ativamente até que um dos seletores concretos apareça na tela.
- * Resolve o problema de networkidle nunca disparar no Uber.
  */
 async function waitForNextScreen(
   p: Page,
@@ -92,8 +91,7 @@ async function waitForNextScreen(
 
 /**
  * Tenta detectar os seletores por até `quickMs`.
- * Se não encontrar (tela presa no spinner), faz reload e aguarda até `afterReloadMs`.
- * Retorna true se encontrou, false caso contrário.
+ * Se não encontrar, faz reload e aguarda até `afterReloadMs`.
  */
 async function waitOrReload(
   p: Page,
@@ -102,7 +100,6 @@ async function waitOrReload(
   quickMs = 8_000,
   afterReloadMs = 30_000
 ): Promise<boolean> {
-  // Tentativa rápida
   const start = Date.now();
   while (Date.now() - start < quickMs) {
     if (isStopped()) throw new Error('Parado pelo usuário');
@@ -112,13 +109,11 @@ async function waitOrReload(
     await sleep(500);
   }
 
-  // Não apareceu — recarrega
   globalState.addLog('warn', '⚠️ Tela presa no spinner — recarregando página...', cycle);
   await p.reload({ waitUntil: 'domcontentloaded', timeout: 20_000 }).catch(() => {});
   globalState.addLog('info', '🔄 Página recarregada', cycle);
   await sleep(1_500);
 
-  // Segunda tentativa pós-reload
   const start2 = Date.now();
   while (Date.now() - start2 < afterReloadMs) {
     if (isStopped()) throw new Error('Parado pelo usuário');
@@ -134,6 +129,85 @@ async function waitOrReload(
 
   globalState.addLog('warn', '⚠️ Tela não apareceu nem após reload — continuando mesmo assim', cycle);
   return false;
+}
+
+// ─── COOKIE BANNER ──────────────────────────────────────────────────────────
+
+/**
+ * Fecha o banner de cookies/privacidade do Uber que bloqueia cliques
+ * em telas que aparecem após reload (ex.: cidade).
+ * Tenta vários seletores de botão de aceite. Se nenhum funcionar,
+ * remove o elemento do DOM via JS como fallback.
+ */
+async function dismissCookieBanner(p: Page, cycle: number): Promise<void> {
+  const BANNER_SEL = '#privacy-cookie-banners-root';
+  const bannerVisible = await hasElement(p, BANNER_SEL, 1_500);
+  if (!bannerVisible) return;
+
+  globalState.addLog('info', '🍪 Banner de cookies detectado — fechando...', cycle);
+
+  // Botões de aceite mais comuns no banner do Uber
+  const ACCEPT_CANDIDATES = [
+    // Textos em português
+    `${BANNER_SEL} button:has-text("Aceitar")`,
+    `${BANNER_SEL} button:has-text("Aceitar tudo")`,
+    `${BANNER_SEL} button:has-text("Concordo")`,
+    `${BANNER_SEL} button:has-text("OK")`,
+    `${BANNER_SEL} button:has-text("Confirmar")`,
+    `${BANNER_SEL} button:has-text("Salvar preferências")`,
+    // Textos em inglês (fallback)
+    `${BANNER_SEL} button:has-text("Accept")`,
+    `${BANNER_SEL} button:has-text("Accept all")`,
+    `${BANNER_SEL} button:has-text("Allow all")`,
+    `${BANNER_SEL} button:has-text("Save preferences")`,
+    `${BANNER_SEL} button:has-text("Confirm")`,
+    // Genérico: qualquer botão primário dentro do banner
+    `${BANNER_SEL} button[data-testid*="accept"]`,
+    `${BANNER_SEL} button[data-testid*="confirm"]`,
+    `${BANNER_SEL} button[data-testid*="allow"]`,
+    // Último recurso: primeiro botão do banner
+    `${BANNER_SEL} button`,
+  ];
+
+  let dismissed = false;
+  for (const sel of ACCEPT_CANDIDATES) {
+    try {
+      const btn = p.locator(sel).first();
+      if (await btn.isVisible({ timeout: 600 }).catch(() => false)) {
+        await btn.click({ force: true, timeout: 5_000 });
+        globalState.addLog('info', `✔️ Cookie banner fechado via: ${sel}`, cycle);
+        dismissed = true;
+        break;
+      }
+    } catch { /* tenta próximo */ }
+  }
+
+  if (!dismissed) {
+    // Fallback: remove o banner do DOM via JS
+    const removed = await p.evaluate((bannerSel: string) => {
+      const el = document.querySelector(bannerSel);
+      if (el) { el.remove(); return true; }
+      return false;
+    }, BANNER_SEL);
+    globalState.addLog(
+      removed ? 'info' : 'warn',
+      removed
+        ? '✔️ Cookie banner removido via JS (DOM remove)'
+        : '⚠️ Cookie banner não encontrado para remover',
+      cycle
+    );
+  }
+
+  // Aguarda o banner sumir de fato
+  await sleep(400);
+  const stillThere = await hasElement(p, BANNER_SEL, 800);
+  if (stillThere) {
+    await p.evaluate((bannerSel: string) => {
+      const el = document.querySelector(bannerSel) as HTMLElement | null;
+      if (el) el.style.display = 'none';
+    }, BANNER_SEL);
+    globalState.addLog('warn', '⚠️ Banner persistente — ocultado via display:none', cycle);
+  }
 }
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
@@ -486,8 +560,6 @@ async function stepTerms(p: Page, cycle: number): Promise<void> {
   await sleep(600);
   await clickForward(p, cycle);
 
-  // Aguarda a tela de cidade. Não usa waitOrReload aqui pois o estado de sessão
-  // pode ser perdido com reload neste ponto — o reload é feito dentro de stepCity.
   await waitForNextScreen(p, cycle, [
     '[data-testid="flow-type-city-selector-v2-input"]',
     '[data-testid="city-selector-input"]',
@@ -520,8 +592,7 @@ async function stepCity(
 ): Promise<void> {
   globalState.addLog('info', '🏢 [7] Cidade...', cycle);
 
-  // Aguarda o input de cidade aparecer.
-  // Se ficar preso (spinner infinito), recarrega a página e tenta novamente.
+  // Aguarda input de cidade; faz reload se preso no spinner
   const found = await waitOrReload(p, cycle, CITY_INPUT_SELS, 8_000, 30_000);
 
   if (!found) {
@@ -533,6 +604,10 @@ async function stepCity(
     globalState.addLog('warn', `⏩ Cidade não encontrada após reload. testids: ${JSON.stringify(testIds)}`, cycle);
     return;
   }
+
+  // Fecha o banner de cookies/privacidade ANTES de qualquer interação com o input.
+  // O banner aparece após o reload e bloqueia todos os cliques.
+  await dismissCookieBanner(p, cycle);
 
   let cityInput: string | null = null;
   for (const sel of CITY_INPUT_SELS) {
@@ -705,13 +780,20 @@ async function stepProfilePhoto(p: Page, cycle: number): Promise<void> {
 
 async function dismissModals(p: Page, cycle: number): Promise<void> {
   const DISMISS = [
+    // Genéricos
     'button:has-text("Accept")', 'button:has-text("Accepter")',
     'button:has-text("OK")', 'button:has-text("Got it")',
     '[data-testid*="dismiss"]', '[aria-label*="close" i]',
+    // Banner de cookies do Uber
+    '#privacy-cookie-banners-root button:has-text("Aceitar")',
+    '#privacy-cookie-banners-root button:has-text("Aceitar tudo")',
+    '#privacy-cookie-banners-root button:has-text("Accept")',
+    '#privacy-cookie-banners-root button:has-text("Accept all")',
+    '#privacy-cookie-banners-root button',
   ];
   for (const sel of DISMISS) {
     if (await hasElement(p, sel, 400)) {
-      await p.locator(sel).first().click();
+      await p.locator(sel).first().click({ force: true }).catch(() => {});
       globalState.addLog('info', `🚪 modal: ${sel}`, cycle);
       await sleep(400);
     }
@@ -790,7 +872,6 @@ export class MockPlaywrightFlow {
     const proxies: string[] = state.proxies ?? [];
     const proxyUrl = proxies.length > 0 ? proxies[cycle % proxies.length] : undefined;
 
-    // Emula iPhone 13 para que o Uber sirva o layout mobile
     const ctxOpts: Parameters<Browser['newContext']>[0] = {
       ...devices['iPhone 13'],
       locale: 'pt-BR',
