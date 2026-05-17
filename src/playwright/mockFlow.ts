@@ -1,6 +1,6 @@
 import { chromium as chromiumExtra } from 'playwright-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
-import { Browser, Page } from 'playwright';
+import { Browser, Page, BrowserContext } from 'playwright';
 import type { BrowserType } from 'playwright';
 import { globalState } from '../state/globalState';
 import { EmailProvider } from '../types';
@@ -38,7 +38,6 @@ const MOBILE_W   = 390;
 const MOBILE_H   = 844;
 const MOBILE_DPR = 3;
 
-// Headers HTTP que forçam o Uber a tratar a sessão como mobile
 const MOBILE_HEADERS: Record<string, string> = {
   'Sec-CH-UA-Mobile':   '?1',
   'Sec-CH-UA-Platform': '"iOS"',
@@ -46,9 +45,6 @@ const MOBILE_HEADERS: Record<string, string> = {
   'Accept-Language':    'pt-BR,pt;q=0.9,en;q=0.8',
 };
 
-// Script injetado ANTES de qualquer JS da página:
-// sobrescreve navigator.userAgent, platform e maxTouchPoints
-// para que o Uber não detecte desktop via JS
 const MOBILE_INIT_SCRIPT = `
 (function() {
   const ua = ${JSON.stringify(MOBILE_UA)};
@@ -57,12 +53,91 @@ const MOBILE_INIT_SCRIPT = `
   Object.defineProperty(navigator, 'platform',       { get: () => 'iPhone', configurable: true });
   Object.defineProperty(navigator, 'maxTouchPoints', { get: () => 5,        configurable: true });
   Object.defineProperty(navigator, 'vendor',         { get: () => 'Apple Computer, Inc.', configurable: true });
-  // Simula suporte a touch events
   window.ontouchstart = null;
   window.ontouchmove  = null;
   window.ontouchend   = null;
 })();
 `;
+
+// ─── KYC DETECTOR ─────────────────────────────────────────────────────────────
+//
+// Regras de detecção por URL (interceptadas via response/framenavigated):
+//
+//   socure.com         → Socure  — /dv/ = +10 (CONFIRMED), resto = +6 (LIKELY)
+//   magic.veriff.me    → Veriff  — qualquer = +10 (CONFIRMED)
+//   veriff.com/v1      → Veriff  — API calls = +8
+//   withpersona.com    → Persona — +6
+//   getid.company      → GetID   — +6
+//
+// O listener é registrado no context logo após newContext(), antes do goto().
+// É removido automaticamente quando o context fecha.
+
+interface KycRule {
+  pattern: RegExp;
+  provider: string;
+  weight: (url: string) => number;
+}
+
+const KYC_RULES: KycRule[] = [
+  {
+    pattern: /socure\.com/i,
+    provider: 'Socure',
+    weight: (url) => /\/dv\/|\/sv\/|document/i.test(url) ? 10 : 6,
+  },
+  {
+    pattern: /magic\.veriff\.me/i,
+    provider: 'Veriff',
+    weight: () => 10,
+  },
+  {
+    pattern: /veriff\.com\/v\d/i,
+    provider: 'Veriff',
+    weight: () => 8,
+  },
+  {
+    pattern: /withpersona\.com/i,
+    provider: 'Persona',
+    weight: () => 6,
+  },
+  {
+    pattern: /getid\.company/i,
+    provider: 'GetID',
+    weight: () => 6,
+  },
+];
+
+function detectKycFromUrl(url: string, cycle: number, source: string): void {
+  for (const rule of KYC_RULES) {
+    if (rule.pattern.test(url)) {
+      const weight = rule.weight(url);
+      globalState.addKycSignal(rule.provider, source, weight, cycle, url);
+      globalState.addLog(
+        'kyc',
+        `🔎 KYC detectado: ${rule.provider} via ${source} | ${url.substring(0, 80)}`,
+        cycle
+      );
+      return;
+    }
+  }
+}
+
+function installKycInterceptor(context: BrowserContext, cycle: number): void {
+  // Intercepta todas as respostas de rede — captura XHR/fetch e navegações
+  context.on('response', (response) => {
+    try {
+      detectKycFromUrl(response.url(), cycle, 'network-response');
+    } catch { /* ignora */ }
+  });
+
+  // Intercepta navegações de frame (inclui redirects de top-level e iframes)
+  context.on('page', (page) => {
+    page.on('framenavigated', (frame) => {
+      try {
+        detectKycFromUrl(frame.url(), cycle, 'frame-navigate');
+      } catch { /* ignora */ }
+    });
+  });
+}
 
 // ─── SPINNER ─────────────────────────────────────────────────────────────────
 
@@ -829,6 +904,14 @@ async function stepHubPhotoClick(p: Page, cycle: number): Promise<void> {
   await waitForNextScreen(p, cycle, PHOTO_SCREEN_SELS, 15_000);
 }
 
+// ─── [10] TIRAR FOTO + AGUARDAR KYC ──────────────────────────────────────────
+//
+// Após clicar em "Tirar foto", o Uber abre o KYC escolhido por ele.
+// O KYC detector (installKycInterceptor) já está ouvindo todas as
+// respostas de rede desde o início do contexto.
+// Aqui aguardamos até 90s para pelo menos 1 sinal KYC aparecer,
+// depois logamos o resultado final do ciclo.
+
 async function stepProfilePhoto(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '📸 [10] Tirar foto do perfil...', cycle);
 
@@ -884,7 +967,28 @@ async function stepProfilePhoto(p: Page, cycle: number): Promise<void> {
     }
   }
 
-  await sleep(1000);
+  // ── Aguarda sinais KYC por até 90s após o clique ──────────────────────────
+  globalState.addLog('info', '⏳ [KYC] Aguardando abertura do KYC provider...', cycle);
+  const KYC_WAIT_MS = 90_000;
+  const kycStart = Date.now();
+  while (Date.now() - kycStart < KYC_WAIT_MS) {
+    if (isStopped()) break;
+    const signals = globalState.getKycSignals(cycle);
+    if (signals.length > 0) {
+      globalState.addLog('info', `✅ [KYC] ${signals.length} sinal(is) detectado(s) — encerrando espera`, cycle);
+      break;
+    }
+    await new Promise<void>(r => setTimeout(r, 500));
+  }
+
+  // ── Log do resultado KYC do ciclo ─────────────────────────────────────────
+  const finalSignals = globalState.getKycSignals(cycle);
+  if (finalSignals.length === 0) {
+    globalState.addLog('warn', '⚠️ [KYC] Nenhum provedor detectado neste ciclo', cycle);
+  } else {
+    const providers = [...new Set(finalSignals.map(s => s.provider))];
+    globalState.addLog('kyc', `🏁 [KYC] Ciclo ${cycle} — provedores: ${providers.join(', ')}`, cycle);
+  }
 }
 
 // ─── DISMISS MODALS ───────────────────────────────────────────────────────────
@@ -965,7 +1069,6 @@ export class MockPlaywrightFlow {
       '--no-default-browser-check',
       `--window-size=${MOBILE_W},${MOBILE_H}`,
       '--window-position=0,0',
-      // força o browser a reportar-se como mobile nos Client Hints de baixo nível
       `--user-agent=${MOBILE_UA}`,
     ];
 
@@ -1035,12 +1138,20 @@ export class MockPlaywrightFlow {
 
     const context = await browserInstance!.newContext(ctxOpts);
 
+    // ── KYC interceptor instalado no context ANTES de qualquer navegação ──────
+    installKycInterceptor(context, cycle);
+
     // Injeta ANTES de qualquer JS da página para spoofar navigator como iPhone
     await context.addInitScript(MOBILE_INIT_SCRIPT);
 
     const p = await context.newPage();
     p.setDefaultTimeout(20_000);
     p.setDefaultNavigationTimeout(30_000);
+
+    // Também monitora framenavigated na página principal
+    p.on('framenavigated', (frame) => {
+      try { detectKycFromUrl(frame.url(), cycle, 'main-frame-navigate'); } catch { /* ignora */ }
+    });
 
     try {
       const emailClient = createEmailClient(config.emailProvider, config.tempMailApiKey);
