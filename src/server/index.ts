@@ -27,7 +27,6 @@ const FRONTEND_DIR = path.resolve(__dirname, '../frontend');
 app.use(express.static(FRONTEND_DIR));
 
 // ── SSE ───────────────────────────────────────────────────────
-// Clientes SSE conectados
 const sseClients = new Set<Response>();
 
 export function broadcastSSE(event: string, data: unknown): void {
@@ -47,7 +46,6 @@ app.get('/api/events', (req: Request, res: Response) => {
 
   sseClients.add(res);
 
-  // Envia estado atual imediatamente ao conectar
   res.write(`event: state\ndata: ${JSON.stringify(globalState.getState())}\n\n`);
   res.write(`event: kyc\ndata: ${JSON.stringify(globalState.getKycState())}\n\n`);
 
@@ -62,7 +60,8 @@ app.get('/api/events', (req: Request, res: Response) => {
 });
 
 // ── Patch globalState para broadcast automático ───────────────
-// Intercepta addLog e addKycSignal para push em tempo real
+// BUG 1 FIX: addLog agora sempre emite 'state' — cyclesCompleted é
+// incrementado ANTES de chamar addLog, então o valor atualizado chega ao frontend.
 const _origAddLog = globalState.addLog.bind(globalState);
 globalState.addLog = function(level, message, cycle) {
   _origAddLog(level, message, cycle);
@@ -105,8 +104,17 @@ function requireAuth(req: Request, res: Response, next: NextFunction): void {
 
 const VALID_EMAIL_PROVIDERS = ['tempmailc', 'temp-mail.io', 'mail.tm'];
 
-function validateConfig(body: Partial<Config> & { proxyServer?: string; proxyUser?: string; proxyPass?: string }): { ok: true; data: Partial<Config> } | { ok: false; error: string } {
+function validateConfig(body: Partial<Config> & { proxyServer?: string; proxyUser?: string; proxyPass?: string; proxiesRaw?: string[] }): { ok: true; data: Partial<Config> } | { ok: false; error: string } {
   const errors: string[] = [];
+
+  // ── BUG 3 FIX: processa proxiesRaw (array de strings vindo do frontend) ──
+  if (Array.isArray((body as any).proxiesRaw)) {
+    const lines: string[] = (body as any).proxiesRaw;
+    body.proxies = lines
+      .map(l => parseProxyString(l))
+      .filter((p): p is NonNullable<typeof p> => p !== null);
+    delete (body as any).proxiesRaw;
+  }
 
   if (body.proxyServer !== undefined || body.proxyUser !== undefined || body.proxyPass !== undefined) {
     const server   = (body.proxyServer ?? '').trim();
@@ -182,7 +190,6 @@ app.get('/api/accounts', requireAuth, (_req, res) => {
   res.json({ accounts: accountStore.list() });
 });
 
-// ── Diagnóstico de seletores ─────────────────────────────
 app.post('/api/diagnose', requireAuth, async (req: Request, res: Response) => {
   const url: string = req.body?.url ?? CADASTRO_URL;
   try {
@@ -193,7 +200,6 @@ app.post('/api/diagnose', requireAuth, async (req: Request, res: Response) => {
   }
 });
 
-// ── Limpar logs e KYC ────────────────────────────────────
 app.delete('/api/logs', requireAuth, (_req, res) => {
   globalState.clearLogs();
   res.json({ ok: true });

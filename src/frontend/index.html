@@ -200,7 +200,6 @@ input:focus, select:focus {
         <button class="tab-btn" data-tab="config">Config</button>
       </div>
 
-      <!-- KYC Live Feed na sidebar -->
       <div style="padding:8px 8px 4px; font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; border-bottom:1px solid var(--border);">
         KYC Live Feed
       </div>
@@ -372,9 +371,10 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 
 // ── KYC state ─────────────────────────────────────────────────────────────────
 let kycByCycle = {};
-// Contadores globais por provedor
-const kycTotals = {};
-// Feed lateral (últimos 20 sinais)
+
+// BUG 2 FIX: usa Set de chaves únicas para deduplicar sinais no feed lateral
+// Chave = provider|source|cycle|time — evita duplicatas sem bloquear sinais novos
+const kycFeedSeen = new Set();
 const kycFeedItems = [];
 
 function providerClass(p) {
@@ -388,10 +388,8 @@ function providerClass(p) {
 function renderKycState(data) {
   kycByCycle = data.byCycle || {};
 
-  // Recalcula totais por provedor (um por ciclo)
   const totals = {};
   for (const [, providers] of Object.entries(kycByCycle)) {
-    // Top provider deste ciclo
     let top = null;
     for (const [provider, state] of Object.entries(providers)) {
       if (!top || state.score > top.score) top = { provider, ...state };
@@ -401,7 +399,6 @@ function renderKycState(data) {
     }
   }
 
-  // Atualiza contadores
   const socure = totals['Socure'] || 0;
   const veriff = totals['Veriff'] || 0;
   let other = 0;
@@ -412,7 +409,6 @@ function renderKycState(data) {
   document.getElementById('kyc-count-veriff').textContent = veriff;
   document.getElementById('kyc-count-other').textContent = other;
 
-  // Tabela
   const tbody = document.getElementById('kyc-tbody');
   const empty = document.getElementById('kyc-empty');
   const cycles = Object.entries(kycByCycle);
@@ -422,7 +418,6 @@ function renderKycState(data) {
     return;
   }
   empty.style.display = 'none';
-  // Ordena do ciclo mais recente para o mais antigo
   cycles.sort((a, b) => Number(b[0]) - Number(a[0]));
   tbody.innerHTML = cycles.map(([cycle, providers]) => {
     return Object.entries(providers).map(([provider, state]) => `
@@ -435,12 +430,21 @@ function renderKycState(data) {
       </tr>
     `).join('');
   }).join('');
-}
 
-function updateKycFeed(signal) {
-  // signal: { provider, source, url, weight, time, cycle }
-  kycFeedItems.unshift(signal);
-  if (kycFeedItems.length > 30) kycFeedItems.pop();
+  // BUG 2 FIX: varre TODOS os ciclos/providers e insere sinais novos não vistos
+  for (const [, providers] of Object.entries(kycByCycle)) {
+    for (const [, provState] of Object.entries(providers)) {
+      if (!provState.signals) continue;
+      for (const s of provState.signals) {
+        const key = `${s.provider}|${s.source}|${s.cycle}|${s.time}`;
+        if (!kycFeedSeen.has(key)) {
+          kycFeedSeen.add(key);
+          kycFeedItems.unshift(s);
+          if (kycFeedItems.length > 30) kycFeedItems.pop();
+        }
+      }
+    }
+  }
   renderKycFeed();
 }
 
@@ -516,23 +520,11 @@ function connectSSE() {
     try { addLogEntry(JSON.parse(e.data)); } catch {}
   });
 
+  // BUG 2 FIX: renderKycState agora trata a deduplicação corretamente
   es.addEventListener('kyc', e => {
     try {
       const data = JSON.parse(e.data);
       renderKycState(data);
-      // Extrai o sinal mais recente para o feed lateral
-      const byCycle = data.byCycle || {};
-      for (const providers of Object.values(byCycle)) {
-        for (const state of Object.values(providers)) {
-          if (state.signals && state.signals[0]) {
-            const s = state.signals[0];
-            if (!kycFeedItems.find(x => x.provider === s.provider && x.time === s.time && x.cycle === s.cycle)) {
-              updateKycFeed(s);
-            }
-            break;
-          }
-        }
-      }
     } catch {}
   });
 

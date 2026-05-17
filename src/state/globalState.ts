@@ -50,15 +50,11 @@ export interface CyclePayload {
  *   socks5://user:pass@host:port
  *   host:port
  *   host:port:user:pass
- *
- * Usa regex própria para extrair user/pass — evita bugs do new URL() com
- * usernames que contêm '__', '.' ou outros caracteres especiais.
  */
 export function parseProxyString(raw: string): ProxyConfig | null {
   raw = raw.trim();
   if (!raw) return null;
 
-  // Formato: scheme://user:pass@host:port  ou  scheme://host:port
   const schemeMatch = raw.match(
     /^(https?|socks[45]):\/\/(?:([^:@]+):([^@]*)@)?([^:/]+):(\d+)\s*$/i
   );
@@ -71,7 +67,6 @@ export function parseProxyString(raw: string): ProxyConfig | null {
     };
   }
 
-  // Formato legado: host:port  ou  host:port:user:pass
   const parts = raw.split(':');
   if (parts.length === 2) {
     return { server: `http://${parts[0]}:${parts[1]}` };
@@ -116,11 +111,12 @@ class GlobalState {
   private currentCycle = 0;
   private executor: CycleExecutor | null = null;
 
-  // KYC isolado por ciclo
   private kycByCycle: KycByCycle = {};
-
-  // Payload de cadastro por ciclo
   private payloadByCycle: Record<number, CyclePayload> = {};
+
+  // ─── Callback de broadcast (injetado pelo server) ─────────────────────────
+  // Evita dependência circular — o server chama globalState.onStateChange = broadcastSSE
+  onStateChange?: (state: AppState) => void;
 
   // ─── Payload API ─────────────────────────────────────────────────────────────
 
@@ -189,10 +185,6 @@ class GlobalState {
     return result;
   }
 
-  /**
-   * Retorna o provedor KYC de maior score do ciclo.
-   * Útil para salvar a conta com o provedor correto.
-   */
   getTopKycProvider(cycle: number): { provider: string; level: KycProviderState['level']; url?: string } | null {
     const cycleMap = this.kycByCycle[cycle];
     if (!cycleMap) return null;
@@ -220,19 +212,11 @@ class GlobalState {
 
   // ─── Contadores públicos ──────────────────────────────────────────────────────
 
-  /**
-   * Registra uma conta criada com sucesso.
-   * Incrementa cyclesCompleted e emite log 'success'.
-   */
   incrementSuccess(cycle?: number): void {
     this.state.cyclesCompleted += 1;
     this.addLog('success', `✅ Conta criada — total: ${this.state.cyclesCompleted}`, cycle);
   }
 
-  /**
-   * Registra uma falha de ciclo (KYC, erro, timeout).
-   * Emite log 'error' sem incrementar cyclesCompleted.
-   */
   incrementFailure(reason?: string, cycle?: number): void {
     const msg = reason ? `❌ Falha no ciclo: ${reason}` : '❌ Falha no ciclo';
     this.addLog('error', msg, cycle);
@@ -369,8 +353,10 @@ class GlobalState {
         );
         if (!this.executor) throw new Error('Nenhum executor registrado.');
         await this.executor(this.state.config, cycle);
+
+        // ── BUG 1 FIX: incrementa via addLog para acionar broadcast SSE ──
         this.state.cyclesCompleted += 1;
-        this.addLog('success', `✅ Ciclo #${cycle} concluído!`, cycle);
+        this.addLog('success', `✅ Ciclo #${cycle} concluído! Total: ${this.state.cyclesCompleted}`, cycle);
         return;
       } catch (error) {
         lastError = error instanceof Error ? error.message : 'Erro desconhecido';
