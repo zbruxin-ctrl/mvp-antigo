@@ -189,6 +189,27 @@ class GlobalState {
     return result;
   }
 
+  /**
+   * Retorna o provedor KYC de maior score do ciclo.
+   * Útil para salvar a conta com o provedor correto.
+   */
+  getTopKycProvider(cycle: number): { provider: string; level: KycProviderState['level']; url?: string } | null {
+    const cycleMap = this.kycByCycle[cycle];
+    if (!cycleMap) return null;
+
+    let top: { provider: string; level: KycProviderState['level']; score: number; url?: string } | null = null;
+
+    for (const [provider, state] of Object.entries(cycleMap)) {
+      if (!top || state.score > top.score) {
+        const lastUrl = state.signals.find(s => s.url)?.url;
+        top = { provider, level: state.level, score: state.score, url: lastUrl };
+      }
+    }
+
+    if (!top) return null;
+    return { provider: top.provider, level: top.level, url: top.url };
+  }
+
   getKycState(): { byCycle: KycByCycle } {
     return { byCycle: this.kycByCycle };
   }
