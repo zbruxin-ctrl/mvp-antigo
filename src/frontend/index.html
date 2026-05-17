@@ -134,9 +134,11 @@ a { color: var(--blue); }
 }
 .kyc-counter .count { font-size: 28px; font-weight: 700; }
 .kyc-counter .name  { font-size: 10px; color: var(--muted); text-transform: uppercase; margin-top: 2px; }
-.kyc-counter.socure .count { color: var(--green); }
-.kyc-counter.veriff .count { color: var(--blue); }
-.kyc-counter.other  .count { color: var(--muted); }
+.kyc-counter.socure  .count { color: var(--green); }
+.kyc-counter.veriff  .count { color: var(--blue); }
+.kyc-counter.onfido  .count { color: var(--orange); }
+.kyc-counter.jumio   .count { color: var(--purple); }
+.kyc-counter.other   .count { color: var(--muted); }
 
 /* ── Accounts ── */
 .account-item {
@@ -150,6 +152,8 @@ a { color: var(--blue); }
 }
 .account-kyc.socure { background: #14532d; color: var(--green); }
 .account-kyc.veriff { background: #1e3a5f; color: var(--blue); }
+.account-kyc.onfido { background: #431d04; color: var(--orange); }
+.account-kyc.jumio  { background: #2e1a4a; color: var(--purple); }
 
 /* ── Form ── */
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
@@ -172,9 +176,19 @@ input:focus, select:focus {
 }
 .kyc-feed-item.socure { border-left-color: var(--green); }
 .kyc-feed-item.veriff { border-left-color: var(--blue); }
+.kyc-feed-item.onfido { border-left-color: var(--orange); }
+.kyc-feed-item.jumio  { border-left-color: var(--purple); }
 .kyc-feed-item.other  { border-left-color: var(--faint); }
 .kyc-feed-item .provider { font-weight: 700; }
 .kyc-feed-item .ktime { color: var(--faint); font-size: 10px; }
+/* FIX: nível no feed lateral como badge inline */
+.kyc-feed-item .feed-level {
+  display: inline-block; padding: 0 5px; border-radius: 8px;
+  font-size: 9px; font-weight: 700; margin-left: 4px; vertical-align: middle;
+}
+.kyc-feed-item .feed-level.CONFIRMED { background: #14532d; color: var(--green); }
+.kyc-feed-item .feed-level.LIKELY    { background: #713f12; color: var(--yellow); }
+.kyc-feed-item .feed-level.WEAK      { background: #1e1b4b; color: var(--blue); }
 
 /* ── Empty state ── */
 .empty { text-align: center; color: var(--faint); padding: 32px 16px; font-size: 12px; }
@@ -244,7 +258,11 @@ input:focus, select:focus {
       <!-- KYC -->
       <div id="tab-kyc" class="tab-panel">
         <div class="card">
-          <div class="card-title">Contadores KYC</div>
+          <!-- FIX: card-title com botão de limpar KYC inline -->
+          <div class="card-title" style="display:flex;justify-content:space-between;align-items:center;">
+            <span>Contadores KYC</span>
+            <button class="btn btn-ghost" id="btn-clear-kyc" style="font-size:11px;padding:3px 8px;">🗑 Limpar</button>
+          </div>
           <div class="kyc-total" id="kyc-counters">
             <div class="kyc-counter socure">
               <div class="count" id="kyc-count-socure">0</div>
@@ -253,6 +271,14 @@ input:focus, select:focus {
             <div class="kyc-counter veriff">
               <div class="count" id="kyc-count-veriff">0</div>
               <div class="name">Veriff</div>
+            </div>
+            <div class="kyc-counter onfido">
+              <div class="count" id="kyc-count-onfido">0</div>
+              <div class="name">Onfido</div>
+            </div>
+            <div class="kyc-counter jumio">
+              <div class="count" id="kyc-count-jumio">0</div>
+              <div class="name">Jumio</div>
             </div>
             <div class="kyc-counter other">
               <div class="count" id="kyc-count-other">0</div>
@@ -271,6 +297,7 @@ input:focus, select:focus {
                 <th>Nível</th>
                 <th>Score</th>
                 <th>Sinais</th>
+                <th>URL</th>
               </tr>
             </thead>
             <tbody id="kyc-tbody"></tbody>
@@ -354,11 +381,11 @@ input:focus, select:focus {
 </div><!-- /app -->
 
 <script>
-// ── Auth ──────────────────────────────────────────────────────────────────────
+// ── Auth ─────────────────────────────────────────────────────────────────────────────
 const PASS = 'connect@10';
 const HEADERS = { 'Content-Type': 'application/json', 'x-admin-password': PASS };
 
-// ── Tabs ─────────────────────────────────────────────────────────────────────
+// ── Tabs ───────────────────────────────────────────────────────────────────────────
 document.querySelectorAll('.tab-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
@@ -369,11 +396,10 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
   });
 });
 
-// ── KYC state ─────────────────────────────────────────────────────────────────
+// ── KYC state ─────────────────────────────────────────────────────────────────────
 let kycByCycle = {};
 
 // BUG 2 FIX: usa Set de chaves únicas para deduplicar sinais no feed lateral
-// Chave = provider|source|cycle|time — evita duplicatas sem bloquear sinais novos
 const kycFeedSeen = new Set();
 const kycFeedItems = [];
 
@@ -382,7 +408,20 @@ function providerClass(p) {
   const lc = p.toLowerCase();
   if (lc === 'socure') return 'socure';
   if (lc === 'veriff') return 'veriff';
+  if (lc === 'onfido') return 'onfido';
+  if (lc === 'jumio')  return 'jumio';
   return 'other';
+}
+
+/** Dado um provider e o mapa byCycle, devolve o level atual (nível mais alto do ciclo mais recente) */
+function getProviderLevel(provider, byCycle) {
+  // procura no ciclo mais recente que tem esse provider
+  const cycleNums = Object.keys(byCycle).map(Number).sort((a, b) => b - a);
+  for (const c of cycleNums) {
+    const entry = byCycle[c]?.[provider];
+    if (entry) return entry.level;
+  }
+  return null;
 }
 
 function renderKycState(data) {
@@ -399,15 +438,20 @@ function renderKycState(data) {
     }
   }
 
+  // FIX: contadores individuais para Socure, Veriff, Onfido, Jumio + Outros
   const socure = totals['Socure'] || 0;
   const veriff = totals['Veriff'] || 0;
+  const onfido = totals['Onfido'] || 0;
+  const jumio  = totals['Jumio']  || 0;
   let other = 0;
   for (const [k, v] of Object.entries(totals)) {
-    if (k !== 'Socure' && k !== 'Veriff') other += v;
+    if (!['Socure','Veriff','Onfido','Jumio'].includes(k)) other += v;
   }
   document.getElementById('kyc-count-socure').textContent = socure;
   document.getElementById('kyc-count-veriff').textContent = veriff;
-  document.getElementById('kyc-count-other').textContent = other;
+  document.getElementById('kyc-count-onfido').textContent = onfido;
+  document.getElementById('kyc-count-jumio').textContent  = jumio;
+  document.getElementById('kyc-count-other').textContent  = other;
 
   const tbody = document.getElementById('kyc-tbody');
   const empty = document.getElementById('kyc-empty');
@@ -419,27 +463,37 @@ function renderKycState(data) {
   }
   empty.style.display = 'none';
   cycles.sort((a, b) => Number(b[0]) - Number(a[0]));
+  // FIX: adiciona coluna URL (truncada) na tabela de detalhes
   tbody.innerHTML = cycles.map(([cycle, providers]) => {
-    return Object.entries(providers).map(([provider, state]) => `
-      <tr>
+    return Object.entries(providers).map(([provider, state]) => {
+      const lastUrl = state.signals?.find(s => s.url)?.url || '';
+      const urlCell = lastUrl
+        ? `<td style="font-size:10px;color:var(--faint);word-break:break-all;max-width:160px;" title="${lastUrl}">${lastUrl.substring(0, 50)}&hellip;</td>`
+        : '<td style="color:var(--faint);font-size:10px;">—</td>';
+      return `<tr>
         <td>#${cycle}</td>
         <td>${provider}</td>
         <td><span class="level-tag ${state.level}">${state.level}</span></td>
         <td>${state.score}</td>
-        <td>${state.signals.length}</td>
-      </tr>
-    `).join('');
+        <td>${state.signals ? state.signals.length : 0}</td>
+        ${urlCell}
+      </tr>`;
+    }).join('');
   }).join('');
 
   // BUG 2 FIX: varre TODOS os ciclos/providers e insere sinais novos não vistos
   for (const [, providers] of Object.entries(kycByCycle)) {
-    for (const [, provState] of Object.entries(providers)) {
+    for (const [providerName, provState] of Object.entries(providers)) {
       if (!provState.signals) continue;
       for (const s of provState.signals) {
         const key = `${s.provider}|${s.source}|${s.cycle}|${s.time}`;
         if (!kycFeedSeen.has(key)) {
           kycFeedSeen.add(key);
-          kycFeedItems.unshift(s);
+          // FIX: enriquecer o sinal com o level atual do provider no ciclo
+          const enriched = Object.assign({}, s, {
+            _level: provState.level,
+          });
+          kycFeedItems.unshift(enriched);
           if (kycFeedItems.length > 30) kycFeedItems.pop();
         }
       }
@@ -456,16 +510,22 @@ function renderKycFeed() {
   }
   container.innerHTML = kycFeedItems.map(s => {
     const cls = providerClass(s.provider);
-    const urlShort = s.url ? s.url.substring(0, 55) + (s.url.length > 55 ? '…' : '') : '';
+    // FIX: mostra nível como badge ao lado do provider name
+    const levelBadge = s._level
+      ? `<span class="feed-level ${s._level}">${s._level}</span>`
+      : '';
+    const urlShort = s.url ? s.url.substring(0, 65) + (s.url.length > 65 ? '…' : '') : '';
     return `<div class="kyc-feed-item ${cls}">
-      <span class="provider">${s.provider}</span>
-      <span class="ktime"> #${s.cycle} · ${s.time}</span>
+      <div>
+        <span class="provider">${s.provider}</span>${levelBadge}
+        <span class="ktime"> #${s.cycle} · ${s.time}</span>
+      </div>
       ${urlShort ? `<div style="color:var(--faint);font-size:10px;margin-top:1px;word-break:break-all;">${urlShort}</div>` : ''}
     </div>`;
   }).join('');
 }
 
-// ── State ─────────────────────────────────────────────────────────────────────
+// ── State ───────────────────────────────────────────────────────────────────────────
 function applyState(state) {
   const s = state.status || 'STOPPED';
   const badge = document.getElementById('status-badge');
@@ -478,7 +538,7 @@ function applyState(state) {
   document.getElementById('stat-parallel').textContent = state.activeParallel ?? 0;
 }
 
-// ── Logs ─────────────────────────────────────────────────────────────────────
+// ── Logs ───────────────────────────────────────────────────────────────────────────
 const logContainer = document.getElementById('log-container');
 const MAX_LOG_ENTRIES = 400;
 let logEntries = [];
@@ -501,7 +561,7 @@ function renderLogs() {
   }).join('');
 }
 
-// ── SSE ───────────────────────────────────────────────────────────────────────
+// ── SSE ───────────────────────────────────────────────────────────────────────────
 let es = null;
 let reconnectTimer = null;
 
@@ -520,7 +580,6 @@ function connectSSE() {
     try { addLogEntry(JSON.parse(e.data)); } catch {}
   });
 
-  // BUG 2 FIX: renderKycState agora trata a deduplicação corretamente
   es.addEventListener('kyc', e => {
     try {
       const data = JSON.parse(e.data);
@@ -540,7 +599,7 @@ function connectSSE() {
   };
 }
 
-// ── Carga inicial ─────────────────────────────────────────────────────────────
+// ── Carga inicial ────────────────────────────────────────────────────────────────
 async function initialLoad() {
   try {
     const [stateRes, logsRes, kycRes] = await Promise.all([
@@ -556,7 +615,7 @@ async function initialLoad() {
   connectSSE();
 }
 
-// ── Accounts ─────────────────────────────────────────────────────────────────
+// ── Accounts ──────────────────────────────────────────────────────────────────────
 async function loadAccounts() {
   try {
     const data = await fetch('/api/accounts', { headers: HEADERS }).then(r => r.json());
@@ -577,7 +636,7 @@ async function loadAccounts() {
         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;">
           <span class="account-kyc ${providerClass(a.kycProvider)}">${a.kycProvider || 'Desconhecido'} ${a.kycLevel || ''}</span>
           <button class="btn btn-ghost" style="font-size:11px;padding:4px 8px;"
-            onclick="deleteAccount('${a.id}')">🗑</button>
+            onclick="deleteAccount('${a.id}')">&#128465;</button>
         </div>
       </div>
     `).join('');
@@ -590,7 +649,7 @@ async function deleteAccount(id) {
   loadAccounts();
 }
 
-// ── Config ────────────────────────────────────────────────────────────────────
+// ── Config ────────────────────────────────────────────────────────────────────────
 async function loadConfig() {
   try {
     const cfg = await fetch('/api/config', { headers: HEADERS }).then(r => r.json());
@@ -633,7 +692,7 @@ document.getElementById('btn-save-config').addEventListener('click', async () =>
   } catch(e) { console.error(e); }
 });
 
-// ── Botões controle ───────────────────────────────────────────────────────────
+// ── Botões controle ───────────────────────────────────────────────────────────────
 document.getElementById('btn-once').addEventListener('click', async () => {
   await fetch('/api/start-once', { method: 'POST', headers: HEADERS, body: '{}' });
 });
@@ -649,7 +708,17 @@ document.getElementById('btn-clear-logs').addEventListener('click', async () => 
   renderLogs();
 });
 
-// ── Init ─────────────────────────────────────────────────────────────────────
+// FIX: botão Limpar KYC — limpa estado no server e no frontend
+document.getElementById('btn-clear-kyc').addEventListener('click', async () => {
+  await fetch('/api/kyc', { method: 'DELETE', headers: HEADERS }).catch(() => {});
+  kycByCycle = {};
+  kycFeedSeen.clear();
+  kycFeedItems.length = 0;
+  renderKycState({ byCycle: {} });
+  renderKycFeed();
+});
+
+// ── Init ───────────────────────────────────────────────────────────────────────────
 loadConfig();
 initialLoad();
 </script>
