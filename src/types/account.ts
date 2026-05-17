@@ -12,6 +12,7 @@ export interface Account {
   localizacao: string;
   codigoIndicacao: string;
   cookies: Cookie[];
+  tampermonkeyScript?: string;
   createdAt: string;
   // KYC
   kycProvider?: string;
