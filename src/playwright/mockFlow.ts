@@ -34,16 +34,11 @@ const MOBILE_UA =
   'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 ' +
   '(KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1';
 
-// Tamanho da viewport mobile (pixels lógicos)
-// --window-size define o tamanho da janela do SO (inclui barra de título).
-// Para headless=false, usamos --window-size ligeiramente maior que a viewport
-// para que a área útil de renderização coincida com MOBILE_W × MOBILE_H.
-// deviceScaleFactor no contexto afeta apenas o DPR reportado ao site.
 const MOBILE_W   = 390;
 const MOBILE_H   = 844;
-const MOBILE_DPR = 3;   // usado só no contexto, não no launch
+const MOBILE_DPR = 3;
 
-// ─── SPINNER ──────────────────────────────────────────────────────────────────
+// ─── SPINNER ─────────────────────────────────────────────────────────────────
 
 const SPINNER_SEL = [
   '[data-testid="loading_component"]',
@@ -129,7 +124,7 @@ async function waitOrReload(
   return false;
 }
 
-// ─── COOKIE BANNER ──────────────────────────────────────────────────────────
+// ─── COOKIE BANNER ───────────────────────────────────────────────────────────
 
 async function dismissCookieBanner(p: Page, cycle: number): Promise<void> {
   const BANNER_SEL = '#privacy-cookie-banners-root';
@@ -772,8 +767,8 @@ async function stepHubPhotoClick(p: Page, cycle: number): Promise<void> {
         await el.click({ timeout: 5_000 });
       } catch {
         await el.click({ force: true, timeout: 5_000 }).catch(async () => {
-          await p.evaluate((s: string) => {
-            const node = document.querySelector(s) as HTMLElement | null;
+          await p.evaluate((sel2: string) => {
+            const node = document.querySelector(sel2) as HTMLElement | null;
             if (node) node.click();
           }, sel);
         });
@@ -811,6 +806,23 @@ async function stepHubPhotoClick(p: Page, cycle: number): Promise<void> {
 async function stepProfilePhoto(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '📸 [10] Tirar foto do perfil...', cycle);
 
+  await waitForSpinner(p, cycle, 10_000);
+
+  // ── Diagnóstico: loga todos os data-testid e botões visíveis na tela ────────
+  const diagInfo = await p.evaluate(() => {
+    const testIds = Array.from(document.querySelectorAll('[data-testid]'))
+      .map(el => (el as HTMLElement).dataset['testid'])
+      .filter(Boolean);
+    const buttons = Array.from(document.querySelectorAll('button'))
+      .filter(b => (b as HTMLElement).offsetParent !== null)
+      .map(b => b.textContent?.trim())
+      .filter(Boolean);
+    return { testIds: testIds.slice(0, 30), buttons: buttons.slice(0, 20) };
+  }).catch(() => ({ testIds: [], buttons: [] }));
+  globalState.addLog('info', `🔍 [foto] testids: ${JSON.stringify(diagInfo.testIds)}`, cycle);
+  globalState.addLog('info', `🔍 [foto] botões: ${JSON.stringify(diagInfo.buttons)}`, cycle);
+  // ────────────────────────────────────────────────────────────────────────────
+
   const visible = await hasElement(p, PHOTO_SCREEN_SELS.join(', '), 8_000);
   if (!visible) {
     globalState.addLog('info', '⏩ Tela de foto não encontrada — pulando', cycle);
@@ -837,8 +849,8 @@ async function stepProfilePhoto(p: Page, cycle: number): Promise<void> {
         await btn.click({ timeout: 5_000 });
       } catch {
         await btn.click({ force: true, timeout: 5_000 }).catch(async () => {
-          await p.evaluate((s: string) => {
-            const node = document.querySelector(s) as HTMLElement | null;
+          await p.evaluate((sel2: string) => {
+            const node = document.querySelector(sel2) as HTMLElement | null;
             if (node) node.click();
           }, sel);
         });
@@ -873,7 +885,7 @@ async function dismissModals(p: Page, cycle: number): Promise<void> {
   }
 }
 
-// ─── BROWSER ──────────────────────────────────────────────────────────────────
+// ─── BROWSER ─────────────────────────────────────────────────────────────────
 
 let browserInstance: Browser | null = null;
 let lastProxyConfig: string | null = null;
@@ -904,7 +916,6 @@ export class MockPlaywrightFlow {
     globalState.addLog('info', chromiumBin ? `🚀 Usando: ${chromiumBin}` : '⚠️ Usando Playwright Chromium');
     globalState.addLog('info', `🚀 Iniciando browser (headless=${headless})...`);
 
-    // Monta os args base
     const launchArgs = [
       '--no-sandbox',
       '--disable-setuid-sandbox',
@@ -913,17 +924,11 @@ export class MockPlaywrightFlow {
       '--disable-dev-shm-usage',
       '--no-first-run',
       '--no-default-browser-check',
-      // --window-size define a área total da janela do SO (inclui barra de título/bordas).
-      // Usamos +80px de altura para compensar a barra de título (~30–40px) e barra de endereço (~48px),
-      // garantindo que a viewport útil seja próxima de MOBILE_W × MOBILE_H.
       `--window-size=${MOBILE_W},${MOBILE_H + 80}`,
-      // Força o Chrome a tratar a janela como mobile mesmo sem touch screen físico
       '--use-mobile-user-agent',
-      // Desativa zoom automático de desktop que alargaria a janela
       '--disable-pinch',
     ];
 
-    // Só adiciona --proxy-server se houver proxy configurado
     if (proxyKey) {
       launchArgs.push(`--proxy-server=${proxyKey}`);
     }
@@ -1009,16 +1014,16 @@ export class MockPlaywrightFlow {
       await sleep(600);
       await dismissModals(p, cycle);
 
-      await stepEmail(p, email, cycle);                                          // 1
-      await stepOTP(p, emailClient, email, config.otpTimeout, cycle);            // 2
-      await stepPhone(p, cycle);                                                 // 3
-      await stepPassword(p, cycle);                                              // 4
-      await stepPersonalInfo(p, cycle);                                          // 5
-      await stepTerms(p, cycle);                                                 // 6
-      await stepCity(p, config.inviteCode, cycle, config.cityName ?? 'São Paulo'); // 7
-      await stepWhatsApp(p, cycle);                                              // 8
-      await stepHubPhotoClick(p, cycle);                                         // 9
-      await stepProfilePhoto(p, cycle);                                          // 10
+      await stepEmail(p, email, cycle);
+      await stepOTP(p, emailClient, email, config.otpTimeout, cycle);
+      await stepPhone(p, cycle);
+      await stepPassword(p, cycle);
+      await stepPersonalInfo(p, cycle);
+      await stepTerms(p, cycle);
+      await stepCity(p, config.inviteCode, cycle, config.cityName ?? 'São Paulo');
+      await stepWhatsApp(p, cycle);
+      await stepHubPhotoClick(p, cycle);
+      await stepProfilePhoto(p, cycle);
 
       if (config.extraDelay > 0) {
         globalState.addLog('info', `⏳ Extra delay: ${config.extraDelay}ms`, cycle);
