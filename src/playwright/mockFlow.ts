@@ -891,6 +891,24 @@ let browserInstance: Browser | null = null;
 let lastProxyConfig: string | null = null;
 let lastHeadless: boolean | null = null;
 
+// Caminhos do Brave por plataforma
+const BRAVE_CANDIDATES = [
+  // Variável de ambiente (prioridade máxima)
+  process.env.BRAVE_PATH,
+  // Windows
+  'C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe',
+  'C:\\Program Files (x86)\\BraveSoftware\\Brave-Browser\\Application\\brave.exe',
+  `${process.env.LOCALAPPDATA}\\BraveSoftware\\Brave-Browser\\Application\\brave.exe`,
+  // Linux
+  '/usr/bin/brave-browser',
+  '/usr/bin/brave',
+  '/snap/bin/brave',
+  // Chromium fallback (Linux)
+  '/usr/bin/chromium-browser',
+  '/usr/bin/chromium',
+  '/snap/bin/chromium',
+].filter(Boolean) as string[];
+
 export class MockPlaywrightFlow {
   static async init(headless = true): Promise<void> {
     const state = globalState.getState() as State & { proxies?: string[] };
@@ -904,16 +922,22 @@ export class MockPlaywrightFlow {
     }
     if (browserInstance) return;
 
-    const braveCandidates = [
-      process.env.BRAVE_PATH,
-      '/usr/bin/brave-browser', '/usr/bin/brave',
-      '/usr/bin/chromium-browser', '/usr/bin/chromium', '/snap/bin/chromium',
-    ].filter(Boolean) as string[];
-    let chromiumBin: string | undefined;
     const { existsSync } = await import('fs');
-    for (const c of braveCandidates) { if (existsSync(c)) { chromiumBin = c; break; } }
+    let executablePath: string | undefined;
+    for (const c of BRAVE_CANDIDATES) {
+      if (existsSync(c)) {
+        executablePath = c;
+        break;
+      }
+    }
 
-    globalState.addLog('info', chromiumBin ? `🚀 Usando: ${chromiumBin}` : '⚠️ Usando Playwright Chromium');
+    if (executablePath) {
+      globalState.addLog('info', `🦁 Usando Brave: ${executablePath}`);
+    } else {
+      globalState.addLog('warn', '⚠️ Brave não encontrado — usando Playwright Chromium');
+      globalState.addLog('warn', `⚠️ Caminhos tentados: ${BRAVE_CANDIDATES.join(' | ')}`);
+    }
+
     globalState.addLog('info', `🚀 Iniciando browser (headless=${headless})...`);
 
     const launchArgs = [
@@ -924,9 +948,10 @@ export class MockPlaywrightFlow {
       '--disable-dev-shm-usage',
       '--no-first-run',
       '--no-default-browser-check',
+      // Janela fisica do tamanho do iPhone (largura x altura + barra do SO)
       `--window-size=${MOBILE_W},${MOBILE_H + 80}`,
-      '--use-mobile-user-agent',
-      '--disable-pinch',
+      `--window-position=0,0`,
+      // NÃO usar --use-mobile-user-agent: conflita com o UA do contexto no Chromium
     ];
 
     if (proxyKey) {
@@ -935,7 +960,7 @@ export class MockPlaywrightFlow {
 
     browserInstance = await (chromiumExtra as unknown as BrowserType).launch({
       headless,
-      ...(chromiumBin ? { executablePath: chromiumBin } : {}),
+      ...(executablePath ? { executablePath } : {}),
       args: launchArgs,
     });
     lastProxyConfig = proxyKey;
