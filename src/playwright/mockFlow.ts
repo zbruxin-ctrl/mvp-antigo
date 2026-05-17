@@ -30,13 +30,14 @@ async function hasElement(p: Page, sel: string, timeout = 600): Promise<boolean>
 }
 
 // ─── MOBILE CONTEXT ──────────────────────────────────────────────────────────
-// UA de Chrome Mobile Android — compatível com Chromium (sem conflito Safari/WebKit)
 const MOBILE_UA =
   'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) ' +
   'Chrome/124.0.0.0 Mobile Safari/537.36';
 
-const MOBILE_W = 390;
-const MOBILE_H = 844;
+// Tamanho CSS (logical pixels) — a janela física deve ter este tamanho
+// O --force-device-scale-factor escalona internamente; não multiplique aqui
+const MOBILE_W   = 390;
+const MOBILE_H   = 844;
 const MOBILE_DPR = 3;
 
 // ─── SPINNER ──────────────────────────────────────────────────────────────────
@@ -900,10 +901,6 @@ export class MockPlaywrightFlow {
     globalState.addLog('info', chromiumBin ? `🚀 Usando: ${chromiumBin}` : '⚠️ Usando Playwright Chromium');
     globalState.addLog('info', `🚀 Iniciando browser (headless=${headless})...`);
 
-    // Tamanho físico da janela = viewport CSS * deviceScaleFactor
-    const windowW = MOBILE_W * MOBILE_DPR;  // 1170
-    const windowH = MOBILE_H * MOBILE_DPR;  // 2532
-
     browserInstance = await (chromiumExtra as unknown as BrowserType).launch({
       headless,
       ...(chromiumBin ? { executablePath: chromiumBin } : {}),
@@ -915,16 +912,15 @@ export class MockPlaywrightFlow {
         '--disable-dev-shm-usage',
         '--no-first-run',
         '--no-default-browser-check',
-        // — Mobile window & DPI —
-        `--window-size=${windowW},${windowH}`,
+        // Janela no tamanho CSS (logical pixels) — igual ao viewport do contexto
+        `--window-size=${MOBILE_W},${MOBILE_H}`,
         `--force-device-scale-factor=${MOBILE_DPR}`,
-        // — Proxy —
         `--proxy-server=${proxyKey}`,
       ],
     });
     lastProxyConfig = proxyKey;
     lastHeadless = headless;
-    globalState.addLog('info', `✅ Browser iniciado (janela ${windowW}×${windowH} @ ${MOBILE_DPR}x)`);
+    globalState.addLog('info', `✅ Browser iniciado (janela ${MOBILE_W}×${MOBILE_H}, DPR=${MOBILE_DPR})`);
   }
 
   static async execute(
@@ -952,7 +948,6 @@ export class MockPlaywrightFlow {
     const proxies: string[] = state.proxies ?? [];
     const proxyUrl = proxies.length > 0 ? proxies[cycle % proxies.length] : undefined;
 
-    // Contexto Android/Chrome — UA compatível com Chromium, sem conflito Safari/WebKit
     const ctxOpts: Parameters<Browser['newContext']>[0] = {
       userAgent: MOBILE_UA,
       viewport: { width: MOBILE_W, height: MOBILE_H },
