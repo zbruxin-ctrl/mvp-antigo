@@ -34,11 +34,13 @@ const MOBILE_UA =
   'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) ' +
   'Chrome/124.0.0.0 Mobile Safari/537.36';
 
-// Tamanho CSS (logical pixels) — a janela física deve ter este tamanho
-// O --force-device-scale-factor escalona internamente; não multiplique aqui
+// Tamanho da janela visível (pixels lógicos da tela do SO)
+// --force-device-scale-factor NÃO deve ser usado com headless=false:
+// ele escala a janela inteira pelo OS, fazendo ela aparecer gigante.
+// deviceScaleFactor no contexto afeta apenas como o site enxerga o DPR.
 const MOBILE_W   = 390;
 const MOBILE_H   = 844;
-const MOBILE_DPR = 3;
+const MOBILE_DPR = 3;   // usado só no contexto, não no launch
 
 // ─── SPINNER ──────────────────────────────────────────────────────────────────
 
@@ -912,15 +914,17 @@ export class MockPlaywrightFlow {
         '--disable-dev-shm-usage',
         '--no-first-run',
         '--no-default-browser-check',
-        // Janela no tamanho CSS (logical pixels) — igual ao viewport do contexto
+        // --window-size define o tamanho inicial da janela do OS (pixels físicos da tela)
+        // NÃO usar --force-device-scale-factor aqui: ele escala a janela inteira do OS
+        // pelo fator informado, fazendo a janela aparecer gigante em headless=false.
+        // O deviceScaleFactor do contexto afeta apenas o DPR reportado ao site.
         `--window-size=${MOBILE_W},${MOBILE_H}`,
-        `--force-device-scale-factor=${MOBILE_DPR}`,
         `--proxy-server=${proxyKey}`,
       ],
     });
     lastProxyConfig = proxyKey;
     lastHeadless = headless;
-    globalState.addLog('info', `✅ Browser iniciado (janela ${MOBILE_W}×${MOBILE_H}, DPR=${MOBILE_DPR})`);
+    globalState.addLog('info', `✅ Browser iniciado (janela ${MOBILE_W}×${MOBILE_H})`);
   }
 
   static async execute(
