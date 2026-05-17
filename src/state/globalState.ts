@@ -82,6 +82,11 @@ export function parseProxyString(raw: string): ProxyConfig | null {
   return null;
 }
 
+// ─── Constantes ───────────────────────────────────────────────────────────────
+
+/** BUG 4 FIX: limite máximo de entradas de log em memória */
+const MAX_LOG_ENTRIES = 2000;
+
 // ─── GlobalState ──────────────────────────────────────────────────────────────
 
 class GlobalState {
@@ -148,11 +153,6 @@ class GlobalState {
 
   // ─── KYC API ─────────────────────────────────────────────────────────────────
 
-  /**
-   * FIX: limpa os dados KYC de um ciclo específico.
-   * Chamado antes de iniciar cada ciclo para evitar acúmulo de sinais
-   * de execuções anteriores no mesmo número de ciclo.
-   */
   clearKycCycle(cycle: number): void {
     if (this.kycByCycle[cycle]) {
       delete this.kycByCycle[cycle];
@@ -190,7 +190,6 @@ class GlobalState {
   getKycSignals(cycle: number): KycSignal[] {
     const cycleMap = this.kycByCycle[cycle];
     if (!cycleMap) return [];
-    // FIX: retorna sinais ordenados por score descendente (provider mais forte primeiro)
     const sorted = Object.values(cycleMap).sort((a, b) => b.score - a.score);
     const result: KycSignal[] = [];
     for (const state of sorted) result.push(...state.signals);
@@ -214,10 +213,6 @@ class GlobalState {
     return { provider: top.provider, level: top.level, url: top.url };
   }
 
-  /**
-   * Retorna o mapa completo provider→KycProviderState de um ciclo.
-   * Usado pelo SSE para broadcastar detalhes ao frontend.
-   */
   getKycByCycleEntry(cycle: number): Record<string, KycProviderState> | null {
     return this.kycByCycle[cycle] ?? null;
   }
@@ -230,12 +225,8 @@ class GlobalState {
     this.kycByCycle = {};
   }
 
-  // ─── Contadores públicos ──────────────────────────────────────────────────────
-
-  incrementSuccess(cycle?: number): void {
-    this.state.cyclesCompleted += 1;
-    this.addLog('success', `✅ Conta criada — total: ${this.state.cyclesCompleted}`, cycle);
-  }
+  // ─── BUG 1 FIX: incrementSuccess removido — método morto que causaria double-count
+  // O incremento de cyclesCompleted é feito diretamente em executeCycleWithRetry.
 
   incrementFailure(reason?: string, cycle?: number): void {
     const msg = reason ? `❌ Falha no ciclo: ${reason}` : '❌ Falha no ciclo';
@@ -265,8 +256,12 @@ class GlobalState {
     this.addLog('info', 'Configuração atualizada');
   }
 
+  // BUG 4 FIX: addLog com cap de MAX_LOG_ENTRIES para evitar leak de memória
   addLog(level: LogEntry['level'], message: string, cycle?: number): void {
     this.logs.unshift({ timestamp: new Date().toISOString(), level, message, cycle });
+    if (this.logs.length > MAX_LOG_ENTRIES) {
+      this.logs = this.logs.slice(0, MAX_LOG_ENTRIES);
+    }
   }
 
   stop(): void {
@@ -328,10 +323,10 @@ class GlobalState {
 
     const promises = Array.from({ length: n }, () => {
       this.currentCycle += 1;
-      this.state.cyclesTotal += 1;
       this.state.activeParallel += 1;
       const cycle = this.currentCycle;
-      // FIX: limpa dados KYC do ciclo anterior com mesmo número antes de iniciar
+      // BUG 3 FIX: cyclesTotal só incrementa quando o executor de fato começa
+      // (o incremento agora é feito dentro de executeCycleWithRetry na 1ª tentativa)
       this.clearKycCycle(cycle);
       return this.executeCycleWithRetry(cycle).finally(() => {
         this.state.activeParallel = Math.max(0, this.state.activeParallel - 1);
@@ -366,17 +361,17 @@ class GlobalState {
       }
 
       try {
-        this.addLog(
-          'info',
-          attempt === 1
-            ? `🚀 Iniciando ciclo #${cycle}`
-            : `🔁 Ciclo #${cycle} — tentativa ${attempt}/${MAX_RETRIES}`,
-          cycle
-        );
+        // BUG 3 FIX: cyclesTotal incrementa na 1ª tentativa real (não antes no batch)
+        if (attempt === 1) {
+          this.state.cyclesTotal += 1;
+          this.addLog('info', `🚀 Iniciando ciclo #${cycle}`, cycle);
+        } else {
+          this.addLog('info', `🔁 Ciclo #${cycle} — tentativa ${attempt}/${MAX_RETRIES}`, cycle);
+        }
+
         if (!this.executor) throw new Error('Nenhum executor registrado.');
         await this.executor(this.state.config, cycle);
 
-        // ── BUG 1 FIX: incrementa via addLog para acionar broadcast SSE ──
         this.state.cyclesCompleted += 1;
         this.addLog('success', `✅ Ciclo #${cycle} concluído! Total: ${this.state.cyclesCompleted}`, cycle);
         return;

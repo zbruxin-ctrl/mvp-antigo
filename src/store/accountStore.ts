@@ -15,6 +15,9 @@ import type { Cookie } from 'playwright';
 const DATA_DIR  = path.resolve(process.cwd(), 'data');
 const DATA_FILE = path.join(DATA_DIR, 'accounts.json');
 
+/** MELHORIA 11: limite máximo de contas salvas para evitar crescimento ilimitado do JSON */
+const MAX_ACCOUNTS = 200;
+
 function readAll(): Account[] {
   try {
     if (!fs.existsSync(DATA_FILE)) return [];
@@ -35,20 +38,27 @@ function writeAll(accounts: Account[]): void {
  * Formato de cada cookie no array C:
  *   [name, value, domain, secure(0|1), httpOnly(0|1), expiresMs(-1 = sessão)]
  */
-function buildTampermonkeyScript(cookies: Cookie[]): string {
-  // Apenas cookies dos domínios Uber relevantes
+export function buildTampermonkeyScript(cookies: Cookie[]): string {
+  // BUG 7 FIX: inclui uber.com sem ponto para cobrir cookies como sid e udi-id
+  // que têm domain="uber.com" (sem ponto inicial) e não casavam com o filtro anterior.
   const ALLOWED_DOMAINS = [
-    'auth.uber.com',
+    'uber.com',
     '.uber.com',
+    'auth.uber.com',
+    '.auth.uber.com',
     'drivers.uber.com',
     '.drivers.uber.com',
     'bonjour.uber.com',
     '.bonjour.uber.com',
-    '.auth.uber.com',
   ];
 
   const filtered = cookies.filter((c) =>
-    ALLOWED_DOMAINS.some((d) => c.domain === d || c.domain.endsWith(d))
+    ALLOWED_DOMAINS.some((d) => {
+      // Compara sem ponto inicial em ambos os lados para evitar miss de cookies essenciais
+      const cookieDomain = c.domain.replace(/^\./, '');
+      const allowedDomain = d.replace(/^\./, '');
+      return cookieDomain === allowedDomain || cookieDomain.endsWith('.' + allowedDomain);
+    })
   );
 
   // Constrói array C como string JSON inline
@@ -87,7 +97,8 @@ export function save(data: Omit<Account, 'id' | 'createdAt'>): Account {
   };
   const all = readAll();
   all.unshift(account);
-  writeAll(all);
+  // MELHORIA 11: rotaciona — mantém apenas as MAX_ACCOUNTS mais recentes
+  writeAll(all.slice(0, MAX_ACCOUNTS));
   return account;
 }
 
@@ -103,4 +114,19 @@ export function remove(id: string): boolean {
   if (next.length === all.length) return false;
   writeAll(next);
   return true;
+}
+
+/**
+ * MELHORIA 10: regenera o script Tampermonkey de uma conta existente.
+ * Útil quando os cookies expiraram e foram atualizados externamente.
+ * Retorna a conta atualizada ou null se não encontrada.
+ */
+export function regenScript(id: string): Account | null {
+  const all = readAll();
+  const idx = all.findIndex((a) => a.id === id);
+  if (idx === -1) return null;
+  const account = all[idx]!;
+  account.tampermonkeyScript = buildTampermonkeyScript((account.cookies ?? []) as Cookie[]);
+  writeAll(all);
+  return account;
 }
