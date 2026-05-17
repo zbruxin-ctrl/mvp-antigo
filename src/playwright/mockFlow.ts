@@ -31,8 +31,8 @@ async function hasElement(p: Page, sel: string, timeout = 600): Promise<boolean>
 
 // ─── MOBILE CONTEXT ──────────────────────────────────────────────────────────
 const MOBILE_UA =
-  'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) ' +
-  'Chrome/124.0.0.0 Mobile Safari/537.36';
+  'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 ' +
+  '(KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1';
 
 // Tamanho da viewport mobile (pixels lógicos)
 // --window-size define o tamanho da janela do SO (inclui barra de título).
@@ -840,7 +840,7 @@ async function stepProfilePhoto(p: Page, cycle: number): Promise<void> {
           await p.evaluate((s: string) => {
             const node = document.querySelector(s) as HTMLElement | null;
             if (node) node.click();
-          }, sel);
+          }, s);
         });
       }
       globalState.addLog('info', `✔️ click: Tirar foto via: ${sel}`, cycle);
