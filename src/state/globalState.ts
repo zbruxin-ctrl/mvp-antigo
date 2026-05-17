@@ -94,7 +94,7 @@ class GlobalState {
     status: 'STOPPED',
     config: {
       cadastroUrl: 'https://bonjour.uber.com/',
-      tempMailApiKey: 'JXaiDP0Qjvc',
+      tempMailApiKey: 'Z4OHhdpnvUA',
       emailProvider: 'tempmailc',
       inviteCode: '',
       otpTimeout: 90000,
@@ -115,7 +115,6 @@ class GlobalState {
   private payloadByCycle: Record<number, CyclePayload> = {};
 
   // ─── Callback de broadcast (injetado pelo server) ─────────────────────────
-  // Evita dependência circular — o server chama globalState.onStateChange = broadcastSSE
   onStateChange?: (state: AppState) => void;
 
   // ─── Payload API ─────────────────────────────────────────────────────────────
