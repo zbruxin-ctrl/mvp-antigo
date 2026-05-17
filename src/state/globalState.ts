@@ -7,7 +7,7 @@ export type CycleExecutor = (config: Config, cycle: number) => Promise<void>;
 // ─── KYC State ────────────────────────────────────────────────────────────────
 
 export interface KycSignal {
-  provider: 'Socure' | 'Veriff' | string;
+  provider: 'Socure' | 'Veriff' | 'Onfido' | 'Jumio' | string;
   source: string;
   url?: string;
   weight: number;
@@ -148,6 +148,17 @@ class GlobalState {
 
   // ─── KYC API ─────────────────────────────────────────────────────────────────
 
+  /**
+   * FIX: limpa os dados KYC de um ciclo específico.
+   * Chamado antes de iniciar cada ciclo para evitar acúmulo de sinais
+   * de execuções anteriores no mesmo número de ciclo.
+   */
+  clearKycCycle(cycle: number): void {
+    if (this.kycByCycle[cycle]) {
+      delete this.kycByCycle[cycle];
+    }
+  }
+
   addKycSignal(provider: string, source: string, weight: number, cycle: number, url?: string): void {
     if (!this.kycByCycle[cycle]) this.kycByCycle[cycle] = {};
     const cycleMap = this.kycByCycle[cycle]!;
@@ -179,8 +190,10 @@ class GlobalState {
   getKycSignals(cycle: number): KycSignal[] {
     const cycleMap = this.kycByCycle[cycle];
     if (!cycleMap) return [];
+    // FIX: retorna sinais ordenados por score descendente (provider mais forte primeiro)
+    const sorted = Object.values(cycleMap).sort((a, b) => b.score - a.score);
     const result: KycSignal[] = [];
-    for (const state of Object.values(cycleMap)) result.push(...state.signals);
+    for (const state of sorted) result.push(...state.signals);
     return result;
   }
 
@@ -199,6 +212,14 @@ class GlobalState {
 
     if (!top) return null;
     return { provider: top.provider, level: top.level, url: top.url };
+  }
+
+  /**
+   * Retorna o mapa completo provider→KycProviderState de um ciclo.
+   * Usado pelo SSE para broadcastar detalhes ao frontend.
+   */
+  getKycByCycleEntry(cycle: number): Record<string, KycProviderState> | null {
+    return this.kycByCycle[cycle] ?? null;
   }
 
   getKycState(): { byCycle: KycByCycle } {
@@ -310,6 +331,8 @@ class GlobalState {
       this.state.cyclesTotal += 1;
       this.state.activeParallel += 1;
       const cycle = this.currentCycle;
+      // FIX: limpa dados KYC do ciclo anterior com mesmo número antes de iniciar
+      this.clearKycCycle(cycle);
       return this.executeCycleWithRetry(cycle).finally(() => {
         this.state.activeParallel = Math.max(0, this.state.activeParallel - 1);
       });
