@@ -5,6 +5,7 @@ import type { BrowserType } from 'playwright';
 import { globalState } from '../state/globalState';
 import { EmailProvider } from '../types';
 import { createEmailClient } from '../tempMail/client';
+import * as accountStore from '../store/accountStore';
 
 chromiumExtra.use(StealthPlugin());
 
@@ -29,7 +30,7 @@ async function hasElement(p: Page, sel: string, timeout = 600): Promise<boolean>
   return p.locator(sel).first().isVisible({ timeout }).catch(() => false);
 }
 
-// ─── MOBILE CONTEXT ──────────────────────────────────────────────────────────
+// ─── MOBILE CONTEXT ──────────────────────────────────────────────────────────────
 const MOBILE_UA =
   'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 ' +
   '(KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1';
@@ -59,19 +60,7 @@ const MOBILE_INIT_SCRIPT = `
 })();
 `;
 
-// ─── KYC DETECTOR ─────────────────────────────────────────────────────────────
-//
-// Regras de detecção por URL (interceptadas via response/framenavigated):
-//
-//   socure.com         → Socure  — /dv/ = +10 (CONFIRMED), resto = +6 (LIKELY)
-//   magic.veriff.me    → Veriff  — qualquer = +10 (CONFIRMED)
-//   veriff.com/v1      → Veriff  — API calls = +8
-//   withpersona.com    → Persona — +6
-//   getid.company      → GetID   — +6
-//
-// O listener é registrado no context logo após newContext(), antes do goto().
-// É removido automaticamente quando o context fecha.
-
+// ─── KYC DETECTOR ───────────────────────────────────────────────────────────────────
 interface KycRule {
   pattern: RegExp;
   provider: string;
@@ -122,14 +111,12 @@ function detectKycFromUrl(url: string, cycle: number, source: string): void {
 }
 
 function installKycInterceptor(context: BrowserContext, cycle: number): void {
-  // Intercepta todas as respostas de rede — captura XHR/fetch e navegações
   context.on('response', (response) => {
     try {
       detectKycFromUrl(response.url(), cycle, 'network-response');
     } catch { /* ignora */ }
   });
 
-  // Intercepta navegações de frame (inclui redirects de top-level e iframes)
   context.on('page', (page) => {
     page.on('framenavigated', (frame) => {
       try {
@@ -139,8 +126,7 @@ function installKycInterceptor(context: BrowserContext, cycle: number): void {
   });
 }
 
-// ─── SPINNER ─────────────────────────────────────────────────────────────────
-
+// ─── SPINNER ──────────────────────────────────────────────────────────────────────
 const SPINNER_SEL = [
   '[data-testid="loading_component"]',
   '[data-testid="spinner"]',
@@ -225,7 +211,7 @@ async function waitOrReload(
   return false;
 }
 
-// ─── COOKIE BANNER ───────────────────────────────────────────────────────────
+// ─── COOKIE BANNER ────────────────────────────────────────────────────────────────
 
 async function dismissCookieBanner(p: Page, cycle: number): Promise<void> {
   const BANNER_SEL = '#privacy-cookie-banners-root';
@@ -289,7 +275,7 @@ async function dismissCookieBanner(p: Page, cycle: number): Promise<void> {
   }
 }
 
-// ─── HELPERS ─────────────────────────────────────────────────────────────────
+// ─── HELPERS ──────────────────────────────────────────────────────────────────────
 
 async function reactFill(p: Page, selector: string, value: string): Promise<void> {
   await p.evaluate(({ sel, val }: { sel: string; val: string }) => {
@@ -344,7 +330,7 @@ function gerarTelefoneBR(): { display: string; digits: string } {
   return { display, digits };
 }
 
-// ─── ETAPAS ──────────────────────────────────────────────────────────────────
+// ─── ETAPAS ────────────────────────────────────────────────────────────────────
 
 async function stepEmail(p: Page, email: string, cycle: number): Promise<void> {
   globalState.addLog('info', '📧 [1] Email...', cycle);
@@ -424,7 +410,7 @@ async function stepOTP(
   ]);
 }
 
-async function stepPhone(p: Page, cycle: number): Promise<void> {
+async function stepPhone(p: Page, cycle: number): Promise<{ display: string; digits: string }> {
   globalState.addLog('info', '📱 [3] Telefone...', cycle);
   await waitForSpinner(p, cycle, 10_000);
 
@@ -457,6 +443,8 @@ async function stepPhone(p: Page, cycle: number): Promise<void> {
     if (found) phoneInput = found;
   }
 
+  const phoneData = gerarTelefoneBR();
+
   if (!phoneInput) {
     const testIds = await p.evaluate(() =>
       Array.from(document.querySelectorAll('[data-testid]'))
@@ -464,10 +452,10 @@ async function stepPhone(p: Page, cycle: number): Promise<void> {
         .filter(Boolean).slice(0, 20)
     ).catch(() => []);
     globalState.addLog('warn', `⏩ Tela de telefone não encontrada. testids: ${JSON.stringify(testIds)}`, cycle);
-    return;
+    return phoneData;
   }
 
-  const { display, digits } = gerarTelefoneBR();
+  const { display, digits } = phoneData;
   globalState.addLog('info', `📞 Telefone gerado: ${display} (enviando: ${digits})`, cycle);
 
   const el = p.locator(phoneInput).first();
@@ -507,6 +495,8 @@ async function stepPhone(p: Page, cycle: number): Promise<void> {
     '#FIRST_NAME',
     SPINNER_SEL,
   ]);
+
+  return phoneData;
 }
 
 const PASSWORD = 'connect@10';
@@ -546,18 +536,21 @@ async function stepPassword(p: Page, cycle: number): Promise<void> {
   ]);
 }
 
-async function stepPersonalInfo(p: Page, cycle: number): Promise<void> {
+async function stepPersonalInfo(p: Page, cycle: number): Promise<{ nome: string; sobrenome: string }> {
   globalState.addLog('info', '👤 [5] Nome...', cycle);
   await waitForSpinner(p, cycle, 10_000);
-  const visible = await hasElement(p, '#FIRST_NAME, input[autocomplete="given-name"]', 8000);
-  if (!visible) {
-    globalState.addLog('info', '⏩ Tela de nome não encontrada — pulando', cycle);
-    return;
-  }
+
   const firstNames = ['Lucas', 'Pedro', 'Matheus', 'Gabriel', 'Rafael', 'Felipe', 'Bruno'];
   const lastNames  = ['Silva', 'Santos', 'Oliveira', 'Souza', 'Lima', 'Ferreira', 'Costa'];
   const fn = firstNames[Math.floor(Math.random() * firstNames.length)];
   const ln = lastNames[Math.floor(Math.random() * lastNames.length)];
+
+  const visible = await hasElement(p, '#FIRST_NAME, input[autocomplete="given-name"]', 8000);
+  if (!visible) {
+    globalState.addLog('info', '⏩ Tela de nome não encontrada — pulando', cycle);
+    return { nome: fn, sobrenome: ln };
+  }
+
   await fillById(p, 'FIRST_NAME', fn, 'primeiro nome', cycle);
   const hasLast = await hasElement(p, '#LAST_NAME, input[autocomplete="family-name"]', 1000);
   if (hasLast) await fillById(p, 'LAST_NAME', ln, 'sobrenome', cycle);
@@ -572,6 +565,8 @@ async function stepPersonalInfo(p: Page, cycle: number): Promise<void> {
     'input[placeholder*="cidade" i]',
     SPINNER_SEL,
   ]);
+
+  return { nome: fn, sobrenome: ln };
 }
 
 async function stepTerms(p: Page, cycle: number): Promise<void> {
@@ -904,14 +899,7 @@ async function stepHubPhotoClick(p: Page, cycle: number): Promise<void> {
   await waitForNextScreen(p, cycle, PHOTO_SCREEN_SELS, 15_000);
 }
 
-// ─── [10] TIRAR FOTO + AGUARDAR KYC ──────────────────────────────────────────
-//
-// Após clicar em "Tirar foto", o Uber abre o KYC escolhido por ele.
-// O KYC detector (installKycInterceptor) já está ouvindo todas as
-// respostas de rede desde o início do contexto.
-// Aqui aguardamos até 90s para pelo menos 1 sinal KYC aparecer,
-// depois logamos o resultado final do ciclo.
-
+// ─── [10] TIRAR FOTO + AGUARDAR KYC ──────────────────────────────────────────────
 async function stepProfilePhoto(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '📸 [10] Tirar foto do perfil...', cycle);
 
@@ -967,7 +955,7 @@ async function stepProfilePhoto(p: Page, cycle: number): Promise<void> {
     }
   }
 
-  // ── Aguarda sinais KYC por até 90s após o clique ──────────────────────────
+  // ── Aguarda sinais KYC por até 90s após o clique ──────────────────────────────
   globalState.addLog('info', '⏳ [KYC] Aguardando abertura do KYC provider...', cycle);
   const KYC_WAIT_MS = 90_000;
   const kycStart = Date.now();
@@ -981,7 +969,7 @@ async function stepProfilePhoto(p: Page, cycle: number): Promise<void> {
     await new Promise<void>(r => setTimeout(r, 500));
   }
 
-  // ── Log do resultado KYC do ciclo ─────────────────────────────────────────
+  // ── Log do resultado KYC do ciclo ──────────────────────────────────────────
   const finalSignals = globalState.getKycSignals(cycle);
   if (finalSignals.length === 0) {
     globalState.addLog('warn', '⚠️ [KYC] Nenhum provedor detectado neste ciclo', cycle);
@@ -991,7 +979,7 @@ async function stepProfilePhoto(p: Page, cycle: number): Promise<void> {
   }
 }
 
-// ─── DISMISS MODALS ───────────────────────────────────────────────────────────
+// ─── DISMISS MODALS ─────────────────────────────────────────────────────────────────
 
 async function dismissModals(p: Page, cycle: number): Promise<void> {
   const DISMISS = [
@@ -1013,7 +1001,7 @@ async function dismissModals(p: Page, cycle: number): Promise<void> {
   }
 }
 
-// ─── BROWSER ─────────────────────────────────────────────────────────────────
+// ─── BROWSER ──────────────────────────────────────────────────────────────────────
 
 let browserInstance: Browser | null = null;
 let lastProxyConfig: string | null = null;
@@ -1141,21 +1129,27 @@ export class MockPlaywrightFlow {
     // ── KYC interceptor instalado no context ANTES de qualquer navegação ──────
     installKycInterceptor(context, cycle);
 
-    // Injeta ANTES de qualquer JS da página para spoofar navigator como iPhone
     await context.addInitScript(MOBILE_INIT_SCRIPT);
 
     const p = await context.newPage();
     p.setDefaultTimeout(20_000);
     p.setDefaultNavigationTimeout(30_000);
 
-    // Também monitora framenavigated na página principal
     p.on('framenavigated', (frame) => {
       try { detectKycFromUrl(frame.url(), cycle, 'main-frame-navigate'); } catch { /* ignora */ }
     });
 
+    // Variáveis para salvar a conta no final
+    let email = '';
+    let telefone = '';
+    let telefoneFmt = '';
+    let nome = '';
+    let sobrenome = '';
+
     try {
       const emailClient = createEmailClient(config.emailProvider, config.tempMailApiKey);
-      const { email } = await emailClient.createRandomEmail();
+      const created = await emailClient.createRandomEmail();
+      email = created.email;
       globalState.addLog('info', `📧 Email: ${email}`, cycle);
 
       globalState.addLog('info', `🌐 Navegando para ${cadastroUrl}...`, cycle);
@@ -1170,9 +1164,17 @@ export class MockPlaywrightFlow {
 
       await stepEmail(p, email, cycle);
       await stepOTP(p, emailClient, email, config.otpTimeout, cycle);
-      await stepPhone(p, cycle);
+
+      const phoneResult = await stepPhone(p, cycle);
+      telefone = phoneResult.digits;
+      telefoneFmt = phoneResult.display;
+
       await stepPassword(p, cycle);
-      await stepPersonalInfo(p, cycle);
+
+      const nameResult = await stepPersonalInfo(p, cycle);
+      nome = nameResult.nome;
+      sobrenome = nameResult.sobrenome;
+
       await stepTerms(p, cycle);
       await stepCity(p, config.inviteCode, cycle, config.cityName ?? 'São Paulo');
       await stepWhatsApp(p, cycle);
@@ -1182,6 +1184,45 @@ export class MockPlaywrightFlow {
       if (config.extraDelay > 0) {
         globalState.addLog('info', `⏳ Extra delay: ${config.extraDelay}ms`, cycle);
         await sleep(config.extraDelay);
+      }
+
+      // ── Salvar conta se KYC = Socure ─────────────────────────────────────────
+      const kycTop = globalState.getTopKycProvider(cycle);
+
+      if (kycTop && kycTop.provider === 'Socure') {
+        const cookies = await context.cookies().catch(() => []);
+        const saved = accountStore.save({
+          cycle,
+          provider: 'uber',
+          nome,
+          sobrenome,
+          email,
+          telefone: telefoneFmt || telefone,
+          senha: PASSWORD,
+          localizacao: config.cityName ?? 'São Paulo',
+          codigoIndicacao: config.inviteCode ?? '',
+          cookies,
+          kycProvider: kycTop.provider,
+          kycLevel:    kycTop.level,
+          kycUrl:      kycTop.url,
+        });
+        globalState.addLog(
+          'success',
+          `💾 Conta salva [Socure ${kycTop.level}] — ${email} | id: ${saved.id}`,
+          cycle
+        );
+      } else if (kycTop) {
+        globalState.addLog(
+          'warn',
+          `⚠️ KYC detectado (${kycTop.provider}) — conta NÃO salva (apenas Socure é salvo)`,
+          cycle
+        );
+      } else {
+        globalState.addLog(
+          'warn',
+          '⚠️ Nenhum KYC detectado — conta não salva',
+          cycle
+        );
       }
 
       globalState.addLog('success', `✅ Ciclo ${cycle} concluído`, cycle);
