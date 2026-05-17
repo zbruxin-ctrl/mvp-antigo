@@ -1,13 +1,13 @@
-import { chromium as chromiumExtra } from 'playwright-extra';
-import StealthPlugin from 'puppeteer-extra-plugin-stealth';
+import { chromium } from 'playwright';
 import { Browser, Page, BrowserContext } from 'playwright';
-import type { BrowserType } from 'playwright';
 import { globalState } from '../state/globalState';
 import { EmailProvider } from '../types';
 import { createEmailClient } from '../tempMail/client';
 import * as accountStore from '../store/accountStore';
 
-chromiumExtra.use(StealthPlugin());
+// NOTE: playwright-extra + stealth removidos — o plugin stealth/evasions/user-agent-override
+// crashava com "Cannot read properties of null (reading '1')" ao criar a página.
+// O userAgent é injetado diretamente via context options + addInitScript.
 
 const CYCLE_TIMEOUT_MS = 8 * 60 * 1_000;
 
@@ -61,6 +61,13 @@ const MOBILE_INIT_SCRIPT = `
 `;
 
 // ─── KYC DETECTOR ───────────────────────────────────────────────────────────────────
+//
+// PROBLEMA ANTERIOR: O Veriff abre numa nova aba/popup — o interceptor antigo
+// só escutava 'response' e 'framenavigated' na aba principal.
+// CORREÇÃO: installKycInterceptor agora também escuta context.on('page') para
+// registrar novas abas, e adiciona listeners de framenavigated + response
+// em cada nova aba que aparecer.
+
 interface KycRule {
   pattern: RegExp;
   provider: string;
@@ -73,36 +80,48 @@ const KYC_RULES: KycRule[] = [
     provider: 'Socure',
     weight: (url) => /\/dv\/|\/sv\/|document/i.test(url) ? 10 : 6,
   },
+  // Veriff — padrões reais observados
   {
     pattern: /magic\.veriff\.me/i,
     provider: 'Veriff',
     weight: () => 10,
   },
   {
-    pattern: /veriff\.com\/v\d/i,
+    pattern: /veriff\.com/i,
     provider: 'Veriff',
-    weight: () => 8,
+    weight: (url) => /\/v\d|\/attempt|\/media|magic/i.test(url) ? 10 : 7,
   },
+  // Persona
   {
     pattern: /withpersona\.com/i,
     provider: 'Persona',
     weight: () => 6,
   },
+  // GetID
   {
     pattern: /getid\.company/i,
     provider: 'GetID',
     weight: () => 6,
   },
+  // iProov
+  {
+    pattern: /iproov\.com/i,
+    provider: 'iProov',
+    weight: () => 6,
+  },
 ];
 
 function detectKycFromUrl(url: string, cycle: number, source: string): void {
+  // Ignora URLs vazias, about:blank, chrome-extension etc.
+  if (!url || url === 'about:blank' || url.startsWith('chrome')) return;
+
   for (const rule of KYC_RULES) {
     if (rule.pattern.test(url)) {
       const weight = rule.weight(url);
       globalState.addKycSignal(rule.provider, source, weight, cycle, url);
       globalState.addLog(
         'kyc',
-        `🔎 KYC detectado: ${rule.provider} via ${source} | ${url.substring(0, 80)}`,
+        `🔎 KYC detectado: ${rule.provider} via ${source} | ${url.substring(0, 100)}`,
         cycle
       );
       return;
@@ -110,19 +129,32 @@ function detectKycFromUrl(url: string, cycle: number, source: string): void {
   }
 }
 
+function attachPageListeners(page: Page, cycle: number, label: string): void {
+  // frame navigate (muda URL da aba)
+  page.on('framenavigated', (frame) => {
+    try { detectKycFromUrl(frame.url(), cycle, `${label}:frame-navigate`); } catch { /* ignora */ }
+  });
+  // respostas de rede (requisições XHR/fetch para o provedor KYC)
+  page.on('response', (response) => {
+    try { detectKycFromUrl(response.url(), cycle, `${label}:network`); } catch { /* ignora */ }
+  });
+  // URL atual da aba ao abrir (cobre o caso de popup que já nasce com a URL certa)
+  try { detectKycFromUrl(page.url(), cycle, `${label}:page-open`); } catch { /* ignora */ }
+}
+
 function installKycInterceptor(context: BrowserContext, cycle: number): void {
-  context.on('response', (response) => {
-    try {
-      detectKycFromUrl(response.url(), cycle, 'network-response');
-    } catch { /* ignora */ }
+  // Escuta novas abas/popups abertas pela Uber/KYC provider
+  context.on('page', (newPage) => {
+    attachPageListeners(newPage, cycle, 'popup');
+    // Também checa a URL assim que a aba carregar
+    newPage.once('load', () => {
+      try { detectKycFromUrl(newPage.url(), cycle, 'popup:load'); } catch { /* ignora */ }
+    });
   });
 
-  context.on('page', (page) => {
-    page.on('framenavigated', (frame) => {
-      try {
-        detectKycFromUrl(frame.url(), cycle, 'frame-navigate');
-      } catch { /* ignora */ }
-    });
+  // Respostas de rede do contexto inteiro (cobre iframes e workers)
+  context.on('response', (response) => {
+    try { detectKycFromUrl(response.url(), cycle, 'ctx:network'); } catch { /* ignora */ }
   });
 }
 
@@ -956,7 +988,9 @@ async function stepProfilePhoto(p: Page, cycle: number): Promise<void> {
   }
 
   // ── Aguarda sinais KYC por até 90s após o clique ──────────────────────────────
-  globalState.addLog('info', '⏳ [KYC] Aguardando abertura do KYC provider...', cycle);
+  // O Veriff/Socure abre numa nova aba (popup) — o interceptor context.on('page')
+  // captura a aba assim que ela abre e registra a URL automaticamente.
+  globalState.addLog('info', '⏳ [KYC] Aguardando abertura do KYC provider (popup/nova aba)...', cycle);
   const KYC_WAIT_MS = 90_000;
   const kycStart = Date.now();
   while (Date.now() - kycStart < KYC_WAIT_MS) {
@@ -1048,7 +1082,6 @@ export class MockPlaywrightFlow {
     globalState.addLog('info', `🚀 Iniciando browser (headless=${headless})...`);
 
     const launchArgs = [
-      `--app=about:blank`,
       '--no-sandbox',
       '--disable-setuid-sandbox',
       '--disable-blink-features=AutomationControlled',
@@ -1062,7 +1095,7 @@ export class MockPlaywrightFlow {
 
     if (proxyKey) launchArgs.push(`--proxy-server=${proxyKey}`);
 
-    browserInstance = await (chromiumExtra as unknown as BrowserType).launch({
+    browserInstance = await chromium.launch({
       headless,
       ...(executablePath ? { executablePath } : {}),
       args: launchArgs,
@@ -1135,9 +1168,8 @@ export class MockPlaywrightFlow {
     p.setDefaultTimeout(20_000);
     p.setDefaultNavigationTimeout(30_000);
 
-    p.on('framenavigated', (frame) => {
-      try { detectKycFromUrl(frame.url(), cycle, 'main-frame-navigate'); } catch { /* ignora */ }
-    });
+    // Listeners também na aba principal
+    attachPageListeners(p, cycle, 'main');
 
     // Variáveis para salvar a conta no final
     let email = '';
