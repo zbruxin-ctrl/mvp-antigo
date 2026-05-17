@@ -893,7 +893,6 @@ let lastHeadless: boolean | null = null;
 
 // Caminhos do Brave por plataforma
 const BRAVE_CANDIDATES = [
-  // Variável de ambiente (prioridade máxima)
   process.env.BRAVE_PATH,
   // Windows
   'C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe',
@@ -903,7 +902,6 @@ const BRAVE_CANDIDATES = [
   '/usr/bin/brave-browser',
   '/usr/bin/brave',
   '/snap/bin/brave',
-  // Chromium fallback (Linux)
   '/usr/bin/chromium-browser',
   '/usr/bin/chromium',
   '/snap/bin/chromium',
@@ -935,23 +933,24 @@ export class MockPlaywrightFlow {
       globalState.addLog('info', `🦁 Usando Brave: ${executablePath}`);
     } else {
       globalState.addLog('warn', '⚠️ Brave não encontrado — usando Playwright Chromium');
-      globalState.addLog('warn', `⚠️ Caminhos tentados: ${BRAVE_CANDIDATES.join(' | ')}`);
     }
 
     globalState.addLog('info', `🚀 Iniciando browser (headless=${headless})...`);
 
+    // --app abre sem barra de endereço/abas (janela standalone)
+    // --window-size força as dimensões físicas da janela
+    // juntos fazem a janela parecer um telefone de verdade
+    const appUrl = 'about:blank';
     const launchArgs = [
+      `--app=${appUrl}`,
       '--no-sandbox',
       '--disable-setuid-sandbox',
       '--disable-blink-features=AutomationControlled',
-      '--disable-infobars',
       '--disable-dev-shm-usage',
       '--no-first-run',
       '--no-default-browser-check',
-      // Janela fisica do tamanho do iPhone (largura x altura + barra do SO)
-      `--window-size=${MOBILE_W},${MOBILE_H + 80}`,
+      `--window-size=${MOBILE_W},${MOBILE_H}`,
       `--window-position=0,0`,
-      // NÃO usar --use-mobile-user-agent: conflita com o UA do contexto no Chromium
     ];
 
     if (proxyKey) {
@@ -965,7 +964,7 @@ export class MockPlaywrightFlow {
     });
     lastProxyConfig = proxyKey;
     lastHeadless = headless;
-    globalState.addLog('info', `✅ Browser iniciado (janela ${MOBILE_W}×${MOBILE_H + 80}, viewport ${MOBILE_W}×${MOBILE_H})`);
+    globalState.addLog('info', `✅ Browser iniciado (janela ${MOBILE_W}×${MOBILE_H}, viewport ${MOBILE_W}×${MOBILE_H})`);
   }
 
   static async execute(
