@@ -13,4 +13,8 @@ export interface Account {
   codigoIndicacao: string;
   cookies: Cookie[];
   createdAt: string;
+  // KYC
+  kycProvider?: string;
+  kycLevel?: string;
+  kycUrl?: string;
 }
