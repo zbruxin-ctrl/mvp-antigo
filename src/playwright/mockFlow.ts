@@ -34,10 +34,11 @@ const MOBILE_UA =
   'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) ' +
   'Chrome/124.0.0.0 Mobile Safari/537.36';
 
-// Tamanho da janela visível (pixels lógicos da tela do SO)
-// --force-device-scale-factor NÃO deve ser usado com headless=false:
-// ele escala a janela inteira pelo OS, fazendo ela aparecer gigante.
-// deviceScaleFactor no contexto afeta apenas como o site enxerga o DPR.
+// Tamanho da viewport mobile (pixels lógicos)
+// --window-size define o tamanho da janela do SO (inclui barra de título).
+// Para headless=false, usamos --window-size ligeiramente maior que a viewport
+// para que a área útil de renderização coincida com MOBILE_W × MOBILE_H.
+// deviceScaleFactor no contexto afeta apenas o DPR reportado ao site.
 const MOBILE_W   = 390;
 const MOBILE_H   = 844;
 const MOBILE_DPR = 3;   // usado só no contexto, não no launch
@@ -903,28 +904,38 @@ export class MockPlaywrightFlow {
     globalState.addLog('info', chromiumBin ? `🚀 Usando: ${chromiumBin}` : '⚠️ Usando Playwright Chromium');
     globalState.addLog('info', `🚀 Iniciando browser (headless=${headless})...`);
 
+    // Monta os args base
+    const launchArgs = [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-blink-features=AutomationControlled',
+      '--disable-infobars',
+      '--disable-dev-shm-usage',
+      '--no-first-run',
+      '--no-default-browser-check',
+      // --window-size define a área total da janela do SO (inclui barra de título/bordas).
+      // Usamos +80px de altura para compensar a barra de título (~30–40px) e barra de endereço (~48px),
+      // garantindo que a viewport útil seja próxima de MOBILE_W × MOBILE_H.
+      `--window-size=${MOBILE_W},${MOBILE_H + 80}`,
+      // Força o Chrome a tratar a janela como mobile mesmo sem touch screen físico
+      '--use-mobile-user-agent',
+      // Desativa zoom automático de desktop que alargaria a janela
+      '--disable-pinch',
+    ];
+
+    // Só adiciona --proxy-server se houver proxy configurado
+    if (proxyKey) {
+      launchArgs.push(`--proxy-server=${proxyKey}`);
+    }
+
     browserInstance = await (chromiumExtra as unknown as BrowserType).launch({
       headless,
       ...(chromiumBin ? { executablePath: chromiumBin } : {}),
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-blink-features=AutomationControlled',
-        '--disable-infobars',
-        '--disable-dev-shm-usage',
-        '--no-first-run',
-        '--no-default-browser-check',
-        // --window-size define o tamanho inicial da janela do OS (pixels físicos da tela)
-        // NÃO usar --force-device-scale-factor aqui: ele escala a janela inteira do OS
-        // pelo fator informado, fazendo a janela aparecer gigante em headless=false.
-        // O deviceScaleFactor do contexto afeta apenas o DPR reportado ao site.
-        `--window-size=${MOBILE_W},${MOBILE_H}`,
-        `--proxy-server=${proxyKey}`,
-      ],
+      args: launchArgs,
     });
     lastProxyConfig = proxyKey;
     lastHeadless = headless;
-    globalState.addLog('info', `✅ Browser iniciado (janela ${MOBILE_W}×${MOBILE_H})`);
+    globalState.addLog('info', `✅ Browser iniciado (janela ${MOBILE_W}×${MOBILE_H + 80}, viewport ${MOBILE_W}×${MOBILE_H})`);
   }
 
   static async execute(
