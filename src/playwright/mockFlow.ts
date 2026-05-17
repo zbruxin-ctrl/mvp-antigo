@@ -38,6 +38,32 @@ const MOBILE_W   = 390;
 const MOBILE_H   = 844;
 const MOBILE_DPR = 3;
 
+// Headers HTTP que forçam o Uber a tratar a sessão como mobile
+const MOBILE_HEADERS: Record<string, string> = {
+  'Sec-CH-UA-Mobile':   '?1',
+  'Sec-CH-UA-Platform': '"iOS"',
+  'Sec-CH-UA':          '"Not/A)Brand";v="8", "Chromium";v="126", "Mobile Safari";v="17"',
+  'Accept-Language':    'pt-BR,pt;q=0.9,en;q=0.8',
+};
+
+// Script injetado ANTES de qualquer JS da página:
+// sobrescreve navigator.userAgent, platform e maxTouchPoints
+// para que o Uber não detecte desktop via JS
+const MOBILE_INIT_SCRIPT = `
+(function() {
+  const ua = ${JSON.stringify(MOBILE_UA)};
+  Object.defineProperty(navigator, 'userAgent',      { get: () => ua,       configurable: true });
+  Object.defineProperty(navigator, 'appVersion',     { get: () => ua.replace('Mozilla/', ''), configurable: true });
+  Object.defineProperty(navigator, 'platform',       { get: () => 'iPhone', configurable: true });
+  Object.defineProperty(navigator, 'maxTouchPoints', { get: () => 5,        configurable: true });
+  Object.defineProperty(navigator, 'vendor',         { get: () => 'Apple Computer, Inc.', configurable: true });
+  // Simula suporte a touch events
+  window.ontouchstart = null;
+  window.ontouchmove  = null;
+  window.ontouchend   = null;
+})();
+`;
+
 // ─── SPINNER ─────────────────────────────────────────────────────────────────
 
 const SPINNER_SEL = [
@@ -808,7 +834,6 @@ async function stepProfilePhoto(p: Page, cycle: number): Promise<void> {
 
   await waitForSpinner(p, cycle, 10_000);
 
-  // ── Diagnóstico: loga todos os data-testid e botões visíveis na tela ────────
   const diagInfo = await p.evaluate(() => {
     const testIds = Array.from(document.querySelectorAll('[data-testid]'))
       .map(el => (el as HTMLElement).dataset['testid'])
@@ -821,7 +846,6 @@ async function stepProfilePhoto(p: Page, cycle: number): Promise<void> {
   }).catch(() => ({ testIds: [], buttons: [] }));
   globalState.addLog('info', `🔍 [foto] testids: ${JSON.stringify(diagInfo.testIds)}`, cycle);
   globalState.addLog('info', `🔍 [foto] botões: ${JSON.stringify(diagInfo.buttons)}`, cycle);
-  // ────────────────────────────────────────────────────────────────────────────
 
   const visible = await hasElement(p, PHOTO_SCREEN_SELS.join(', '), 8_000);
   if (!visible) {
@@ -891,14 +915,11 @@ let browserInstance: Browser | null = null;
 let lastProxyConfig: string | null = null;
 let lastHeadless: boolean | null = null;
 
-// Caminhos do Brave por plataforma
 const BRAVE_CANDIDATES = [
   process.env.BRAVE_PATH,
-  // Windows
   'C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe',
   'C:\\Program Files (x86)\\BraveSoftware\\Brave-Browser\\Application\\brave.exe',
   `${process.env.LOCALAPPDATA}\\BraveSoftware\\Brave-Browser\\Application\\brave.exe`,
-  // Linux
   '/usr/bin/brave-browser',
   '/usr/bin/brave',
   '/snap/bin/brave',
@@ -923,10 +944,7 @@ export class MockPlaywrightFlow {
     const { existsSync } = await import('fs');
     let executablePath: string | undefined;
     for (const c of BRAVE_CANDIDATES) {
-      if (existsSync(c)) {
-        executablePath = c;
-        break;
-      }
+      if (existsSync(c)) { executablePath = c; break; }
     }
 
     if (executablePath) {
@@ -937,12 +955,8 @@ export class MockPlaywrightFlow {
 
     globalState.addLog('info', `🚀 Iniciando browser (headless=${headless})...`);
 
-    // --app abre sem barra de endereço/abas (janela standalone)
-    // --window-size força as dimensões físicas da janela
-    // juntos fazem a janela parecer um telefone de verdade
-    const appUrl = 'about:blank';
     const launchArgs = [
-      `--app=${appUrl}`,
+      `--app=about:blank`,
       '--no-sandbox',
       '--disable-setuid-sandbox',
       '--disable-blink-features=AutomationControlled',
@@ -950,12 +964,12 @@ export class MockPlaywrightFlow {
       '--no-first-run',
       '--no-default-browser-check',
       `--window-size=${MOBILE_W},${MOBILE_H}`,
-      `--window-position=0,0`,
+      '--window-position=0,0',
+      // força o browser a reportar-se como mobile nos Client Hints de baixo nível
+      `--user-agent=${MOBILE_UA}`,
     ];
 
-    if (proxyKey) {
-      launchArgs.push(`--proxy-server=${proxyKey}`);
-    }
+    if (proxyKey) launchArgs.push(`--proxy-server=${proxyKey}`);
 
     browserInstance = await (chromiumExtra as unknown as BrowserType).launch({
       headless,
@@ -964,7 +978,7 @@ export class MockPlaywrightFlow {
     });
     lastProxyConfig = proxyKey;
     lastHeadless = headless;
-    globalState.addLog('info', `✅ Browser iniciado (janela ${MOBILE_W}×${MOBILE_H}, viewport ${MOBILE_W}×${MOBILE_H})`);
+    globalState.addLog('info', `✅ Browser iniciado`);
   }
 
   static async execute(
@@ -1002,6 +1016,7 @@ export class MockPlaywrightFlow {
       timezoneId: 'America/Sao_Paulo',
       permissions: ['geolocation'],
       geolocation: { latitude: -23.5505, longitude: -46.6333 },
+      extraHTTPHeaders: MOBILE_HEADERS,
     };
 
     if (proxyUrl) {
@@ -1019,6 +1034,10 @@ export class MockPlaywrightFlow {
     }
 
     const context = await browserInstance!.newContext(ctxOpts);
+
+    // Injeta ANTES de qualquer JS da página para spoofar navigator como iPhone
+    await context.addInitScript(MOBILE_INIT_SCRIPT);
+
     const p = await context.newPage();
     p.setDefaultTimeout(20_000);
     p.setDefaultNavigationTimeout(30_000);
