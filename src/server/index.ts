@@ -26,6 +26,58 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 const FRONTEND_DIR = path.resolve(__dirname, '../frontend');
 app.use(express.static(FRONTEND_DIR));
 
+// ── SSE ───────────────────────────────────────────────────────
+// Clientes SSE conectados
+const sseClients = new Set<Response>();
+
+export function broadcastSSE(event: string, data: unknown): void {
+  if (sseClients.size === 0) return;
+  const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  for (const res of sseClients) {
+    try { res.write(payload); } catch { sseClients.delete(res); }
+  }
+}
+
+app.get('/api/events', (req: Request, res: Response) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders();
+
+  sseClients.add(res);
+
+  // Envia estado atual imediatamente ao conectar
+  res.write(`event: state\ndata: ${JSON.stringify(globalState.getState())}\n\n`);
+  res.write(`event: kyc\ndata: ${JSON.stringify(globalState.getKycState())}\n\n`);
+
+  const keepAlive = setInterval(() => {
+    try { res.write(':ping\n\n'); } catch { clearInterval(keepAlive); sseClients.delete(res); }
+  }, 25_000);
+
+  req.on('close', () => {
+    clearInterval(keepAlive);
+    sseClients.delete(res);
+  });
+});
+
+// ── Patch globalState para broadcast automático ───────────────
+// Intercepta addLog e addKycSignal para push em tempo real
+const _origAddLog = globalState.addLog.bind(globalState);
+globalState.addLog = function(level, message, cycle) {
+  _origAddLog(level, message, cycle);
+  broadcastSSE('log', { timestamp: new Date().toISOString(), level, message, cycle });
+  broadcastSSE('state', globalState.getState());
+};
+
+const _origAddKycSignal = globalState.addKycSignal.bind(globalState);
+globalState.addKycSignal = function(provider, source, weight, cycle, url) {
+  _origAddKycSignal(provider, source, weight, cycle, url);
+  broadcastSSE('kyc', globalState.getKycState());
+  broadcastSSE('state', globalState.getState());
+};
+
+// ── Executor ─────────────────────────────────────────────────
 globalState.setExecutor(async (config, cycle) => {
   await MockPlaywrightFlow.init(config.headless);
   await MockPlaywrightFlow.execute(
