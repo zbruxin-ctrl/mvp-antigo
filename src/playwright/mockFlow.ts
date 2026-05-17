@@ -813,6 +813,164 @@ async function stepCity(
   }
 
   await waitForNextScreen(p, cycle, [
+    '[data-testid="step flowTypes"]',
+    '[data-testid="step-button-primary"]',
+    '[data-testid="step-bottom-navigation"]',
+    '[data-testid="hub"]',
+    '[data-testid*="profilePhoto"]',
+    '[data-testid*="stepItem"]',
+    SPINNER_SEL,
+  ]);
+}
+
+// ─── [7b] TIPO DE FLUXO (veículo/moto/bicicleta) ─────────────────────────────────
+// Tela: testId "step flowTypes" — exibe cards de tipo de parceiro (P2P, UberEats, moto…).
+// Ação: clicar no card P2P (Viagens de carro) e depois em Continuar.
+async function stepFlowType(p: Page, cycle: number): Promise<void> {
+  globalState.addLog('info', '🚗 [7b] Tipo de fluxo...', cycle);
+  await waitForSpinner(p, cycle, 10_000);
+
+  const FLOW_TYPE_SEL = '[data-testid="step flowTypes"], [data-testid="flow-selector"]';
+  const visible = await hasElement(p, FLOW_TYPE_SEL, 8_000);
+  if (!visible) {
+    globalState.addLog('info', '⏩ Tela de tipo de fluxo não encontrada — pulando', cycle);
+    return;
+  }
+
+  await dismissCookieBanner(p, cycle);
+
+  // Tenta selecionar o card P2P (Viagens de carro com veículo próprio)
+  const P2P_CANDIDATES = [
+    '[data-testid="P2P:default"]',
+    'button:has-text("Viagens de carro")',
+    'div:has-text("Viagens de carro")',
+  ];
+
+  let p2pClicked = false;
+  for (const sel of P2P_CANDIDATES) {
+    const el = p.locator(sel).first();
+    if (await el.isVisible({ timeout: 2_000 }).catch(() => false)) {
+      await el.scrollIntoViewIfNeeded();
+      await sleep(300);
+      await el.click({ force: true });
+      globalState.addLog('info', `✔️ card P2P selecionado via: ${sel}`, cycle);
+      p2pClicked = true;
+      break;
+    }
+  }
+
+  if (!p2pClicked) {
+    globalState.addLog('warn', '⚠️ Card P2P não encontrado — tentando continuar mesmo assim', cycle);
+  }
+
+  await sleep(400);
+
+  // Clica em Continuar
+  const CONTINUE_CANDIDATES = [
+    '[data-testid="step-button-primary"]',
+    'button:has-text("Continuar")',
+  ];
+
+  for (const sel of CONTINUE_CANDIDATES) {
+    const btn = p.locator(sel).first();
+    if (await btn.isVisible({ timeout: 3_000 }).catch(() => false)) {
+      await btn.scrollIntoViewIfNeeded();
+      await sleep(200);
+      await btn.click();
+      globalState.addLog('info', `✔️ click: Continuar (flowType) via: ${sel}`, cycle);
+      break;
+    }
+  }
+
+  await waitForNextScreen(p, cycle, [
+    '[data-testid="vehicle-with-solutions"]',
+    '[data-testid="step vehicleWithSolutions"]',
+    '[data-testid="step-submit-button"]',
+    '[data-testid="step-bottom-navigation"]',
+    '[data-testid="hub"]',
+    '[data-testid*="profilePhoto"]',
+    SPINNER_SEL,
+  ]);
+}
+
+// ─── [7c] TIPO DE VEÍCULO ("Preciso de um veículo") ──────────────────────────────
+// Tela: testId "step vehicleWithSolutions" — radio com "Tenho um veículo" / "Preciso de um veículo".
+// Ação: selecionar "Preciso de um veículo" e clicar em Continuar.
+async function stepVehicleType(p: Page, cycle: number): Promise<void> {
+  globalState.addLog('info', '🚘 [7c] Tipo de veículo...', cycle);
+  await waitForSpinner(p, cycle, 10_000);
+
+  const VEHICLE_SEL = '[data-testid="vehicle-with-solutions"], [data-testid="step vehicleWithSolutions"]';
+  const visible = await hasElement(p, VEHICLE_SEL, 8_000);
+  if (!visible) {
+    globalState.addLog('info', '⏩ Tela de veículo não encontrada — pulando', cycle);
+    return;
+  }
+
+  await dismissCookieBanner(p, cycle);
+
+  // Seleciona "Preciso de um veículo" (segunda opção de radio)
+  const NEED_VEHICLE_CANDIDATES = [
+    '[role="radiogroup"] [role="radio"]:nth-child(2)',
+    'label:has-text("Preciso de um veículo")',
+    'div:has-text("Preciso de um veículo")',
+    'span:has-text("Preciso de um veículo")',
+  ];
+
+  let radioClicked = false;
+  for (const sel of NEED_VEHICLE_CANDIDATES) {
+    const el = p.locator(sel).first();
+    if (await el.isVisible({ timeout: 2_000 }).catch(() => false)) {
+      await el.scrollIntoViewIfNeeded();
+      await sleep(300);
+      await el.click({ force: true });
+      globalState.addLog('info', `✔️ "Preciso de um veículo" selecionado via: ${sel}`, cycle);
+      radioClicked = true;
+      break;
+    }
+  }
+
+  if (!radioClicked) {
+    // Fallback: clica na segunda opção de radio via JS
+    const jsClicked = await p.evaluate(() => {
+      const radios = Array.from(document.querySelectorAll('[role="radio"]')) as HTMLElement[];
+      if (radios.length >= 2) { radios[1].click(); return true; }
+      const labels = Array.from(document.querySelectorAll('label, span, div, p')) as HTMLElement[];
+      const el = labels.find(e =>
+        e.offsetParent !== null && e.textContent?.includes('Preciso de um veículo')
+      );
+      if (el) { el.click(); return true; }
+      return false;
+    });
+    globalState.addLog(
+      jsClicked ? 'info' : 'warn',
+      jsClicked
+        ? '✔️ "Preciso de um veículo" selecionado via JS fallback'
+        : '⚠️ Opção "Preciso de um veículo" não encontrada — continuando mesmo assim',
+      cycle
+    );
+  }
+
+  await sleep(400);
+
+  // Clica em Continuar
+  const SUBMIT_CANDIDATES = [
+    '[data-testid="step-submit-button"]',
+    'button:has-text("Continuar")',
+  ];
+
+  for (const sel of SUBMIT_CANDIDATES) {
+    const btn = p.locator(sel).first();
+    if (await btn.isVisible({ timeout: 3_000 }).catch(() => false)) {
+      await btn.scrollIntoViewIfNeeded();
+      await sleep(200);
+      await btn.click();
+      globalState.addLog('info', `✔️ click: Continuar (vehicleType) via: ${sel}`, cycle);
+      break;
+    }
+  }
+
+  await waitForNextScreen(p, cycle, [
     '[data-testid="step-bottom-navigation"]',
     '[data-testid="hub"]',
     '[data-testid*="profilePhoto"]',
@@ -1011,9 +1169,6 @@ async function stepProfilePhoto(p: Page, cycle: number): Promise<void> {
   }
 
   // ── Aguarda sinais KYC por até 90s após o clique ──────────────────────────────
-  // O Veriff/Socure abre numa nova aba (popup) — o interceptor context.on('page')
-  // captura a aba assim que ela abre. context.on('request') captura antes da resposta
-  // chegar, cobrindo casos onde o Veriff redireciona via JS sem emitir 'response'.
   globalState.addLog('info', '⏳ [KYC] Aguardando abertura do KYC provider (popup/nova aba)...', cycle);
   const KYC_WAIT_MS = 90_000;
   const kycStart = Date.now();
@@ -1233,6 +1388,8 @@ export class MockPlaywrightFlow {
 
       await stepTerms(p, cycle);
       await stepCity(p, config.inviteCode, cycle, config.cityName ?? 'São Paulo');
+      await stepFlowType(p, cycle);
+      await stepVehicleType(p, cycle);
       await stepWhatsApp(p, cycle);
       await stepHubPhotoClick(p, cycle);
       await stepProfilePhoto(p, cycle);
