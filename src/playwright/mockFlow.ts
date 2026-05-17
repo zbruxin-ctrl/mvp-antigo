@@ -840,7 +840,7 @@ async function stepProfilePhoto(p: Page, cycle: number): Promise<void> {
           await p.evaluate((s: string) => {
             const node = document.querySelector(s) as HTMLElement | null;
             if (node) node.click();
-          }, s);
+          }, sel);
         });
       }
       globalState.addLog('info', `✔️ click: Tirar foto via: ${sel}`, cycle);
