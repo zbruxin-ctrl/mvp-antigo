@@ -64,9 +64,11 @@ const MOBILE_INIT_SCRIPT = `
 //
 // PROBLEMA ANTERIOR: O Veriff abre numa nova aba/popup — o interceptor antigo
 // só escutava 'response' e 'framenavigated' na aba principal.
-// CORREÇÃO: installKycInterceptor agora também escuta context.on('page') para
-// registrar novas abas, e adiciona listeners de framenavigated + response
-// em cada nova aba que aparecer.
+// CORREÇÃO v2:
+//   1. installKycInterceptor agora escuta context.on('page') para registrar novas abas.
+//   2. Adicionado context.on('request') para capturar URLs ANTES da resposta chegar —
+//      isso cobre o Veriff que redireciona via JS antes de emitir uma 'response'.
+//   3. Adicionados padrões para Onfido e Jumio.
 
 interface KycRule {
   pattern: RegExp;
@@ -109,6 +111,18 @@ const KYC_RULES: KycRule[] = [
     provider: 'iProov',
     weight: () => 6,
   },
+  // Onfido — adicionado
+  {
+    pattern: /onfido\.com/i,
+    provider: 'Onfido',
+    weight: (url) => /\/sdk|\/applicants|\/checks/i.test(url) ? 10 : 6,
+  },
+  // Jumio — adicionado
+  {
+    pattern: /jumio\.com/i,
+    provider: 'Jumio',
+    weight: (url) => /\/netverify|\/initiate|\/acquire/i.test(url) ? 10 : 6,
+  },
 ];
 
 function detectKycFromUrl(url: string, cycle: number, source: string): void {
@@ -138,6 +152,10 @@ function attachPageListeners(page: Page, cycle: number, label: string): void {
   page.on('response', (response) => {
     try { detectKycFromUrl(response.url(), cycle, `${label}:network`); } catch { /* ignora */ }
   });
+  // FIX v2: requisições — captura URL antes da resposta chegar (cobre redirects JS do Veriff)
+  page.on('request', (request) => {
+    try { detectKycFromUrl(request.url(), cycle, `${label}:request`); } catch { /* ignora */ }
+  });
   // URL atual da aba ao abrir (cobre o caso de popup que já nasce com a URL certa)
   try { detectKycFromUrl(page.url(), cycle, `${label}:page-open`); } catch { /* ignora */ }
 }
@@ -155,6 +173,11 @@ function installKycInterceptor(context: BrowserContext, cycle: number): void {
   // Respostas de rede do contexto inteiro (cobre iframes e workers)
   context.on('response', (response) => {
     try { detectKycFromUrl(response.url(), cycle, 'ctx:network'); } catch { /* ignora */ }
+  });
+
+  // FIX v2: requisições do contexto inteiro — captura antes da resposta (Veriff usa redirect JS)
+  context.on('request', (request) => {
+    try { detectKycFromUrl(request.url(), cycle, 'ctx:request'); } catch { /* ignora */ }
   });
 }
 
@@ -989,7 +1012,8 @@ async function stepProfilePhoto(p: Page, cycle: number): Promise<void> {
 
   // ── Aguarda sinais KYC por até 90s após o clique ──────────────────────────────
   // O Veriff/Socure abre numa nova aba (popup) — o interceptor context.on('page')
-  // captura a aba assim que ela abre e registra a URL automaticamente.
+  // captura a aba assim que ela abre. context.on('request') captura antes da resposta
+  // chegar, cobrindo casos onde o Veriff redireciona via JS sem emitir 'response'.
   globalState.addLog('info', '⏳ [KYC] Aguardando abertura do KYC provider (popup/nova aba)...', cycle);
   const KYC_WAIT_MS = 90_000;
   const kycStart = Date.now();
