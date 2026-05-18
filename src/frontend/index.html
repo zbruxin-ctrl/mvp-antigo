@@ -167,6 +167,20 @@ input:focus, select:focus {
   outline: 2px solid var(--teal); outline-offset: 1px;
 }
 
+/* ── Aviso de paralelismo (melhoria 9) ── */
+.parallel-warn {
+  display: none;
+  margin-top: 5px;
+  padding: 5px 8px;
+  border-radius: 5px;
+  background: #3b2800;
+  border: 1px solid #78450a;
+  color: var(--yellow);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.parallel-warn.visible { display: block; }
+
 /* ── Sidebar KYC live feed ── */
 .kyc-feed { padding: 8px; overflow-y: auto; flex: 1; }
 .kyc-feed-item {
@@ -348,9 +362,13 @@ input:focus, select:focus {
               <label>OTP Timeout (ms)</label>
               <input id="cfg-otpTimeout" type="number" />
             </div>
+            <!-- MELHORIA 9: campo de ciclos paralelos com aviso quando > 3 -->
             <div>
               <label>Ciclos paralelos</label>
               <input id="cfg-parallelCycles" type="number" min="1" max="20" />
+              <div class="parallel-warn" id="parallel-warn">
+                ⚠️ Recomendado ≤ 3 ciclos em paralelo. Acima disso pode causar crash por falta de memória/CPU na máquina.
+              </div>
             </div>
             <div>
               <label>Extra Delay (ms)</label>
@@ -381,11 +399,11 @@ input:focus, select:focus {
 </div><!-- /app -->
 
 <script>
-// ── Auth ─────────────────────────────────────────────────────────────────────────────
+// ── Auth ────────────────────────────────────────────────────────────────────────────────────
 const PASS = 'connect@10';
 const HEADERS = { 'Content-Type': 'application/json', 'x-admin-password': PASS };
 
-// ── Tabs ───────────────────────────────────────────────────────────────────────────
+// ── Tabs ─────────────────────────────────────────────────────────────────────────────
 document.querySelectorAll('.tab-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
@@ -396,7 +414,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
   });
 });
 
-// ── KYC state ─────────────────────────────────────────────────────────────────────
+// ── KYC state ────────────────────────────────────────────────────────────────────────
 let kycByCycle = {};
 
 // BUG 2 FIX: usa Set de chaves únicas para deduplicar sinais no feed lateral
@@ -538,7 +556,7 @@ function applyState(state) {
   document.getElementById('stat-parallel').textContent = state.activeParallel ?? 0;
 }
 
-// ── Logs ───────────────────────────────────────────────────────────────────────────
+// ── Logs ────────────────────────────────────────────────────────────────────────────
 const logContainer = document.getElementById('log-container');
 const MAX_LOG_ENTRIES = 400;
 let logEntries = [];
@@ -561,7 +579,7 @@ function renderLogs() {
   }).join('');
 }
 
-// ── SSE ───────────────────────────────────────────────────────────────────────────
+// ── SSE ─────────────────────────────────────────────────────────────────────────────
 let es = null;
 let reconnectTimer = null;
 
@@ -599,7 +617,7 @@ function connectSSE() {
   };
 }
 
-// ── Carga inicial ────────────────────────────────────────────────────────────────
+// ── Carga inicial ─────────────────────────────────────────────────────────────────────
 async function initialLoad() {
   try {
     const [stateRes, logsRes, kycRes] = await Promise.all([
@@ -615,7 +633,7 @@ async function initialLoad() {
   connectSSE();
 }
 
-// ── Accounts ──────────────────────────────────────────────────────────────────────
+// ── Accounts ────────────────────────────────────────────────────────────────────────
 async function loadAccounts() {
   try {
     const data = await fetch('/api/accounts', { headers: HEADERS }).then(r => r.json());
@@ -636,7 +654,7 @@ async function loadAccounts() {
         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;">
           <span class="account-kyc ${providerClass(a.kycProvider)}">${a.kycProvider || 'Desconhecido'} ${a.kycLevel || ''}</span>
           <button class="btn btn-ghost" style="font-size:11px;padding:4px 8px;"
-            onclick="deleteAccount('${a.id}')">&#128465;</button>
+            onclick="deleteAccount('${a.id}')">🗑</button>
         </div>
       </div>
     `).join('');
@@ -649,7 +667,7 @@ async function deleteAccount(id) {
   loadAccounts();
 }
 
-// ── Config ────────────────────────────────────────────────────────────────────────
+// ── Config ──────────────────────────────────────────────────────────────────────────
 async function loadConfig() {
   try {
     const cfg = await fetch('/api/config', { headers: HEADERS }).then(r => r.json());
@@ -658,7 +676,10 @@ async function loadConfig() {
     document.getElementById('cfg-inviteCode').value     = cfg.inviteCode     || '';
     document.getElementById('cfg-cityName').value       = cfg.cityName       || '';
     document.getElementById('cfg-otpTimeout').value     = cfg.otpTimeout     || 90000;
-    document.getElementById('cfg-parallelCycles').value = cfg.parallelCycles || 1;
+    const parallelVal = cfg.parallelCycles || 1;
+    document.getElementById('cfg-parallelCycles').value = parallelVal;
+    // MELHORIA 9: mostra aviso imediatamente ao carregar se já estiver acima de 3
+    updateParallelWarn(parallelVal);
     document.getElementById('cfg-extraDelay').value     = cfg.extraDelay     || 2000;
     document.getElementById('cfg-headless').value       = cfg.headless ? 'true' : 'false';
     const proxies = Array.isArray(cfg.proxies)
@@ -667,6 +688,21 @@ async function loadConfig() {
     document.getElementById('cfg-proxies').value = proxies;
   } catch(e) { console.error(e); }
 }
+
+// MELHORIA 9: função que exibe/oculta o banner de aviso
+function updateParallelWarn(val) {
+  const warn = document.getElementById('parallel-warn');
+  if (Number(val) > 3) {
+    warn.classList.add('visible');
+  } else {
+    warn.classList.remove('visible');
+  }
+}
+
+// MELHORIA 9: escuta o input em tempo real
+document.getElementById('cfg-parallelCycles').addEventListener('input', function() {
+  updateParallelWarn(this.value);
+});
 
 document.getElementById('btn-save-config').addEventListener('click', async () => {
   const proxiesRaw = document.getElementById('cfg-proxies').value.trim();
@@ -692,7 +728,7 @@ document.getElementById('btn-save-config').addEventListener('click', async () =>
   } catch(e) { console.error(e); }
 });
 
-// ── Botões controle ───────────────────────────────────────────────────────────────
+// ── Botões controle ──────────────────────────────────────────────────────────────────────
 document.getElementById('btn-once').addEventListener('click', async () => {
   await fetch('/api/start-once', { method: 'POST', headers: HEADERS, body: '{}' });
 });
@@ -718,7 +754,7 @@ document.getElementById('btn-clear-kyc').addEventListener('click', async () => {
   renderKycFeed();
 });
 
-// ── Init ───────────────────────────────────────────────────────────────────────────
+// ── Init ────────────────────────────────────────────────────────────────────────────────────
 loadConfig();
 initialLoad();
 </script>
