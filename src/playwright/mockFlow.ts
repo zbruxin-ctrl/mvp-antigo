@@ -827,8 +827,9 @@ async function stepCity(
 // Tela: testId "step flowTypes" — exibe cards de tipo de parceiro (P2P, UberEats, moto…).
 // Ação: clicar no card P2P (Viagens de carro) e depois em Continuar.
 //
-// BUG 5 FIX: após clicar no card P2P, aguarda confirmação de seleção
-// (aria-checked="true" ou classe active/selected) por até 2s antes de avançar.
+// BUG 5 FIX: após clicar no card P2P, aguarda o estado "selecionado" antes de prosseguir.
+// Indicadores de seleção: aria-checked="true", aria-selected="true", atributo data-selected,
+// classe "selected" / "active" / "checked", ou aria-pressed="true".
 async function stepFlowType(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '🚗 [7b] Tipo de fluxo...', cycle);
   await waitForSpinner(p, cycle, 10_000);
@@ -849,7 +850,6 @@ async function stepFlowType(p: Page, cycle: number): Promise<void> {
     'div:has-text("Viagens de carro")',
   ];
 
-  let p2pEl: import('playwright').Locator | null = null;
   let p2pClicked = false;
   for (const sel of P2P_CANDIDATES) {
     const el = p.locator(sel).first();
@@ -858,43 +858,37 @@ async function stepFlowType(p: Page, cycle: number): Promise<void> {
       await sleep(300);
       await el.click({ force: true });
       globalState.addLog('info', `✔️ card P2P clicado via: ${sel}`, cycle);
-      p2pEl = el;
       p2pClicked = true;
+
+      // FIX bug 5: aguarda estado selecionado antes de ir para Continuar
+      const selectedConfirmed = await p.waitForFunction(
+        (selector: string) => {
+          const node = document.querySelector(selector);
+          if (!node) return false;
+          if (node.getAttribute('aria-checked') === 'true') return true;
+          if (node.getAttribute('aria-selected') === 'true') return true;
+          if (node.getAttribute('aria-pressed') === 'true') return true;
+          if (node.hasAttribute('data-selected')) return true;
+          const cls = (node as HTMLElement).className || '';
+          return /\bselected\b|\bactive\b|\bchecked\b/i.test(cls);
+        },
+        sel,
+        { timeout: 3_000 }
+      ).then(() => true).catch(() => false);
+
+      if (selectedConfirmed) {
+        globalState.addLog('info', '✔️ card P2P confirmado como selecionado', cycle);
+      } else {
+        // segunda tentativa de clique caso o estado não tenha mudado
+        globalState.addLog('warn', '⚠️ card P2P: estado selecionado não confirmado — re-clicando', cycle);
+        await el.click({ force: true }).catch(() => {});
+        await sleep(400);
+      }
       break;
     }
   }
 
-  // BUG 5 FIX: verifica se o card ficou marcado (aria-checked ou classe ativa)
-  if (p2pClicked && p2pEl) {
-    const confirmed = await (async () => {
-      const deadline = Date.now() + 2_000;
-      while (Date.now() < deadline) {
-        const isSelected = await p2pEl!.evaluate((node: Element) => {
-          return (
-            node.getAttribute('aria-checked') === 'true' ||
-            node.getAttribute('aria-selected') === 'true' ||
-            node.classList.contains('active') ||
-            node.classList.contains('selected') ||
-            node.classList.contains('checked') ||
-            // Verifica filhos também (o indicador visual pode estar num filho)
-            !!node.querySelector('[aria-checked="true"], .active, .selected, .checked')
-          );
-        }).catch(() => false);
-        if (isSelected) return true;
-        await new Promise<void>(r => setTimeout(r, 150));
-      }
-      return false;
-    })();
-
-    if (confirmed) {
-      globalState.addLog('info', '✔️ card P2P confirmado como selecionado', cycle);
-    } else {
-      // Clique não registrou — tenta uma vez mais com force
-      globalState.addLog('warn', '⚠️ card P2P não confirmado — retentando clique...', cycle);
-      await p2pEl.click({ force: true }).catch(() => {});
-      await sleep(400);
-    }
-  } else if (!p2pClicked) {
+  if (!p2pClicked) {
     globalState.addLog('warn', '⚠️ Card P2P não encontrado — tentando continuar mesmo assim', cycle);
   }
 
@@ -932,9 +926,9 @@ async function stepFlowType(p: Page, cycle: number): Promise<void> {
 // Tela: testId "step vehicleWithSolutions" — radio com "Tenho um veículo" / "Preciso de um veículo".
 // Ação: selecionar "Preciso de um veículo" e clicar em Continuar.
 //
-// BUG 6 FIX: seletor :nth-child(2) substituído por nth-of-type-equivalent via
-// locator.nth(1) — seleciona o 2º elemento [role="radio"] entre os radios
-// do grupo, ignorando elementos intermediários no DOM.
+// BUG 6 FIX: trocado [role="radiogroup"] [role="radio"]:nth-child(2) por seletor baseado em texto,
+// com fallback para radios[1] via querySelectorAll — evita quebrar se houver elementos
+// intermediários no DOM entre o radiogroup e os items.
 async function stepVehicleType(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '🚘 [7c] Tipo de veículo...', cycle);
   await waitForSpinner(p, cycle, 10_000);
@@ -948,13 +942,14 @@ async function stepVehicleType(p: Page, cycle: number): Promise<void> {
 
   await dismissCookieBanner(p, cycle);
 
-  // BUG 6 FIX: usa texto explícito como seletor primário; fallback usa .nth(1) no
-  // locator de [role="radio"] — não depende da posição no DOM como nth-child.
+  // FIX bug 6: seletores baseados em texto primeiro — robustos a mudanças de estrutura DOM.
+  // nth-child(2) removido pois pegava o 2º filho do container, não o 2º radio.
   const NEED_VEHICLE_CANDIDATES = [
     'label:has-text("Preciso de um veículo")',
     '[role="radio"]:has-text("Preciso de um veículo")',
-    'div:has-text("Preciso de um veículo")',
+    'div[role="radio"]:has-text("Preciso de um veículo")',
     'span:has-text("Preciso de um veículo")',
+    'div:has-text("Preciso de um veículo")',
   ];
 
   let radioClicked = false;
@@ -971,45 +966,25 @@ async function stepVehicleType(p: Page, cycle: number): Promise<void> {
   }
 
   if (!radioClicked) {
-    // BUG 6 FIX: fallback — .nth(1) seleciona o 2º [role="radio"] por ordem de
-    // aparição no DOM, sem depender de posição entre filhos mistos.
-    const radioGroup = p.locator('[role="radiogroup"]').first();
-    const radiosInGroup = radioGroup.locator('[role="radio"]');
-    const count = await radiosInGroup.count().catch(() => 0);
-
-    if (count >= 2) {
-      try {
-        const secondRadio = radiosInGroup.nth(1);
-        await secondRadio.scrollIntoViewIfNeeded();
-        await sleep(200);
-        await secondRadio.click({ force: true });
-        globalState.addLog('info', '✔️ "Preciso de um veículo" selecionado via radioGroup.nth(1)', cycle);
-        radioClicked = true;
-      } catch {
-        // cai no JS fallback abaixo
-      }
-    }
-  }
-
-  if (!radioClicked) {
-    // JS fallback final
+    // Fallback: itera APENAS sobre [role="radio"] — não sobre filhos genéricos do container
     const jsClicked = await p.evaluate(() => {
+      // querySelectorAll('[role="radio"]') retorna apenas os radios, independente de nesting
       const radios = Array.from(document.querySelectorAll('[role="radio"]')) as HTMLElement[];
-      if (radios.length >= 2) { radios[1].click(); return true; }
-      const labels = Array.from(document.querySelectorAll('label, span, div, p')) as HTMLElement[];
-      const el = labels.find(e =>
-        e.offsetParent !== null && e.textContent?.includes('Preciso de um veículo')
+      const target = radios.find(r =>
+        r.offsetParent !== null && r.textContent?.includes('Preciso de um veículo')
       );
-      if (el) { el.click(); return true; }
-      return false;
+      if (target) { target.click(); return 'by-text'; }
+      // último recurso: segundo radio visível (índice 1 do array de radios)
+      const visible = radios.filter(r => r.offsetParent !== null);
+      if (visible.length >= 2) { visible[1].click(); return 'by-index'; }
+      return null;
     });
-    globalState.addLog(
-      jsClicked ? 'info' : 'warn',
-      jsClicked
-        ? '✔️ "Preciso de um veículo" selecionado via JS fallback'
-        : '⚠️ Opção "Preciso de um veículo" não encontrada — continuando mesmo assim',
-      cycle
-    );
+    if (jsClicked) {
+      globalState.addLog('info', `✔️ "Preciso de um veículo" via JS fallback (${jsClicked})`, cycle);
+      radioClicked = true;
+    } else {
+      globalState.addLog('warn', '⚠️ Opção "Preciso de um veículo" não encontrada — continuando mesmo assim', cycle);
+    }
   }
 
   await sleep(400);
@@ -1278,6 +1253,8 @@ async function dismissModals(p: Page, cycle: number): Promise<void> {
 // ─── BROWSER ──────────────────────────────────────────────────────────────────────
 
 let browserInstance: Browser | null = null;
+// FIX bug 2: rastreia a configuração atual do browser com base em getProxyForCycle(0)
+// em vez de ler state.proxies (campo que não existe em AppState).
 let lastProxyConfig: string | null = null;
 let lastHeadless: boolean | null = null;
 
@@ -1295,13 +1272,10 @@ const BRAVE_CANDIDATES = [
 ].filter(Boolean) as string[];
 
 export class MockPlaywrightFlow {
-  // BUG 2 FIX: init() usava state.proxies (campo inexistente em AppState) para
-  // comparar a chave de proxy e decidir se reiniciava o browser. Agora usa
-  // globalState.getProxyForCycle(1) que lê corretamente de state.config.proxies —
-  // mesmo caminho que _run() já seguia, eliminando a dessincronização.
+  // FIX bug 2: usa getProxyForCycle(0) como "proxy de referência" para decidir se o
+  // browser precisa ser reiniciado — elimina o acesso a state.proxies que não existe.
   static async init(headless = true): Promise<void> {
-    const firstProxy = globalState.getProxyForCycle(1);
-    const proxyKey = firstProxy?.server ?? '';
+    const proxyKey = globalState.getProxyForCycle(0) ?? '';
 
     if (browserInstance && (lastProxyConfig !== proxyKey || lastHeadless !== headless)) {
       globalState.addLog('info', '🔄 Configuração mudou — reiniciando browser...');
@@ -1369,7 +1343,8 @@ export class MockPlaywrightFlow {
     config: { emailProvider: EmailProvider; tempMailApiKey: string; otpTimeout: number; extraDelay: number; inviteCode: string; cityName?: string },
     cycle: number
   ): Promise<void> {
-    const proxyConfig = globalState.getProxyForCycle(cycle);
+    // FIX bug 2: usa getProxyForCycle(cycle) — única fonte da verdade, sincronizado com init()
+    const proxyUrl = globalState.getProxyForCycle(cycle);
 
     const ctxOpts: Parameters<Browser['newContext']>[0] = {
       userAgent: MOBILE_UA,
@@ -1384,9 +1359,16 @@ export class MockPlaywrightFlow {
       extraHTTPHeaders: MOBILE_HEADERS,
     };
 
-    if (proxyConfig) {
-      ctxOpts.proxy = proxyConfig;
-      globalState.addLog('info', `🌐 Proxy: ${proxyConfig.server}`, cycle);
+    if (proxyUrl) {
+      try {
+        const u = new URL(proxyUrl.startsWith('http') ? proxyUrl : `http://${proxyUrl}`);
+        ctxOpts.proxy = {
+          server: `${u.protocol}//${u.hostname}:${u.port}`,
+          username: u.username ? decodeURIComponent(u.username) : undefined,
+          password: u.password ? decodeURIComponent(u.password) : undefined,
+        };
+        globalState.addLog('info', `🌐 Proxy: ${ctxOpts.proxy.server}`, cycle);
+      } catch { ctxOpts.proxy = { server: proxyUrl }; }
     } else {
       globalState.addLog('info', '🌐 Sem proxy (VPN)', cycle);
     }
@@ -1405,22 +1387,35 @@ export class MockPlaywrightFlow {
     // Listeners também na aba principal
     attachPageListeners(p, cycle, 'main');
 
+    // Variáveis para salvar a conta no final
+    let email = '';
+    let telefone = '';
+    let telefoneFmt = '';
+    let nome = '';
+    let sobrenome = '';
+
     try {
-      globalState.addLog('info', `🌐 Abrindo: ${cadastroUrl}`, cycle);
+      const emailClient = createEmailClient(config.emailProvider, config.tempMailApiKey);
+      const created = await emailClient.createRandomEmail();
+      email = created.email;
+      globalState.addLog('info', `📧 Email: ${email}`, cycle);
+
+      globalState.addLog('info', `🌐 Navegando para ${cadastroUrl}...`, cycle);
       await p.goto(cadastroUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
-      await waitForSpinner(p, cycle, 15_000);
+      globalState.addLog('info', '✔️ Página carregada', cycle);
+
       await dismissModals(p, cycle);
       await dismissCookieBanner(p, cycle);
-
-      const emailClient = createEmailClient(config.emailProvider, config.tempMailApiKey);
-      const email = await emailClient.createEmail(cycle);
-      globalState.addLog('info', `📧 Email criado: ${email}`, cycle);
 
       await stepEmail(p, email, cycle);
       await stepOTP(p, emailClient, email, config.otpTimeout, cycle);
       const phoneData = await stepPhone(p, cycle);
+      telefone    = phoneData.digits;
+      telefoneFmt = phoneData.display;
       await stepPassword(p, cycle);
       const nameData = await stepPersonalInfo(p, cycle);
+      nome      = nameData.nome;
+      sobrenome = nameData.sobrenome;
       await stepTerms(p, cycle);
       await stepCity(p, config.inviteCode, cycle, config.cityName);
       await stepFlowType(p, cycle);
@@ -1429,28 +1424,28 @@ export class MockPlaywrightFlow {
       await stepHubPhotoClick(p, cycle);
       await stepProfilePhoto(p, cycle);
 
-      if (config.extraDelay > 0) await sleep(config.extraDelay);
+      if (config.extraDelay > 0) {
+        globalState.addLog('info', `⏳ Extra delay: ${config.extraDelay}ms`, cycle);
+        await sleep(config.extraDelay);
+      }
 
-      // Salva conta no store
-      const kycInfo = globalState.getTopKycProvider(cycle);
-      const payload = globalState.getPayload(cycle);
+      // Salva conta
+      const kycSignals = globalState.getKycSignals(cycle);
+      const topSignal  = kycSignals.length > 0 ? kycSignals[0] : null;
       await accountStore.saveAccount({
-        nome:             nameData.nome,
-        sobrenome:        nameData.sobrenome,
-        email,
-        telefone:         phoneData.display,
-        senha:            PASSWORD,
-        localizacao:      config.cityName ?? 'São Paulo',
-        codigoIndicacao:  config.inviteCode,
-        kycProvider:      kycInfo?.provider,
-        kycLevel:         kycInfo?.level,
-        kycUrl:           kycInfo?.url,
+        email, telefone, telefoneFmt, nome, sobrenome,
         cycle,
+        kycProvider: topSignal?.provider ?? null,
+        kycLevel:    topSignal ? (() => {
+          const s = globalState.getState() as any;
+          return s.kycByCycle?.[cycle]?.[topSignal.provider]?.level ?? null;
+        })() : null,
+        localizacao: config.cityName ?? 'São Paulo',
       });
-      globalState.addLog('success', `💾 Conta salva: ${email}`, cycle);
+      globalState.addLog('success', `✅ Ciclo ${cycle} concluído — conta: ${email}`, cycle);
+
     } finally {
       await context.close().catch(() => {});
-      globalState.clearPayload(cycle);
     }
   }
 }
