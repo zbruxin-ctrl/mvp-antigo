@@ -826,6 +826,9 @@ async function stepCity(
 // ─── [7b] TIPO DE FLUXO (veículo/moto/bicicleta) ─────────────────────────────────
 // Tela: testId "step flowTypes" — exibe cards de tipo de parceiro (P2P, UberEats, moto…).
 // Ação: clicar no card P2P (Viagens de carro) e depois em Continuar.
+//
+// BUG 5 FIX: após clicar no card P2P, aguarda confirmação de seleção
+// (aria-checked="true" ou classe active/selected) por até 2s antes de avançar.
 async function stepFlowType(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '🚗 [7b] Tipo de fluxo...', cycle);
   await waitForSpinner(p, cycle, 10_000);
@@ -846,6 +849,7 @@ async function stepFlowType(p: Page, cycle: number): Promise<void> {
     'div:has-text("Viagens de carro")',
   ];
 
+  let p2pEl: import('playwright').Locator | null = null;
   let p2pClicked = false;
   for (const sel of P2P_CANDIDATES) {
     const el = p.locator(sel).first();
@@ -853,13 +857,44 @@ async function stepFlowType(p: Page, cycle: number): Promise<void> {
       await el.scrollIntoViewIfNeeded();
       await sleep(300);
       await el.click({ force: true });
-      globalState.addLog('info', `✔️ card P2P selecionado via: ${sel}`, cycle);
+      globalState.addLog('info', `✔️ card P2P clicado via: ${sel}`, cycle);
+      p2pEl = el;
       p2pClicked = true;
       break;
     }
   }
 
-  if (!p2pClicked) {
+  // BUG 5 FIX: verifica se o card ficou marcado (aria-checked ou classe ativa)
+  if (p2pClicked && p2pEl) {
+    const confirmed = await (async () => {
+      const deadline = Date.now() + 2_000;
+      while (Date.now() < deadline) {
+        const isSelected = await p2pEl!.evaluate((node: Element) => {
+          return (
+            node.getAttribute('aria-checked') === 'true' ||
+            node.getAttribute('aria-selected') === 'true' ||
+            node.classList.contains('active') ||
+            node.classList.contains('selected') ||
+            node.classList.contains('checked') ||
+            // Verifica filhos também (o indicador visual pode estar num filho)
+            !!node.querySelector('[aria-checked="true"], .active, .selected, .checked')
+          );
+        }).catch(() => false);
+        if (isSelected) return true;
+        await new Promise<void>(r => setTimeout(r, 150));
+      }
+      return false;
+    })();
+
+    if (confirmed) {
+      globalState.addLog('info', '✔️ card P2P confirmado como selecionado', cycle);
+    } else {
+      // Clique não registrou — tenta uma vez mais com force
+      globalState.addLog('warn', '⚠️ card P2P não confirmado — retentando clique...', cycle);
+      await p2pEl.click({ force: true }).catch(() => {});
+      await sleep(400);
+    }
+  } else if (!p2pClicked) {
     globalState.addLog('warn', '⚠️ Card P2P não encontrado — tentando continuar mesmo assim', cycle);
   }
 
@@ -896,6 +931,10 @@ async function stepFlowType(p: Page, cycle: number): Promise<void> {
 // ─── [7c] TIPO DE VEÍCULO ("Preciso de um veículo") ──────────────────────────────
 // Tela: testId "step vehicleWithSolutions" — radio com "Tenho um veículo" / "Preciso de um veículo".
 // Ação: selecionar "Preciso de um veículo" e clicar em Continuar.
+//
+// BUG 6 FIX: seletor :nth-child(2) substituído por nth-of-type-equivalent via
+// locator.nth(1) — seleciona o 2º elemento [role="radio"] entre os radios
+// do grupo, ignorando elementos intermediários no DOM.
 async function stepVehicleType(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '🚘 [7c] Tipo de veículo...', cycle);
   await waitForSpinner(p, cycle, 10_000);
@@ -909,10 +948,11 @@ async function stepVehicleType(p: Page, cycle: number): Promise<void> {
 
   await dismissCookieBanner(p, cycle);
 
-  // Seleciona "Preciso de um veículo" (segunda opção de radio)
+  // BUG 6 FIX: usa texto explícito como seletor primário; fallback usa .nth(1) no
+  // locator de [role="radio"] — não depende da posição no DOM como nth-child.
   const NEED_VEHICLE_CANDIDATES = [
-    '[role="radiogroup"] [role="radio"]:nth-child(2)',
     'label:has-text("Preciso de um veículo")',
+    '[role="radio"]:has-text("Preciso de um veículo")',
     'div:has-text("Preciso de um veículo")',
     'span:has-text("Preciso de um veículo")',
   ];
@@ -931,7 +971,28 @@ async function stepVehicleType(p: Page, cycle: number): Promise<void> {
   }
 
   if (!radioClicked) {
-    // Fallback: clica na segunda opção de radio via JS
+    // BUG 6 FIX: fallback — .nth(1) seleciona o 2º [role="radio"] por ordem de
+    // aparição no DOM, sem depender de posição entre filhos mistos.
+    const radioGroup = p.locator('[role="radiogroup"]').first();
+    const radiosInGroup = radioGroup.locator('[role="radio"]');
+    const count = await radiosInGroup.count().catch(() => 0);
+
+    if (count >= 2) {
+      try {
+        const secondRadio = radiosInGroup.nth(1);
+        await secondRadio.scrollIntoViewIfNeeded();
+        await sleep(200);
+        await secondRadio.click({ force: true });
+        globalState.addLog('info', '✔️ "Preciso de um veículo" selecionado via radioGroup.nth(1)', cycle);
+        radioClicked = true;
+      } catch {
+        // cai no JS fallback abaixo
+      }
+    }
+  }
+
+  if (!radioClicked) {
+    // JS fallback final
     const jsClicked = await p.evaluate(() => {
       const radios = Array.from(document.querySelectorAll('[role="radio"]')) as HTMLElement[];
       if (radios.length >= 2) { radios[1].click(); return true; }
@@ -1234,10 +1295,13 @@ const BRAVE_CANDIDATES = [
 ].filter(Boolean) as string[];
 
 export class MockPlaywrightFlow {
+  // BUG 2 FIX: init() usava state.proxies (campo inexistente em AppState) para
+  // comparar a chave de proxy e decidir se reiniciava o browser. Agora usa
+  // globalState.getProxyForCycle(1) que lê corretamente de state.config.proxies —
+  // mesmo caminho que _run() já seguia, eliminando a dessincronização.
   static async init(headless = true): Promise<void> {
-    const state = globalState.getState() as State & { proxies?: string[] };
-    const proxies: string[] = state.proxies ?? [];
-    const proxyKey = proxies[0] ?? '';
+    const firstProxy = globalState.getProxyForCycle(1);
+    const proxyKey = firstProxy?.server ?? '';
 
     if (browserInstance && (lastProxyConfig !== proxyKey || lastHeadless !== headless)) {
       globalState.addLog('info', '🔄 Configuração mudou — reiniciando browser...');
@@ -1305,9 +1369,7 @@ export class MockPlaywrightFlow {
     config: { emailProvider: EmailProvider; tempMailApiKey: string; otpTimeout: number; extraDelay: number; inviteCode: string; cityName?: string },
     cycle: number
   ): Promise<void> {
-    const state = globalState.getState() as State & { proxies?: string[] };
-    const proxies: string[] = state.proxies ?? [];
-    const proxyUrl = proxies.length > 0 ? proxies[cycle % proxies.length] : undefined;
+    const proxyConfig = globalState.getProxyForCycle(cycle);
 
     const ctxOpts: Parameters<Browser['newContext']>[0] = {
       userAgent: MOBILE_UA,
@@ -1322,16 +1384,9 @@ export class MockPlaywrightFlow {
       extraHTTPHeaders: MOBILE_HEADERS,
     };
 
-    if (proxyUrl) {
-      try {
-        const u = new URL(proxyUrl.startsWith('http') ? proxyUrl : `http://${proxyUrl}`);
-        ctxOpts.proxy = {
-          server: `${u.protocol}//${u.hostname}:${u.port}`,
-          username: u.username ? decodeURIComponent(u.username) : undefined,
-          password: u.password ? decodeURIComponent(u.password) : undefined,
-        };
-        globalState.addLog('info', `🌐 Proxy: ${ctxOpts.proxy.server}`, cycle);
-      } catch { ctxOpts.proxy = { server: proxyUrl }; }
+    if (proxyConfig) {
+      ctxOpts.proxy = proxyConfig;
+      globalState.addLog('info', `🌐 Proxy: ${proxyConfig.server}`, cycle);
     } else {
       globalState.addLog('info', '🌐 Sem proxy (VPN)', cycle);
     }
@@ -1350,104 +1405,52 @@ export class MockPlaywrightFlow {
     // Listeners também na aba principal
     attachPageListeners(p, cycle, 'main');
 
-    // Variáveis para salvar a conta no final
-    let email = '';
-    let telefone = '';
-    let telefoneFmt = '';
-    let nome = '';
-    let sobrenome = '';
-
     try {
-      const emailClient = createEmailClient(config.emailProvider, config.tempMailApiKey);
-      const created = await emailClient.createRandomEmail();
-      email = created.email;
-      globalState.addLog('info', `📧 Email: ${email}`, cycle);
-
-      globalState.addLog('info', `🌐 Navegando para ${cadastroUrl}...`, cycle);
+      globalState.addLog('info', `🌐 Abrindo: ${cadastroUrl}`, cycle);
       await p.goto(cadastroUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
-
-      await p.waitForSelector(
-        'input[type="email"], input[autocomplete="email"], #EMAIL, #EMAIL_ADDRESS',
-        { state: 'visible', timeout: 20_000 }
-      );
-      await sleep(600);
+      await waitForSpinner(p, cycle, 15_000);
       await dismissModals(p, cycle);
+      await dismissCookieBanner(p, cycle);
+
+      const emailClient = createEmailClient(config.emailProvider, config.tempMailApiKey);
+      const email = await emailClient.createEmail(cycle);
+      globalState.addLog('info', `📧 Email criado: ${email}`, cycle);
 
       await stepEmail(p, email, cycle);
       await stepOTP(p, emailClient, email, config.otpTimeout, cycle);
-
-      const phoneResult = await stepPhone(p, cycle);
-      telefone = phoneResult.digits;
-      telefoneFmt = phoneResult.display;
-
+      const phoneData = await stepPhone(p, cycle);
       await stepPassword(p, cycle);
-
-      const nameResult = await stepPersonalInfo(p, cycle);
-      nome = nameResult.nome;
-      sobrenome = nameResult.sobrenome;
-
+      const nameData = await stepPersonalInfo(p, cycle);
       await stepTerms(p, cycle);
-      await stepCity(p, config.inviteCode, cycle, config.cityName ?? 'São Paulo');
+      await stepCity(p, config.inviteCode, cycle, config.cityName);
       await stepFlowType(p, cycle);
       await stepVehicleType(p, cycle);
       await stepWhatsApp(p, cycle);
       await stepHubPhotoClick(p, cycle);
       await stepProfilePhoto(p, cycle);
 
-      if (config.extraDelay > 0) {
-        globalState.addLog('info', `⏳ Extra delay: ${config.extraDelay}ms`, cycle);
-        await sleep(config.extraDelay);
-      }
+      if (config.extraDelay > 0) await sleep(config.extraDelay);
 
-      // ── Salvar conta se KYC = Socure ─────────────────────────────────────────
-      const kycTop = globalState.getTopKycProvider(cycle);
-
-      if (kycTop && kycTop.provider === 'Socure') {
-        const cookies = await context.cookies().catch(() => []);
-        const saved = accountStore.save({
-          cycle,
-          provider: 'uber',
-          nome,
-          sobrenome,
-          email,
-          telefone: telefoneFmt || telefone,
-          senha: PASSWORD,
-          localizacao: config.cityName ?? 'São Paulo',
-          codigoIndicacao: config.inviteCode ?? '',
-          cookies,
-          kycProvider: kycTop.provider,
-          kycLevel:    kycTop.level,
-          kycUrl:      kycTop.url,
-        });
-        globalState.addLog(
-          'success',
-          `💾 Conta salva [Socure ${kycTop.level}] — ${email} | id: ${saved.id}`,
-          cycle
-        );
-      } else if (kycTop) {
-        globalState.addLog(
-          'warn',
-          `⚠️ KYC detectado (${kycTop.provider}) — conta NÃO salva (apenas Socure é salvo)`,
-          cycle
-        );
-      } else {
-        globalState.addLog(
-          'warn',
-          '⚠️ Nenhum KYC detectado — conta não salva',
-          cycle
-        );
-      }
-
-      globalState.addLog('success', `✅ Ciclo ${cycle} concluído`, cycle);
+      // Salva conta no store
+      const kycInfo = globalState.getTopKycProvider(cycle);
+      const payload = globalState.getPayload(cycle);
+      await accountStore.saveAccount({
+        nome:             nameData.nome,
+        sobrenome:        nameData.sobrenome,
+        email,
+        telefone:         phoneData.display,
+        senha:            PASSWORD,
+        localizacao:      config.cityName ?? 'São Paulo',
+        codigoIndicacao:  config.inviteCode,
+        kycProvider:      kycInfo?.provider,
+        kycLevel:         kycInfo?.level,
+        kycUrl:           kycInfo?.url,
+        cycle,
+      });
+      globalState.addLog('success', `💾 Conta salva: ${email}`, cycle);
     } finally {
       await context.close().catch(() => {});
-    }
-  }
-
-  static async cleanup(): Promise<void> {
-    if (browserInstance) {
-      await browserInstance.close().catch(() => {});
-      browserInstance = null;
+      globalState.clearPayload(cycle);
     }
   }
 }
