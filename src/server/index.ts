@@ -4,7 +4,7 @@ import { globalState, parseProxyString } from '../state/globalState';
 import { MockPlaywrightFlow } from '../playwright/mockFlow';
 import { diagnoseUberForm } from '../playwright/diagnose';
 import * as accountStore from '../store/accountStore';
-import { Config } from '../types';
+import { Config, CycleProfile } from '../types';
 
 const app = express();
 const PORT = 3000;
@@ -17,7 +17,7 @@ app.use(express.json());
 // ── CORS ──────────────────────────────────────────────────────
 app.use((req: Request, res: Response, next: NextFunction) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-admin-password');
   if (req.method === 'OPTIONS') { res.sendStatus(204); return; }
   next();
@@ -49,6 +49,7 @@ app.get('/api/events', (req: Request, res: Response) => {
   res.write(`event: state\ndata: ${JSON.stringify(globalState.getState())}\n\n`);
   res.write(`event: kyc\ndata: ${JSON.stringify(globalState.getKycState())}\n\n`);
   res.write(`event: cycleStatus\ndata: ${JSON.stringify(globalState.getCycleStatusMap())}\n\n`);
+  res.write(`event: profiles\ndata: ${JSON.stringify(globalState.getProfiles())}\n\n`);
 
   const keepAlive = setInterval(() => {
     try { res.write(':ping\n\n'); } catch { clearInterval(keepAlive); sseClients.delete(res); }
@@ -77,8 +78,6 @@ globalState.addKycSignal = function(provider, source, weight, cycle, url) {
   broadcastSSE('kyc', globalState.getKycState());
   broadcastSSE('state', globalState.getState());
 
-  // FEATURE 3: emite 'kycAlert' apenas quando nivel >= LIKELY (score >= 4)
-  // Evita spam de toasts para sinais fracos
   const entry = globalState.getKycByCycleEntry(cycle);
   if (entry && entry[provider]) {
     const provState = entry[provider]!;
@@ -101,6 +100,7 @@ globalState.setCycleStep = function(cycle, step, stepLabel) {
 };
 
 // ── Executor ─────────────────────────────────────────────────
+// O executor recebe a config EFETIVA do ciclo (já com perfil aplicado)
 globalState.setExecutor(async (config, cycle) => {
   await MockPlaywrightFlow.init(config.headless);
   await MockPlaywrightFlow.execute(
@@ -205,6 +205,54 @@ function validateConfig(body: Partial<Config> & { proxyServer?: string; proxyUse
   return { ok: true, data: body };
 }
 
+/**
+ * Valida e normaliza um CycleProfile vindo do frontend.
+ * Campos desconhecidos são descartados; proxies são parseados se vier como strings.
+ */
+function validateProfile(raw: Record<string, unknown>): { ok: true; data: CycleProfile } | { ok: false; error: string } {
+  const errors: string[] = [];
+  const profile: CycleProfile = {};
+
+  if ('label' in raw && raw.label !== undefined) {
+    profile.label = String(raw.label).trim() || undefined;
+  }
+  if ('inviteCode' in raw && raw.inviteCode !== undefined) {
+    profile.inviteCode = String(raw.inviteCode).trim() || undefined;
+  }
+  if ('cityName' in raw && raw.cityName !== undefined) {
+    profile.cityName = String(raw.cityName).trim() || undefined;
+  }
+  if ('emailProvider' in raw && raw.emailProvider !== undefined) {
+    const ep = String(raw.emailProvider).trim();
+    if (!VALID_EMAIL_PROVIDERS.includes(ep)) {
+      errors.push(`emailProvider deve ser: ${VALID_EMAIL_PROVIDERS.join(', ')}`);
+    } else {
+      profile.emailProvider = ep as CycleProfile['emailProvider'];
+    }
+  }
+  if ('tempMailApiKey' in raw && raw.tempMailApiKey !== undefined) {
+    profile.tempMailApiKey = String(raw.tempMailApiKey).trim() || undefined;
+  }
+  if ('tempmailcDomain' in raw && raw.tempmailcDomain !== undefined) {
+    profile.tempmailcDomain = String(raw.tempmailcDomain).trim() || undefined;
+  }
+  if ('extraDelay' in raw && raw.extraDelay !== undefined) {
+    const v = Number(raw.extraDelay);
+    if (isNaN(v) || v < 0) errors.push('extraDelay deve ser >= 0');
+    else profile.extraDelay = v;
+  }
+  if ('proxiesRaw' in raw && Array.isArray(raw.proxiesRaw)) {
+    profile.proxies = (raw.proxiesRaw as string[])
+      .map(l => parseProxyString(l))
+      .filter((p): p is NonNullable<typeof p> => p !== null);
+  } else if ('proxies' in raw && Array.isArray(raw.proxies)) {
+    profile.proxies = raw.proxies as CycleProfile['proxies'];
+  }
+
+  if (errors.length > 0) return { ok: false, error: errors.join('; ') };
+  return { ok: true, data: profile };
+}
+
 app.get('/api/status',       (_req, res) => { res.json(globalState.getState()); });
 app.get('/api/logs',         (_req, res) => { res.json(globalState.getLogs()); });
 app.get('/api/kyc',          (_req, res) => { res.json(globalState.getKycState()); });
@@ -213,6 +261,76 @@ app.get('/api/config',       requireAuth, (_req, res) => { res.json(globalState.
 app.get('/api/accounts',     requireAuth, (_req, res) => {
   res.json({ accounts: accountStore.list() });
 });
+
+// ── Profile endpoints ─────────────────────────────────────────
+
+/** GET /api/profiles — lista todos os perfis */
+app.get('/api/profiles', requireAuth, (_req, res) => {
+  res.json({ profiles: globalState.getProfiles() });
+});
+
+/** POST /api/profiles — substitui a lista inteira de perfis */
+app.post('/api/profiles', requireAuth, (req, res) => {
+  const raw = req.body;
+  if (!Array.isArray(raw?.profiles)) {
+    res.status(400).json({ ok: false, error: 'Body deve ser { profiles: CycleProfile[] }' });
+    return;
+  }
+
+  const validated: CycleProfile[] = [];
+  for (let i = 0; i < raw.profiles.length; i++) {
+    const result = validateProfile(raw.profiles[i] as Record<string, unknown>);
+    if (!result.ok) {
+      res.status(400).json({ ok: false, error: `Perfil #${i + 1}: ${result.error}` });
+      return;
+    }
+    validated.push(result.data);
+  }
+
+  globalState.setProfiles(validated);
+  broadcastSSE('profiles', globalState.getProfiles());
+  res.json({ ok: true, count: validated.length });
+});
+
+/** PUT /api/profiles/:index — atualiza um perfil específico (0-based) */
+app.put('/api/profiles/:index', requireAuth, (req, res) => {
+  const idx = parseInt(req.params.index, 10);
+  const profiles = [...globalState.getProfiles()];
+
+  if (isNaN(idx) || idx < 0 || idx >= profiles.length) {
+    res.status(404).json({ ok: false, error: 'Índice de perfil inválido' });
+    return;
+  }
+
+  const result = validateProfile(req.body as Record<string, unknown>);
+  if (!result.ok) {
+    res.status(400).json({ ok: false, error: result.error });
+    return;
+  }
+
+  profiles[idx] = { ...profiles[idx], ...result.data };
+  globalState.setProfiles(profiles);
+  broadcastSSE('profiles', globalState.getProfiles());
+  res.json({ ok: true });
+});
+
+/** DELETE /api/profiles/:index — remove um perfil (0-based) */
+app.delete('/api/profiles/:index', requireAuth, (req, res) => {
+  const idx = parseInt(req.params.index, 10);
+  const profiles = [...globalState.getProfiles()];
+
+  if (isNaN(idx) || idx < 0 || idx >= profiles.length) {
+    res.status(404).json({ ok: false, error: 'Índice de perfil inválido' });
+    return;
+  }
+
+  profiles.splice(idx, 1);
+  globalState.setProfiles(profiles);
+  broadcastSSE('profiles', globalState.getProfiles());
+  res.json({ ok: true });
+});
+
+// ─────────────────────────────────────────────────────────────
 
 app.post('/api/diagnose', requireAuth, async (req: Request, res: Response) => {
   const url: string = req.body?.url ?? CADASTRO_URL;

@@ -1,4 +1,4 @@
-import { AppState, AppStatus, Config, LogEntry, ProxyConfig } from '../types';
+import { AppState, AppStatus, Config, CycleProfile, LogEntry, ProxyConfig } from '../types';
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -31,16 +31,19 @@ function kycLevel(score: number): KycProviderState['level'] {
 }
 
 // ─── Cycle Status ─────────────────────────────────────────────────────────────
-// FEATURE 2: mapa de status por ciclo em tempo real
 
 export interface CycleStatus {
   cycle: number;
   status: 'running' | 'retrying' | 'done' | 'failed';
-  step: string;        // identificador interno da etapa, ex: 'email', 'otp', 'kyc'
-  stepLabel: string;   // texto legível para o frontend
-  startedAt: number;   // Date.now() quando o ciclo iniciou
-  updatedAt: number;   // Date.now() da última atualização de etapa
-  attempt: number;     // tentativa atual (1-based)
+  step: string;
+  stepLabel: string;
+  startedAt: number;
+  updatedAt: number;
+  attempt: number;
+  /** Índice do perfil usado (0-based), -1 se sem perfil */
+  profileIndex: number;
+  /** Label do perfil para exibição */
+  profileLabel?: string;
 }
 
 export type CycleStatusMap = Record<number, CycleStatus>;
@@ -59,13 +62,6 @@ export interface CyclePayload {
 
 // ─── Helpers de proxy ─────────────────────────────────────────────────────────
 
-/**
- * Parseia uma string de proxy nos formatos:
- *   http://user:pass@host:port          ← formato principal (DataImpulse etc.)
- *   socks5://user:pass@host:port
- *   host:port
- *   host:port:user:pass
- */
 export function parseProxyString(raw: string): ProxyConfig | null {
   raw = raw.trim();
   if (!raw) return null;
@@ -99,7 +95,6 @@ export function parseProxyString(raw: string): ProxyConfig | null {
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
 
-/** Limite máximo de entradas de log em memória */
 const MAX_LOG_ENTRIES = 2000;
 
 // ─── GlobalState ──────────────────────────────────────────────────────────────
@@ -123,6 +118,7 @@ class GlobalState {
       parallelCycles: 1,
       headless: true,
       proxies: [],
+      profiles: [],
     },
     shouldStop: false,
   };
@@ -133,14 +129,45 @@ class GlobalState {
 
   private kycByCycle: KycByCycle = {};
   private payloadByCycle: Record<number, CyclePayload> = {};
-
-  // FEATURE 2: mapa de status por ciclo
   private cycleStatusMap: CycleStatusMap = {};
 
-  // ─── Callback de broadcast (injetado pelo server) ─────────────────────────
   onStateChange?: (state: AppState) => void;
 
-  // ─── Cycle Status API (FEATURE 2) ────────────────────────────────────────
+  // ─── Profile API ─────────────────────────────────────────────────────────────
+
+  getProfiles(): CycleProfile[] {
+    return this.state.config.profiles ?? [];
+  }
+
+  setProfiles(profiles: CycleProfile[]): void {
+    this.state.config.profiles = profiles;
+    this.addLog('info', `🗂️ Perfis atualizados: ${profiles.length} perfil(is)`);
+  }
+
+  /**
+   * Retorna a config efetiva para um ciclo específico.
+   * Aplica round-robin: ciclo N usa perfil[(N-1) % profiles.length].
+   * Se não houver perfis, retorna a config base.
+   */
+  getConfigForCycle(cycle: number): Config {
+    const profiles = this.state.config.profiles;
+    if (!profiles || profiles.length === 0) return this.state.config;
+
+    const idx = (cycle - 1) % profiles.length;
+    const profile = profiles[idx]!;
+    const merged: Config = { ...this.state.config, ...profile };
+    // proxies do perfil têm prioridade; se perfil não definir proxies, usa da config base
+    merged.proxies = profile.proxies ?? this.state.config.proxies;
+    return merged;
+  }
+
+  getProfileIndexForCycle(cycle: number): number {
+    const profiles = this.state.config.profiles;
+    if (!profiles || profiles.length === 0) return -1;
+    return (cycle - 1) % profiles.length;
+  }
+
+  // ─── Cycle Status API ────────────────────────────────────────────────────────
 
   setCycleStep(cycle: number, step: string, stepLabel: string): void {
     const existing = this.cycleStatusMap[cycle];
@@ -149,11 +176,14 @@ class GlobalState {
       existing.stepLabel = stepLabel;
       existing.updatedAt = Date.now();
     }
-    // broadcast é feito pelo server via patch de addLog — aqui apenas atualiza o mapa
   }
 
   initCycleStatus(cycle: number, attempt: number): void {
     const existing = this.cycleStatusMap[cycle];
+    const profileIndex = this.getProfileIndexForCycle(cycle);
+    const profiles = this.state.config.profiles ?? [];
+    const profileLabel = profileIndex >= 0 ? (profiles[profileIndex]?.label ?? `P${profileIndex + 1}`) : undefined;
+
     this.cycleStatusMap[cycle] = {
       cycle,
       status: attempt === 1 ? 'running' : 'retrying',
@@ -162,6 +192,8 @@ class GlobalState {
       startedAt: existing?.startedAt ?? Date.now(),
       updatedAt: Date.now(),
       attempt,
+      profileIndex,
+      profileLabel,
     };
   }
 
@@ -172,7 +204,6 @@ class GlobalState {
       existing.stepLabel = success ? '✅ Concluído' : '❌ Falhou';
       existing.updatedAt = Date.now();
     }
-    // Remove após 10s para não acumular entradas antigas
     setTimeout(() => { delete this.cycleStatusMap[cycle]; }, 10_000);
   }
 
@@ -201,7 +232,9 @@ class GlobalState {
   // ─── Proxy API ───────────────────────────────────────────────────────────────
 
   getProxyForCycle(cycle: number): ProxyConfig | undefined {
-    const proxies = this.state.config.proxies;
+    // Usa proxies do perfil efetivo do ciclo (pode ser do perfil ou da config base)
+    const effectiveConfig = this.getConfigForCycle(cycle);
+    const proxies = effectiveConfig.proxies;
     if (!proxies || proxies.length === 0) return undefined;
     const idx = (cycle - 1) % proxies.length;
     const proxy = proxies[idx]!;
@@ -322,13 +355,11 @@ class GlobalState {
     }
   }
 
-  // ─── FIX: stop() agora emite broadcast via addLog em ambas as branches ───────
   stop(): void {
     if (this.state.status === 'RUNNING' || this.state.status === 'WAITING_OTP' || this.state.status === 'STOPPING') {
       this.state.shouldStop = true;
       this.state.isLoop = false;
       this.state.status = 'STOPPING';
-      // FIX: addLog aqui dispara broadcast SSE imediatamente via patch do server
       this.addLog('warn', '🛑 Parando após ciclo atual...', this.currentCycle);
     } else {
       this.state.isRunning = false;
@@ -359,12 +390,9 @@ class GlobalState {
 
   private async runLoop(loop: boolean): Promise<void> {
     do {
-      // FIX: executeBatch agora retorna número de falhas
       const failures = await this.executeBatch();
 
       if (loop && !this.state.shouldStop) {
-        // FEATURE 1: relança imediatamente um ciclo substituto para cada falha,
-        // sem esperar o cycleInterval completo
         if (failures > 0) {
           this.addLog('info', `🔁 Auto-restart: ${failures} ciclo(s) falharam — relançando imediatamente...`);
           await this.executeBatch(failures);
@@ -373,7 +401,6 @@ class GlobalState {
         if (!this.state.shouldStop) {
           const intervalSec = Math.round(this.state.config.cycleInterval / 1000);
           this.addLog('info', `⏳ Aguardando ${intervalSec}s para próximo ciclo...`);
-          // FIX: sleep granular — verifica shouldStop a cada 500ms
           const end = Date.now() + this.state.config.cycleInterval;
           while (Date.now() < end && !this.state.shouldStop) {
             await sleep(Math.min(500, end - Date.now()));
@@ -386,19 +413,20 @@ class GlobalState {
     this.state.isRunning = false;
     this.state.shouldStop = false;
     this.state.activeParallel = 0;
-    // FIX: addLog aqui garante broadcast do status STOPPED via patch do server
     this.addLog('info', '⏹️ Processo finalizado');
   }
 
-  // FIX: executeBatch agora aceita count opcional e retorna número de falhas
   private async executeBatch(count?: number): Promise<number> {
     const n = count ?? Math.max(1, this.state.config.parallelCycles || 1);
     this.state.isRunning = true;
     this.state.status = 'RUNNING';
-    this.addLog('info', `⚡ Iniciando lote de ${n} ciclo(s) em paralelo...`);
 
-    // FIX: cyclesTotal incrementa AQUI, sincronamente, antes das promises
-    // Garante que o contador no frontend está correto desde o início do batch
+    const profiles = this.state.config.profiles ?? [];
+    const profilesSummary = profiles.length > 0
+      ? ` (${profiles.length} perfil(is) em rotação)`
+      : '';
+    this.addLog('info', `⚡ Iniciando lote de ${n} ciclo(s) em paralelo...${profilesSummary}`);
+
     this.state.cyclesTotal += n;
 
     const promises = Array.from({ length: n }, () => {
@@ -415,7 +443,6 @@ class GlobalState {
     });
 
     const results = await Promise.allSettled(promises);
-    // Conta falhas reais (rejected ou resolved com true)
     const failures = results.filter(r =>
       r.status === 'rejected' || (r.status === 'fulfilled' && r.value === true)
     ).length;
@@ -427,6 +454,17 @@ class GlobalState {
     const BACKOFF = [0, 5000, 15000];
     let lastError = 'Erro desconhecido';
 
+    // Log do perfil usado por este ciclo
+    const profileIndex = this.getProfileIndexForCycle(cycle);
+    const profiles = this.state.config.profiles ?? [];
+    if (profileIndex >= 0) {
+      const p = profiles[profileIndex]!;
+      const label = p.label ?? `P${profileIndex + 1}`;
+      const city  = p.cityName ? ` | cidade: ${p.cityName}` : '';
+      const code  = p.inviteCode ? ` | código: ${p.inviteCode}` : '';
+      this.addLog('info', `🗂️ Ciclo #${cycle} → Perfil "${label}"${city}${code}`, cycle);
+    }
+
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
       if (this.state.shouldStop) {
         this.addLog('info', `🛑 Ciclo #${cycle} interrompido (shouldStop)`, cycle);
@@ -434,10 +472,8 @@ class GlobalState {
         return;
       }
 
-      // FIX: clearKycCycle em cada tentativa — evita acúmulo de sinais de retry
       if (attempt > 1) this.clearKycCycle(cycle);
 
-      // FEATURE 2: inicializa status do ciclo
       this.initCycleStatus(cycle, attempt);
 
       const backoff = BACKOFF[attempt - 1] ?? 15000;
@@ -462,9 +498,11 @@ class GlobalState {
         }
 
         if (!this.executor) throw new Error('Nenhum executor registrado.');
-        await this.executor(this.state.config, cycle);
 
-        // FIX: cyclesTotal já foi incrementado no executeBatch — não incrementa aqui
+        // Passa a config efetiva do ciclo (base + perfil round-robin)
+        const effectiveConfig = this.getConfigForCycle(cycle);
+        await this.executor(effectiveConfig, cycle);
+
         this.state.cyclesCompleted += 1;
         this.finishCycleStatus(cycle, true);
         this.addLog('success', `✅ Ciclo #${cycle} concluído! Total: ${this.state.cyclesCompleted}`, cycle);

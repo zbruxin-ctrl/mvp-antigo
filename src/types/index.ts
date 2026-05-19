@@ -43,6 +43,29 @@ export interface Config {
   speedMode?: boolean;
   /** Lista de proxies — cada ciclo usa um em rotação round-robin */
   proxies?: ProxyConfig[];
+  /**
+   * Perfis de ciclo (Opção A — round-robin por índice).
+   * Cada perfil sobrescreve parcialmente a config base.
+   * Ciclo 1 → perfil[0], ciclo 2 → perfil[1], ..., ciclo N+1 → perfil[0] novamente.
+   * Se vazio ou não definido, todos os ciclos usam a config base.
+   */
+  profiles?: CycleProfile[];
+}
+
+/**
+ * Subconjunto de Config que pode ser sobrescrito por perfil.
+ * Não inclui campos estruturais (cadastroUrl, headless, parallelCycles, etc.).
+ */
+export interface CycleProfile {
+  /** Label para exibição no frontend, ex: 'Itajubá', 'Recife SP' */
+  label?: string;
+  inviteCode?: string;
+  cityName?: string;
+  emailProvider?: EmailProvider;
+  tempMailApiKey?: string;
+  tempmailcDomain?: string;
+  extraDelay?: number;
+  proxies?: ProxyConfig[];
 }
 
 export interface AppState {
