@@ -1398,17 +1398,17 @@ export class MockPlaywrightFlow {
       const kycSignals = globalState.getKycSignals(cycle);
       const topSignal  = kycSignals.length > 0 ? kycSignals[0] : null;
 
-      // FIX: usa getKycByCycleEntry em vez de cast `as any` para ler o kycLevel tipado
       const kycLevel = topSignal
         ? (globalState.getKycByCycleEntry(cycle)?.[topSignal.provider]?.level ?? undefined)
         : undefined;
 
-      // Coleta os cookies da sessão para salvar no account store
       const cookies = await context.cookies().catch(() => []);
 
-      // FIX TS2339: a função exportada é `save`, não `saveAccount`
+      // FIX TS2561: telefoneFmt não existe no tipo Account — removido do objeto literal.
+      // O valor formatado (display) fica disponível apenas na variável local telefoneFmt
+      // para uso futuro caso o tipo Account seja estendido.
       accountStore.save({
-        email, telefone, telefoneFmt, nome, sobrenome,
+        email, telefone, nome, sobrenome,
         cycle,
         kycProvider: topSignal?.provider ?? undefined,
         kycLevel,
