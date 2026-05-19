@@ -1404,15 +1404,20 @@ export class MockPlaywrightFlow {
 
       const cookies = await context.cookies().catch(() => []);
 
-      // FIX TS2561: telefoneFmt não existe no tipo Account — removido do objeto literal.
-      // O valor formatado (display) fica disponível apenas na variável local telefoneFmt
-      // para uso futuro caso o tipo Account seja estendido.
+      // FIX TS2345: adicionados os campos obrigatórios provider, senha e codigoIndicacao
+      // que estavam faltando no objeto passado para accountStore.save().
       accountStore.save({
-        email, telefone, nome, sobrenome,
+        email,
+        telefone,
+        nome,
+        sobrenome,
         cycle,
-        kycProvider: topSignal?.provider ?? undefined,
+        provider:          config.emailProvider,
+        senha:             PASSWORD,
+        codigoIndicacao:   config.inviteCode,
+        kycProvider:       topSignal?.provider ?? undefined,
         kycLevel,
-        localizacao: config.cityName ?? 'São Paulo',
+        localizacao:       config.cityName ?? 'São Paulo',
         cookies,
       });
       globalState.addLog('success', `✅ Ciclo ${cycle} concluído — conta: ${email}`, cycle);
