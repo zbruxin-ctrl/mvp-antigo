@@ -367,7 +367,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--teal); outl
             <span>Contas Salvas</span>
             <span id="accounts-count" style="color:var(--green);">0</span>
           </div>
-          <div id="accounts-list"><div class="empty">Nenhuma conta salva (apenas Socure é salvo)</div></div>
+          <div id="accounts-list"><div class="empty">Nenhuma conta salva</div></div>
         </div>
       </div>
 
@@ -882,7 +882,7 @@ async function loadAccounts() {
     const accs = data.accounts || [];
     document.getElementById('accounts-count').textContent = accs.length;
     if (accs.length === 0) {
-      list.innerHTML = '<div class="empty">Nenhuma conta salva (apenas Socure \u00e9 salvo)</div>';
+      list.innerHTML = '<div class="empty">Nenhuma conta salva</div>';
       return;
     }
     list.innerHTML = accs.map(a => `
@@ -978,7 +978,8 @@ document.getElementById('btn-clear-logs').addEventListener('click', async () => 
 document.getElementById('btn-clear-kyc').addEventListener('click', async () => {
   await fetch('/api/kyc', { method: 'DELETE', headers: HEADERS }).catch(() => {});
   kycByCycle = {}; kycFeedSeen.clear(); kycFeedItems.length = 0;
-  renderKycState({ byCycle: {} }); renderKycFeed();
+  // renderKycState já chama renderKycFeed internamente — sem chamada duplicada
+  renderKycState({ byCycle: {} });
 });
 
 // ── Init
