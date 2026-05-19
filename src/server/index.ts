@@ -204,6 +204,9 @@ app.delete('/api/logs', requireAuth, (_req, res) => {
   globalState.clearLogs();
   res.json({ ok: true });
 });
+
+// FIX Parte 1: DELETE /api/kyc agora exige autenticação (requireAuth adicionado).
+// Antes qualquer cliente sem senha podia limpar o estado KYC.
 app.delete('/api/kyc', requireAuth, (_req, res) => {
   globalState.clearKycState();
   res.json({ ok: true });
@@ -267,6 +270,9 @@ app.listen(PORT, () => {
   console.log(`📁 Frontend dir: ${FRONTEND_DIR}`);
 });
 
+// FIX Parte 1: cleanup() era chamado no gracefulShutdown mas não existia em MockPlaywrightFlow →
+// TypeError em runtime ao receber SIGINT/SIGTERM. Agora delega para o método estático adicionado
+// em mockFlow.ts (Parte 2).
 async function gracefulShutdown(signal: string) {
   console.log(`\n🛑 Recebido ${signal} — encerrando graciosamente...`);
   await MockPlaywrightFlow.cleanup();
