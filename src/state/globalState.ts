@@ -231,19 +231,17 @@ class GlobalState {
 
   // ─── Proxy API ───────────────────────────────────────────────────────────────
 
+  /**
+   * Retorna o proxy efetivo para o ciclo, sem emitir logs.
+   * O caller (mockFlow._run) é responsável por logar o proxy escolhido,
+   * evitando poluição nos logs toda vez que init() chamar este método.
+   */
   getProxyForCycle(cycle: number): ProxyConfig | undefined {
-    // Usa proxies do perfil efetivo do ciclo (pode ser do perfil ou da config base)
     const effectiveConfig = this.getConfigForCycle(cycle);
     const proxies = effectiveConfig.proxies;
     if (!proxies || proxies.length === 0) return undefined;
     const idx = (cycle - 1) % proxies.length;
-    const proxy = proxies[idx]!;
-    this.addLog(
-      'info',
-      `🌐 Proxy #${idx + 1}/${proxies.length}: ${proxy.server}${proxy.username ? ` (auth: ${proxy.username})` : ''}`,
-      cycle
-    );
-    return proxy;
+    return proxies[idx]!;
   }
 
   // ─── KYC API ─────────────────────────────────────────────────────────────────
@@ -285,6 +283,7 @@ class GlobalState {
   getKycSignals(cycle: number): KycSignal[] {
     const cycleMap = this.kycByCycle[cycle];
     if (!cycleMap) return [];
+    // Retorna sinais ordenados pelo score do provider (maior primeiro)
     const sorted = Object.values(cycleMap).sort((a, b) => b.score - a.score);
     const result: KycSignal[] = [];
     for (const state of sorted) result.push(...state.signals);
