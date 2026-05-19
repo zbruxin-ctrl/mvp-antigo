@@ -156,8 +156,8 @@ class GlobalState {
     const idx = (cycle - 1) % profiles.length;
     const profile = profiles[idx]!;
     const merged: Config = { ...this.state.config, ...profile };
-    // proxies do perfil têm prioridade; se perfil não definir proxies, usa da config base
-    merged.proxies = profile.proxies ?? this.state.config.proxies;
+    // [FIX ponto 2] proxies do perfil têm prioridade; ?? [] garante nunca undefined
+    merged.proxies = profile.proxies ?? this.state.config.proxies ?? [];
     return merged;
   }
 
@@ -238,8 +238,9 @@ class GlobalState {
    */
   getProxyForCycle(cycle: number): ProxyConfig | undefined {
     const effectiveConfig = this.getConfigForCycle(cycle);
-    const proxies = effectiveConfig.proxies;
-    if (!proxies || proxies.length === 0) return undefined;
+    // [FIX ponto 3] ?? [] garante que proxies nunca cause crash ao acessar .length
+    const proxies = effectiveConfig.proxies ?? [];
+    if (proxies.length === 0) return undefined;
     const idx = (cycle - 1) % proxies.length;
     return proxies[idx]!;
   }
@@ -343,7 +344,13 @@ class GlobalState {
   }
 
   updateConfig(config: Partial<Config>): void {
-    this.state.config = { ...this.state.config, ...config };
+    // [FIX ponto 1] proxies e profiles nunca ficam undefined após um patch parcial
+    this.state.config = {
+      ...this.state.config,
+      ...config,
+      proxies:  config.proxies  ?? this.state.config.proxies  ?? [],
+      profiles: config.profiles ?? this.state.config.profiles ?? [],
+    };
     this.addLog('info', 'Configuração atualizada');
   }
 
