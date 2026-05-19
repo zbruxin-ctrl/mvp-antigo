@@ -4,325 +4,716 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>MVP Bot Painel</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300..700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
+/* ── Design Tokens ─────────────────────────────────────────────────────── */
 :root {
-  --bg: #0f0f0f; --surface: #181818; --surface2: #222; --border: #2e2e2e;
-  --text: #e0e0e0; --muted: #888; --faint: #555;
-  --green: #4ade80; --yellow: #facc15; --red: #f87171;
-  --blue: #60a5fa; --purple: #c084fc; --orange: #fb923c;
-  --teal: #2dd4bf;
-  --radius: 8px;
+  /* Surfaces — cinza azulado, não cinza puro */
+  --bg:          #0d0f14;
+  --surface:     #131720;
+  --surface2:    #1a1f2e;
+  --surface3:    #212840;
+  --border:      rgba(255,255,255,0.07);
+  --border-soft: rgba(255,255,255,0.04);
+
+  /* Text */
+  --text:        #e2e8f4;
+  --muted:       #7a85a3;
+  --faint:       #3d4560;
+
+  /* Accent */
+  --teal:        #38bdf8;
+  --teal-dim:    rgba(56,189,248,0.12);
+  --teal-glow:   rgba(56,189,248,0.25);
+
+  /* Semantic */
+  --green:       #4ade80;
+  --green-dim:   rgba(74,222,128,0.12);
+  --yellow:      #fbbf24;
+  --yellow-dim:  rgba(251,191,36,0.12);
+  --red:         #f87171;
+  --red-dim:     rgba(248,113,113,0.12);
+  --blue:        #818cf8;
+  --blue-dim:    rgba(129,140,248,0.12);
+  --purple:      #c084fc;
+  --purple-dim:  rgba(192,132,252,0.12);
+  --orange:      #fb923c;
+  --orange-dim:  rgba(251,146,60,0.12);
+
+  /* Layout */
+  --sidebar-w:   220px;
+  --topbar-h:    52px;
+  --radius:      10px;
+  --radius-sm:   6px;
+  --radius-lg:   14px;
+  --radius-pill: 999px;
+
+  /* Transitions */
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* Fonts */
+  --font-body: 'Inter', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Consolas', monospace;
 }
+
+/* ── Reset ─────────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-html, body { height: 100%; font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px;
-  background: var(--bg); color: var(--text); }
-a { color: var(--blue); }
+html, body {
+  height: 100%;
+  font-family: var(--font-body);
+  font-size: 13px;
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--teal); }
+button { cursor: pointer; font-family: inherit; }
 
-.app { display: grid; grid-template-rows: 48px 1fr; height: 100vh; overflow: hidden; }
+/* ── Scrollbar ─────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--surface3); border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: var(--faint); }
+
+/* ── App shell ─────────────────────────────────────────────────────────── */
+.app {
+  display: grid;
+  grid-template-rows: var(--topbar-h) 1fr;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ── Topbar ────────────────────────────────────────────────────────────── */
 .topbar {
-  display: flex; align-items: center; gap: 12px;
-  padding: 0 16px; background: var(--surface); border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 20px;
+  background: linear-gradient(90deg, #0f1219 0%, #131720 100%);
+  border-bottom: 1px solid var(--border);
+  backdrop-filter: blur(12px);
+  z-index: 10;
 }
-.topbar h1 { font-size: 15px; font-weight: 600; color: var(--teal); }
+.topbar-logo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.topbar-logo svg { flex-shrink: 0; }
+.topbar h1 {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+.topbar h1 span { color: var(--teal); }
 .topbar .spacer { flex: 1; }
+
 .status-badge {
-  padding: 3px 10px; border-radius: 20px; font-size: 12px; font-weight: 600;
-  letter-spacing: .04em; background: var(--surface2); color: var(--muted);
+  padding: 4px 12px;
+  border-radius: var(--radius-pill);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .05em;
+  background: var(--surface2);
+  color: var(--muted);
+  border: 1px solid var(--border);
+  text-transform: uppercase;
 }
-.status-badge.running  { background: #14532d; color: var(--green); }
-.status-badge.stopping { background: #78350f; color: var(--yellow); }
-.status-badge.error    { background: #450a0a; color: var(--red); }
+.status-badge.running  { background: var(--green-dim);  color: var(--green);  border-color: rgba(74,222,128,0.2); }
+.status-badge.stopping { background: var(--yellow-dim); color: var(--yellow); border-color: rgba(251,191,36,0.2); }
+.status-badge.error    { background: var(--red-dim);    color: var(--red);    border-color: rgba(248,113,113,0.2); }
+
 .sse-dot {
-  width: 8px; height: 8px; border-radius: 50%;
-  background: var(--faint); flex-shrink: 0;
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--faint);
+  flex-shrink: 0;
+  transition: background 0.3s, box-shadow 0.3s;
 }
-.sse-dot.connected { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.sse-dot.connected {
+  background: var(--green);
+  box-shadow: 0 0 8px var(--green);
+}
 
-.main { display: grid; grid-template-columns: 260px 1fr; height: 100%; overflow: hidden; }
+/* ── Main layout ───────────────────────────────────────────────────────── */
+.main {
+  display: grid;
+  grid-template-columns: var(--sidebar-w) 1fr;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* ── Sidebar ───────────────────────────────────────────────────────────── */
 .sidebar {
-  background: var(--surface); border-right: 1px solid var(--border);
-  display: flex; flex-direction: column; overflow-y: auto;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
-.content { overflow-y: auto; padding: 16px; }
 
-/* Tabs */
-.tab-nav { display: flex; gap: 2px; padding: 8px; flex-wrap: wrap; }
+/* Tab nav — vertical icon+label */
+.tab-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 8px;
+  border-bottom: 1px solid var(--border);
+}
 .tab-btn {
-  padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 500;
-  cursor: pointer; background: transparent; color: var(--muted); border: none;
-  transition: background .15s, color .15s;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  background: transparent;
+  color: var(--muted);
+  border: none;
+  transition: background 180ms var(--ease), color 180ms var(--ease);
+  text-align: left;
+  width: 100%;
+}
+.tab-btn .tab-icon {
+  width: 16px; height: 16px;
+  flex-shrink: 0;
+  opacity: 0.65;
+  transition: opacity 180ms;
 }
 .tab-btn:hover { background: var(--surface2); color: var(--text); }
-.tab-btn.active { background: var(--surface2); color: var(--teal); }
+.tab-btn:hover .tab-icon { opacity: 1; }
+.tab-btn.active {
+  background: var(--teal-dim);
+  color: var(--teal);
+}
+.tab-btn.active .tab-icon { opacity: 1; filter: drop-shadow(0 0 4px var(--teal-glow)); }
+
 .tab-panel { display: none; }
 .tab-panel.active { display: block; }
 
-/* Cards */
-.card {
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--radius); padding: 14px; margin-bottom: 12px;
+/* KYC live feed in sidebar */
+.feed-header {
+  padding: 10px 12px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--faint);
+  text-transform: uppercase;
+  letter-spacing: .1em;
 }
-.card-title { font-size: 11px; font-weight: 700; text-transform: uppercase;
-  letter-spacing: .08em; color: var(--muted); margin-bottom: 10px; }
-
-/* Stats */
-.stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 12px; }
-.stat-box {
-  background: var(--surface2); border: 1px solid var(--border);
-  border-radius: var(--radius); padding: 10px; text-align: center;
+.kyc-feed {
+  padding: 6px 8px;
+  overflow-y: auto;
+  flex: 1;
 }
-.stat-box .val { font-size: 22px; font-weight: 700; line-height: 1.1; }
-.stat-box .lbl { font-size: 10px; color: var(--muted); margin-top: 2px; text-transform: uppercase; }
-.stat-box.green .val { color: var(--green); }
-.stat-box.yellow .val { color: var(--yellow); }
-.stat-box.blue .val { color: var(--blue); }
-
-/* Botoes */
-.btn {
-  padding: 7px 16px; border-radius: 6px; font-size: 13px; font-weight: 500;
-  cursor: pointer; border: none; transition: opacity .15s, transform .1s;
-  display: inline-flex; align-items: center; gap: 6px;
-}
-.btn:active { transform: scale(.97); }
-.btn-green  { background: #16a34a; color: #fff; }
-.btn-yellow { background: #ca8a04; color: #fff; }
-.btn-red    { background: #dc2626; color: #fff; }
-.btn-ghost  { background: var(--surface2); color: var(--muted); border: 1px solid var(--border); }
-.btn:disabled { opacity: .45; cursor: not-allowed; }
-.btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
-
-/* Logs */
-#log-container {
-  background: #0a0a0a; border: 1px solid var(--border);
-  border-radius: var(--radius); height: 320px; overflow-y: auto;
-  padding: 8px; font-family: 'Consolas', 'Courier New', monospace; font-size: 12px;
-  display: flex; flex-direction: column-reverse;
-}
-.log-entry { padding: 2px 0; border-bottom: 1px solid #151515; display: flex; gap: 8px; }
-.log-entry .ts { color: var(--faint); white-space: nowrap; flex-shrink: 0; }
-.log-entry .msg { word-break: break-all; }
-.log-entry.success .msg { color: var(--green); }
-.log-entry.error   .msg { color: var(--red); }
-.log-entry.warn    .msg { color: var(--yellow); }
-.log-entry.kyc     .msg { color: var(--purple); font-weight: 600; }
-.log-entry.info    .msg { color: var(--text); }
-.cycle-tag { font-size: 10px; color: var(--teal); background: #0f2a2a;
-  padding: 0 5px; border-radius: 4px; flex-shrink: 0; }
-
-/* Cycle Status Panel */
-.cycle-status-panel { display: flex; flex-direction: column; gap: 5px; margin-bottom: 4px; }
-.cycle-status-item {
-  display: grid;
-  grid-template-columns: 12px 44px 1fr auto auto auto;
-  align-items: center; gap: 8px;
-  background: var(--surface2); border: 1px solid var(--border);
-  border-radius: var(--radius); padding: 7px 10px; font-size: 12px;
-}
-.cycle-status-item .cs-dot {
-  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--faint);
-}
-.cycle-status-item.cs-running  .cs-dot { background: var(--teal);   box-shadow: 0 0 5px var(--teal);   animation: pulseDot 1.2s infinite; }
-.cycle-status-item.cs-retrying .cs-dot { background: var(--yellow); box-shadow: 0 0 5px var(--yellow); animation: pulseDot 0.8s infinite; }
-.cycle-status-item.cs-done     .cs-dot { background: var(--green); }
-.cycle-status-item.cs-failed   .cs-dot { background: var(--red); }
-@keyframes pulseDot { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
-.cycle-status-item .cs-num { font-weight: 700; color: var(--teal); font-size: 12px; }
-.cycle-status-item .cs-step { flex: 1; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cycle-status-item .cs-attempt {
-  font-size: 10px; padding: 1px 6px; border-radius: 8px;
-  background: #3b2800; color: var(--yellow); font-weight: 600; display: none;
-}
-.cycle-status-item.cs-retrying .cs-attempt { display: inline-block; }
-.cycle-status-item .cs-elapsed { color: var(--faint); font-size: 11px; white-space: nowrap; }
-.cs-empty { font-size: 12px; color: var(--faint); padding: 6px 0; }
-/* Badge de perfil no painel de ciclos */
-.cs-profile-badge {
-  font-size: 9px; padding: 1px 6px; border-radius: 8px;
-  background: #0d2040; color: var(--blue); font-weight: 700;
-  white-space: nowrap; flex-shrink: 0;
-}
-
-/* KYC Alert Toast */
-#kyc-alert-toast {
-  position: fixed; bottom: 24px; right: 24px; z-index: 9999;
-  display: flex; flex-direction: column; gap: 8px; pointer-events: none;
-}
-.kyc-toast {
-  background: #1a0a2e; border: 1px solid var(--purple);
-  border-radius: var(--radius); padding: 12px 16px;
-  min-width: 260px; max-width: 360px;
-  box-shadow: 0 4px 24px rgba(192,132,252,0.25);
-  animation: toastIn .25s ease forwards; pointer-events: auto;
-}
-.kyc-toast.hiding { animation: toastOut .4s ease forwards; }
-.kyc-toast .kt-header { font-size: 13px; font-weight: 700; color: var(--purple); margin-bottom: 4px; }
-.kyc-toast .kt-body { font-size: 12px; color: var(--text); }
-.kyc-toast .kt-level { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 10px; font-weight: 700; margin-left: 6px; }
-.kyc-toast .kt-level.CONFIRMED { background: #14532d; color: var(--green); }
-.kyc-toast .kt-level.LIKELY    { background: #713f12; color: var(--yellow); }
-.kyc-toast .kt-level.WEAK      { background: #1e1b4b; color: var(--blue); }
-@keyframes toastIn  { from { opacity:0; transform: translateX(32px); } to { opacity:1; transform: translateX(0); } }
-@keyframes toastOut { from { opacity:1; transform: translateX(0); } to { opacity:0; transform: translateX(32px); } }
-
-/* KYC Detector */
-.kyc-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-.kyc-table th { text-align: left; padding: 6px 8px; color: var(--muted);
-  border-bottom: 1px solid var(--border); font-size: 10px; text-transform: uppercase; }
-.kyc-table td { padding: 6px 8px; border-bottom: 1px solid #1a1a1a; }
-.kyc-table tr:hover td { background: var(--surface2); }
-.level-tag { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 10px; font-weight: 700; }
-.level-tag.CONFIRMED { background: #14532d; color: var(--green); }
-.level-tag.LIKELY    { background: #713f12; color: var(--yellow); }
-.level-tag.WEAK      { background: #1e1b4b; color: var(--blue); }
-.kyc-total { display: flex; gap: 16px; padding: 10px 0; flex-wrap: wrap; }
-.kyc-counter {
-  display: flex; flex-direction: column; align-items: center;
-  background: var(--surface2); border: 1px solid var(--border);
-  border-radius: var(--radius); padding: 10px 18px; min-width: 90px;
-}
-.kyc-counter .count { font-size: 28px; font-weight: 700; }
-.kyc-counter .name  { font-size: 10px; color: var(--muted); text-transform: uppercase; margin-top: 2px; }
-.kyc-counter.socure .count { color: var(--green); }
-.kyc-counter.veriff .count { color: var(--blue); }
-.kyc-counter.onfido .count { color: var(--orange); }
-.kyc-counter.jumio  .count { color: var(--purple); }
-.kyc-counter.other  .count { color: var(--muted); }
-
-/* Accounts */
-.account-item {
-  background: var(--surface2); border: 1px solid var(--border);
-  border-radius: var(--radius); padding: 10px 12px; margin-bottom: 8px;
-  display: flex; justify-content: space-between; align-items: flex-start; gap: 10px;
-}
-.account-meta { font-size: 11px; color: var(--muted); margin-top: 3px; }
-.account-kyc { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 10px; }
-.account-kyc.socure { background: #14532d; color: var(--green); }
-.account-kyc.veriff { background: #1e3a5f; color: var(--blue); }
-.account-kyc.onfido { background: #431d04; color: var(--orange); }
-.account-kyc.jumio  { background: #2e1a4a; color: var(--purple); }
-
-/* Form */
-.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.form-full { grid-column: 1 / -1; }
-label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 3px; }
-input, select, textarea {
-  width: 100%; padding: 6px 8px; background: var(--surface2);
-  border: 1px solid var(--border); border-radius: 5px; color: var(--text); font-size: 13px;
-}
-input:focus, select:focus, textarea:focus { outline: 2px solid var(--teal); outline-offset: 1px; }
-.parallel-warn {
-  display: none; margin-top: 5px; padding: 5px 8px;
-  border-radius: 5px; background: #3b2800; border: 1px solid #78450a;
-  color: var(--yellow); font-size: 11px; line-height: 1.4;
-}
-.parallel-warn.visible { display: block; }
-
-/* Sidebar KYC live feed */
-.kyc-feed { padding: 8px; overflow-y: auto; flex: 1; }
 .kyc-feed-item {
-  padding: 5px 6px; border-radius: 5px; margin-bottom: 4px;
-  background: var(--surface2); border-left: 3px solid var(--border); font-size: 11px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  margin-bottom: 3px;
+  background: var(--surface2);
+  border-left: 2px solid var(--border);
+  font-size: 11px;
+  transition: background 150ms;
 }
+.kyc-feed-item:hover { background: var(--surface3); }
 .kyc-feed-item.socure { border-left-color: var(--green); }
 .kyc-feed-item.veriff { border-left-color: var(--blue); }
 .kyc-feed-item.onfido { border-left-color: var(--orange); }
 .kyc-feed-item.jumio  { border-left-color: var(--purple); }
 .kyc-feed-item.other  { border-left-color: var(--faint); }
-.kyc-feed-item .provider { font-weight: 700; }
+.kyc-feed-item .provider { font-weight: 600; font-size: 11px; }
 .kyc-feed-item .ktime { color: var(--faint); font-size: 10px; }
 .kyc-feed-item .feed-level {
-  display: inline-block; padding: 0 5px; border-radius: 8px;
-  font-size: 9px; font-weight: 700; margin-left: 4px; vertical-align: middle;
+  display: inline-block;
+  padding: 1px 5px;
+  border-radius: var(--radius-pill);
+  font-size: 9px;
+  font-weight: 700;
+  margin-left: 4px;
+  vertical-align: middle;
+  letter-spacing: .03em;
 }
-.kyc-feed-item .feed-level.CONFIRMED { background: #14532d; color: var(--green); }
-.kyc-feed-item .feed-level.LIKELY    { background: #713f12; color: var(--yellow); }
-.kyc-feed-item .feed-level.WEAK      { background: #1e1b4b; color: var(--blue); }
+.kyc-feed-item .feed-level.CONFIRMED { background: var(--green-dim);  color: var(--green); }
+.kyc-feed-item .feed-level.LIKELY    { background: var(--yellow-dim); color: var(--yellow); }
+.kyc-feed-item .feed-level.WEAK      { background: var(--blue-dim);   color: var(--blue); }
 
-/* Profiles tab */
+/* ── Content area ──────────────────────────────────────────────────────── */
+.content { overflow-y: auto; padding: 20px; }
+
+/* ── Cards ─────────────────────────────────────────────────────────────── */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  margin-bottom: 14px;
+}
+.card-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .09em;
+  color: var(--muted);
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* ── Stats grid ────────────────────────────────────────────────────────── */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.stat-box {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 14px 16px;
+  position: relative;
+  overflow: hidden;
+  animation: fadeUp 0.35s var(--ease) both;
+}
+.stat-box::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  opacity: 0.6;
+}
+.stat-box.green::before { background: var(--green); }
+.stat-box.yellow::before { background: var(--yellow); }
+.stat-box.blue::before { background: var(--blue); }
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.stat-box .val {
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.stat-box .lbl {
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 3px;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+}
+.stat-box.green .val  { color: var(--green); }
+.stat-box.yellow .val { color: var(--yellow); }
+.stat-box.blue .val   { color: var(--blue); }
+
+/* ── Buttons ───────────────────────────────────────────────────────────── */
+.btn {
+  padding: 7px 16px;
+  border-radius: var(--radius-pill);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  transition: opacity 150ms, transform 100ms, box-shadow 150ms;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  letter-spacing: .01em;
+}
+.btn:hover { opacity: 0.88; }
+.btn:active { transform: scale(.96); }
+.btn:disabled { opacity: .35; cursor: not-allowed; }
+
+.btn-green {
+  background: var(--green);
+  color: #0a1a10;
+  box-shadow: 0 0 16px rgba(74,222,128,0.25);
+}
+.btn-green:hover { box-shadow: 0 0 22px rgba(74,222,128,0.4); }
+
+.btn-yellow {
+  background: var(--yellow);
+  color: #1a1000;
+  box-shadow: 0 0 16px rgba(251,191,36,0.2);
+}
+
+.btn-red {
+  background: var(--red);
+  color: #1a0000;
+  box-shadow: 0 0 16px rgba(248,113,113,0.2);
+}
+
+.btn-ghost {
+  background: var(--surface2);
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+.btn-ghost:hover { color: var(--text); background: var(--surface3); border-color: var(--faint); }
+
+.btn-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+/* ── Log container ─────────────────────────────────────────────────────── */
+#log-container {
+  background: #080b10;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  height: 320px;
+  overflow-y: auto;
+  padding: 10px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  display: flex;
+  flex-direction: column-reverse;
+  line-height: 1.5;
+}
+.log-entry {
+  padding: 2px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+  display: flex;
+  gap: 8px;
+}
+.log-entry .ts   { color: var(--faint); white-space: nowrap; flex-shrink: 0; font-size: 10.5px; }
+.log-entry .msg  { word-break: break-all; }
+.log-entry.success .msg { color: var(--green); }
+.log-entry.error   .msg { color: var(--red); }
+.log-entry.warn    .msg { color: var(--yellow); }
+.log-entry.kyc     .msg { color: var(--purple); font-weight: 600; }
+.log-entry.info    .msg { color: var(--text); }
+.cycle-tag {
+  font-size: 10px;
+  color: var(--teal);
+  background: var(--teal-dim);
+  padding: 0 6px;
+  border-radius: var(--radius-pill);
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin-top: 1px;
+  font-family: var(--font-mono);
+  letter-spacing: .02em;
+}
+
+/* ── Cycle Status Panel ────────────────────────────────────────────────── */
+.cycle-status-panel { display: flex; flex-direction: column; gap: 4px; }
+.cycle-status-item {
+  display: grid;
+  grid-template-columns: 8px 40px 1fr auto auto auto;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  font-size: 12px;
+  transition: border-color 200ms;
+}
+.cycle-status-item.cs-running  { border-color: rgba(56,189,248,0.2); }
+.cycle-status-item.cs-retrying { border-color: rgba(251,191,36,0.2); }
+.cycle-status-item.cs-done     { border-color: rgba(74,222,128,0.15); }
+.cycle-status-item.cs-failed   { border-color: rgba(248,113,113,0.15); }
+
+.cycle-status-item .cs-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--faint);
+}
+.cycle-status-item.cs-running  .cs-dot { background: var(--teal);   box-shadow: 0 0 6px var(--teal);   animation: pulseDot 1.4s infinite; }
+.cycle-status-item.cs-retrying .cs-dot { background: var(--yellow); box-shadow: 0 0 6px var(--yellow); animation: pulseDot 0.9s infinite; }
+.cycle-status-item.cs-done     .cs-dot { background: var(--green); }
+.cycle-status-item.cs-failed   .cs-dot { background: var(--red); }
+@keyframes pulseDot { 0%,100% { opacity: 1; } 50% { opacity: .2; } }
+
+.cycle-status-item .cs-num     { font-weight: 700; color: var(--teal); font-size: 12px; font-variant-numeric: tabular-nums; }
+.cycle-status-item .cs-step    { flex: 1; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; }
+.cycle-status-item .cs-attempt {
+  font-size: 10px; padding: 1px 7px; border-radius: var(--radius-pill);
+  background: var(--yellow-dim); color: var(--yellow); font-weight: 600; display: none;
+}
+.cycle-status-item.cs-retrying .cs-attempt { display: inline-block; }
+.cycle-status-item .cs-elapsed { color: var(--faint); font-size: 10.5px; white-space: nowrap; font-family: var(--font-mono); }
+.cs-empty { font-size: 12px; color: var(--faint); padding: 8px 0; }
+
+.cs-profile-badge {
+  font-size: 9px; padding: 2px 7px; border-radius: var(--radius-pill);
+  background: var(--blue-dim); color: var(--blue); font-weight: 700;
+  white-space: nowrap; flex-shrink: 0; letter-spacing: .02em;
+}
+
+/* ── KYC Alert Toast ───────────────────────────────────────────────────── */
+#kyc-alert-toast {
+  position: fixed; bottom: 24px; right: 24px; z-index: 9999;
+  display: flex; flex-direction: column; gap: 8px; pointer-events: none;
+}
+.kyc-toast {
+  background: #1a0e2e;
+  border: 1px solid rgba(192,132,252,0.3);
+  border-radius: var(--radius-lg);
+  padding: 14px 18px;
+  min-width: 260px; max-width: 360px;
+  box-shadow: 0 8px 32px rgba(192,132,252,0.15), 0 2px 8px rgba(0,0,0,0.4);
+  animation: toastIn .3s var(--ease) forwards;
+  pointer-events: auto;
+}
+.kyc-toast.hiding { animation: toastOut .4s var(--ease) forwards; }
+.kyc-toast .kt-header { font-size: 13px; font-weight: 700; color: var(--purple); margin-bottom: 5px; }
+.kyc-toast .kt-body   { font-size: 12px; color: var(--text); line-height: 1.5; }
+.kyc-toast .kt-level  {
+  display: inline-block; padding: 1px 8px;
+  border-radius: var(--radius-pill); font-size: 10px; font-weight: 700; margin-left: 6px;
+}
+.kyc-toast .kt-level.CONFIRMED { background: var(--green-dim);  color: var(--green); }
+.kyc-toast .kt-level.LIKELY    { background: var(--yellow-dim); color: var(--yellow); }
+.kyc-toast .kt-level.WEAK      { background: var(--blue-dim);   color: var(--blue); }
+@keyframes toastIn  { from { opacity:0; transform: translateX(28px) scale(.96); } to { opacity:1; transform: translateX(0) scale(1); } }
+@keyframes toastOut { from { opacity:1; transform: translateX(0); } to { opacity:0; transform: translateX(28px); } }
+
+/* ── KYC Tab ───────────────────────────────────────────────────────────── */
+.kyc-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.kyc-table th {
+  text-align: left; padding: 7px 10px;
+  color: var(--muted); border-bottom: 1px solid var(--border);
+  font-size: 10px; text-transform: uppercase; letter-spacing: .07em; font-weight: 600;
+}
+.kyc-table td { padding: 7px 10px; border-bottom: 1px solid var(--border-soft); }
+.kyc-table tr:hover td { background: var(--surface2); }
+
+.level-tag {
+  display: inline-block; padding: 2px 8px;
+  border-radius: var(--radius-pill); font-size: 10px; font-weight: 700; letter-spacing: .03em;
+}
+.level-tag.CONFIRMED { background: var(--green-dim);  color: var(--green); }
+.level-tag.LIKELY    { background: var(--yellow-dim); color: var(--yellow); }
+.level-tag.WEAK      { background: var(--blue-dim);   color: var(--blue); }
+
+.kyc-total { display: flex; gap: 10px; padding: 4px 0 12px; flex-wrap: wrap; }
+.kyc-counter {
+  display: flex; flex-direction: column; align-items: center;
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); padding: 12px 20px; min-width: 90px;
+  transition: border-color 200ms, transform 150ms;
+}
+.kyc-counter:hover { transform: translateY(-1px); }
+.kyc-counter .count { font-size: 30px; font-weight: 700; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.kyc-counter .name  { font-size: 10px; color: var(--muted); text-transform: uppercase; margin-top: 3px; letter-spacing: .07em; }
+.kyc-counter.socure { border-color: rgba(74,222,128,0.15); }
+.kyc-counter.socure .count { color: var(--green); }
+.kyc-counter.veriff { border-color: rgba(129,140,248,0.15); }
+.kyc-counter.veriff .count { color: var(--blue); }
+.kyc-counter.onfido { border-color: rgba(251,146,60,0.15); }
+.kyc-counter.onfido .count { color: var(--orange); }
+.kyc-counter.jumio  { border-color: rgba(192,132,252,0.15); }
+.kyc-counter.jumio  .count { color: var(--purple); }
+.kyc-counter.other  .count { color: var(--muted); }
+
+/* ── Accounts ──────────────────────────────────────────────────────────── */
+.account-item {
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 11px 14px; margin-bottom: 8px;
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 10px;
+  transition: border-color 150ms, background 150ms;
+}
+.account-item:hover { border-color: var(--faint); background: var(--surface3); }
+.account-meta { font-size: 11px; color: var(--muted); margin-top: 3px; line-height: 1.6; }
+.account-kyc {
+  font-size: 10px; font-weight: 700; padding: 3px 9px;
+  border-radius: var(--radius-pill); letter-spacing: .03em;
+}
+.account-kyc.socure { background: var(--green-dim);  color: var(--green); }
+.account-kyc.veriff { background: var(--blue-dim);   color: var(--blue); }
+.account-kyc.onfido { background: var(--orange-dim); color: var(--orange); }
+.account-kyc.jumio  { background: var(--purple-dim); color: var(--purple); }
+
+/* ── Form ──────────────────────────────────────────────────────────────── */
+.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.form-full { grid-column: 1 / -1; }
+label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 4px; font-weight: 500; }
+input, select, textarea {
+  width: 100%; padding: 7px 10px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text); font-size: 12.5px;
+  font-family: inherit;
+  transition: border-color 150ms, box-shadow 150ms;
+}
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: rgba(56,189,248,0.4);
+  box-shadow: 0 0 0 3px rgba(56,189,248,0.08);
+}
+textarea { resize: vertical; }
+
+.parallel-warn {
+  display: none; margin-top: 6px; padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--yellow-dim); border: 1px solid rgba(251,191,36,0.2);
+  color: var(--yellow); font-size: 11px; line-height: 1.5;
+}
+.parallel-warn.visible { display: block; }
+
+/* ── Profiles ──────────────────────────────────────────────────────────── */
 .profile-item {
   background: var(--surface2); border: 1px solid var(--border);
-  border-radius: var(--radius); padding: 10px 12px; margin-bottom: 8px;
+  border-radius: var(--radius); padding: 11px 14px; margin-bottom: 8px;
+  transition: border-color 150ms;
 }
+.profile-item:hover { border-color: var(--faint); }
 .profile-item-header {
   display: flex; justify-content: space-between; align-items: center; gap: 8px;
 }
-.profile-label { font-weight: 700; font-size: 13px; }
+.profile-label { font-weight: 600; font-size: 13px; }
 .profile-slot {
-  font-size: 10px; padding: 1px 7px; border-radius: 8px;
-  background: #0d2040; color: var(--blue); font-weight: 700;
+  font-size: 10px; padding: 2px 8px; border-radius: var(--radius-pill);
+  background: var(--blue-dim); color: var(--blue); font-weight: 700; letter-spacing: .03em;
 }
-.profile-meta { font-size: 11px; color: var(--muted); margin-top: 4px; }
+.profile-meta { font-size: 11px; color: var(--muted); margin-top: 5px; line-height: 1.6; }
 .profile-edit-form {
-  display: none; margin-top: 10px; padding-top: 10px;
+  display: none; margin-top: 12px; padding-top: 12px;
   border-top: 1px solid var(--border);
-  display: none; gap: 8px; flex-direction: column;
+  gap: 8px; flex-direction: column;
 }
 .profile-edit-form.open { display: flex; }
 .profile-edit-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .profile-edit-full { grid-column: 1 / -1; }
 
-/* Add profile form */
 #add-profile-form {
   background: var(--surface2); border: 1px solid var(--border);
-  border-radius: var(--radius); padding: 12px; margin-top: 8px;
-  display: none; flex-direction: column; gap: 8px;
+  border-radius: var(--radius); padding: 14px; margin-top: 10px;
+  display: none; flex-direction: column; gap: 10px;
 }
 #add-profile-form.open { display: flex; }
 #add-profile-form .form-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 
-.empty { text-align: center; color: var(--faint); padding: 32px 16px; font-size: 12px; }
+/* ── Misc ──────────────────────────────────────────────────────────────── */
+.empty {
+  text-align: center; color: var(--faint); padding: 32px 16px; font-size: 12px; line-height: 1.6;
+}
+.divider {
+  height: 1px; background: var(--border); margin: 4px 0;
+}
 </style>
 </head>
 <body>
 <div id="kyc-alert-toast"></div>
 
 <div class="app">
+  <!-- Topbar -->
   <div class="topbar">
-    <h1>🤖 MVP Bot</h1>
+    <div class="topbar-logo">
+      <!-- Bot icon inline SVG -->
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--teal)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="11" width="18" height="10" rx="2"/>
+        <circle cx="12" cy="5" r="2"/>
+        <line x1="12" y1="7" x2="12" y2="11"/>
+        <line x1="8" y1="16" x2="8" y2="16" stroke-width="2.5"/>
+        <line x1="12" y1="16" x2="12" y2="16" stroke-width="2.5"/>
+        <line x1="16" y1="16" x2="16" y2="16" stroke-width="2.5"/>
+      </svg>
+      <h1>MVP <span>Bot</span></h1>
+    </div>
     <div class="spacer"></div>
-    <button id="btn-mute" class="btn btn-ghost" style="font-size:11px;padding:3px 10px;" title="Silenciar alertas KYC">🔔</button>
+    <button id="btn-mute" class="btn btn-ghost" style="font-size:11px;padding:4px 10px;" title="Silenciar alertas KYC">🔔</button>
     <span id="sse-dot" class="sse-dot" title="SSE"></span>
     <span id="status-badge" class="status-badge">PARADO</span>
   </div>
 
   <div class="main">
+    <!-- Sidebar -->
     <div class="sidebar">
-      <div class="tab-nav" style="border-bottom:1px solid var(--border);">
-        <button class="tab-btn active" data-tab="dashboard">Dashboard</button>
-        <button class="tab-btn" data-tab="kyc">KYC</button>
-        <button class="tab-btn" data-tab="accounts">Contas</button>
-        <button class="tab-btn" data-tab="config">Config</button>
-        <button class="tab-btn" data-tab="profiles">Perfis</button>
-      </div>
-      <div style="padding:8px 8px 4px; font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; border-bottom:1px solid var(--border);">
-        KYC Live Feed
-      </div>
+      <nav class="tab-nav">
+        <button class="tab-btn active" data-tab="dashboard">
+          <!-- Grid icon -->
+          <svg class="tab-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6">
+            <rect x="1" y="1" width="6" height="6" rx="1.2"/><rect x="9" y="1" width="6" height="6" rx="1.2"/>
+            <rect x="1" y="9" width="6" height="6" rx="1.2"/><rect x="9" y="9" width="6" height="6" rx="1.2"/>
+          </svg>
+          Dashboard
+        </button>
+        <button class="tab-btn" data-tab="kyc">
+          <!-- Shield icon -->
+          <svg class="tab-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6">
+            <path d="M8 1.5L2 4v4c0 3.3 2.5 5.7 6 6.5 3.5-.8 6-3.2 6-6.5V4L8 1.5z"/>
+          </svg>
+          KYC
+        </button>
+        <button class="tab-btn" data-tab="accounts">
+          <!-- Users icon -->
+          <svg class="tab-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6">
+            <circle cx="6" cy="5" r="2.5"/>
+            <path d="M1 14c0-2.8 2.2-4.5 5-4.5s5 1.7 5 4.5"/>
+            <path d="M11 7.5c1.4.3 2.5 1.5 2.5 3.5"/>
+            <circle cx="11" cy="4.5" r="1.8"/>
+          </svg>
+          Contas
+        </button>
+        <button class="tab-btn" data-tab="config">
+          <!-- Settings icon -->
+          <svg class="tab-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6">
+            <circle cx="8" cy="8" r="2"/>
+            <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.42 1.42M11.53 11.53l1.42 1.42M3.05 12.95l1.42-1.42M11.53 4.47l1.42-1.42"/>
+          </svg>
+          Config
+        </button>
+        <button class="tab-btn" data-tab="profiles">
+          <!-- Layers icon -->
+          <svg class="tab-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6">
+            <path d="M8 1L1 5l7 4 7-4-7-4z"/>
+            <path d="M1 10l7 4 7-4"/>
+            <path d="M1 7.5l7 4 7-4"/>
+          </svg>
+          Perfis
+        </button>
+      </nav>
+
+      <div class="feed-header">KYC Live Feed</div>
       <div class="kyc-feed" id="kyc-feed">
         <div class="empty">Aguardando sinais...</div>
       </div>
     </div>
 
+    <!-- Content -->
     <div class="content">
 
       <!-- Dashboard -->
       <div id="tab-dashboard" class="tab-panel active">
         <div class="stats-grid">
-          <div class="stat-box green"><div class="val" id="stat-completed">0</div><div class="lbl">Concluídos</div></div>
-          <div class="stat-box yellow"><div class="val" id="stat-total">0</div><div class="lbl">Total</div></div>
-          <div class="stat-box blue"><div class="val" id="stat-parallel">0</div><div class="lbl">Paralelo</div></div>
+          <div class="stat-box green" style="animation-delay:.05s">
+            <div class="val" id="stat-completed">0</div>
+            <div class="lbl">Concluídos</div>
+          </div>
+          <div class="stat-box yellow" style="animation-delay:.1s">
+            <div class="val" id="stat-total">0</div>
+            <div class="lbl">Total</div>
+          </div>
+          <div class="stat-box blue" style="animation-delay:.15s">
+            <div class="val" id="stat-parallel">0</div>
+            <div class="lbl">Paralelo</div>
+          </div>
         </div>
 
         <div class="btn-row">
-          <button class="btn btn-green"  id="btn-once">▶ Iniciar 1x</button>
-          <button class="btn btn-yellow" id="btn-loop">🔄 Loop</button>
+          <button class="btn btn-green"  id="btn-once">▶ Iniciar 1×</button>
+          <button class="btn btn-yellow" id="btn-loop">↺ Loop</button>
           <button class="btn btn-red"    id="btn-stop">⏹ Parar</button>
           <button class="btn btn-ghost"  id="btn-clear-logs">🗑 Limpar logs</button>
         </div>
 
         <div class="card">
-          <div class="card-title" style="display:flex;justify-content:space-between;align-items:center;">
+          <div class="card-title">
             <span>Ciclos ativos</span>
-            <span id="cycle-status-count" style="font-size:10px;color:var(--faint);"></span>
+            <span id="cycle-status-count" style="font-size:10px;color:var(--faint);font-weight:400;text-transform:none;letter-spacing:0;"></span>
           </div>
           <div class="cycle-status-panel" id="cycle-status-panel">
             <div class="cs-empty">Nenhum ciclo ativo</div>
@@ -338,9 +729,9 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--teal); outl
       <!-- KYC -->
       <div id="tab-kyc" class="tab-panel">
         <div class="card">
-          <div class="card-title" style="display:flex;justify-content:space-between;align-items:center;">
+          <div class="card-title">
             <span>Contadores KYC</span>
-            <button class="btn btn-ghost" id="btn-clear-kyc" style="font-size:11px;padding:3px 8px;">🗑 Limpar</button>
+            <button class="btn btn-ghost" id="btn-clear-kyc" style="font-size:11px;padding:4px 10px;">🗑 Limpar</button>
           </div>
           <div class="kyc-total" id="kyc-counters">
             <div class="kyc-counter socure"><div class="count" id="kyc-count-socure">0</div><div class="name">Socure</div></div>
@@ -363,9 +754,9 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--teal); outl
       <!-- Accounts -->
       <div id="tab-accounts" class="tab-panel">
         <div class="card">
-          <div class="card-title" style="display:flex;justify-content:space-between;">
+          <div class="card-title">
             <span>Contas Salvas</span>
-            <span id="accounts-count" style="color:var(--green);">0</span>
+            <span id="accounts-count" style="color:var(--green);font-weight:700;font-size:13px;text-transform:none;letter-spacing:0;">0</span>
           </div>
           <div id="accounts-list"><div class="empty">Nenhuma conta salva</div></div>
         </div>
@@ -407,7 +798,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--teal); outl
             </div>
             <div class="form-full">
               <button class="btn btn-green" id="btn-save-config">💾 Salvar</button>
-              <span id="cfg-msg" style="font-size:12px;color:var(--muted);margin-left:10px;"></span>
+              <span id="cfg-msg" style="font-size:12px;color:var(--muted);margin-left:12px;"></span>
             </div>
           </div>
         </div>
@@ -416,17 +807,16 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--teal); outl
       <!-- Perfis -->
       <div id="tab-profiles" class="tab-panel">
         <div class="card">
-          <div class="card-title" style="display:flex;justify-content:space-between;align-items:center;">
+          <div class="card-title">
             <span>Perfis de Ciclo <small id="profiles-rotation-info" style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--faint);"></small></span>
-            <button class="btn btn-green" id="btn-add-profile" style="font-size:11px;padding:4px 10px;">+ Adicionar</button>
+            <button class="btn btn-green" id="btn-add-profile" style="font-size:11px;padding:5px 12px;">+ Adicionar</button>
           </div>
 
-          <div style="font-size:11px;color:var(--muted);background:var(--surface2);border-radius:6px;padding:8px 10px;margin-bottom:10px;line-height:1.6;">
+          <div style="font-size:11px;color:var(--muted);background:var(--surface2);border-radius:var(--radius-sm);padding:9px 12px;margin-bottom:12px;line-height:1.7;border:1px solid var(--border);">
             Cada perfil sobrescreve a config base para aquele ciclo.<br>
             Ciclo 1 → P1, Ciclo 2 → P2, Ciclo 3 → P1 ... (round-robin automático)
           </div>
 
-          <!-- Form adicionar -->
           <div id="add-profile-form">
             <div style="font-size:12px;font-weight:600;color:var(--teal);">Novo Perfil</div>
             <div class="form-grid-2">
@@ -448,8 +838,8 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--teal); outl
               </div>
             </div>
             <div style="display:flex;gap:8px;">
-              <button class="btn btn-green" id="btn-save-new-profile" style="font-size:12px;padding:5px 12px;">✓ Salvar</button>
-              <button class="btn btn-ghost" id="btn-cancel-add-profile" style="font-size:12px;padding:5px 12px;">Cancelar</button>
+              <button class="btn btn-green" id="btn-save-new-profile" style="font-size:12px;padding:6px 14px;">✓ Salvar</button>
+              <button class="btn btn-ghost" id="btn-cancel-add-profile" style="font-size:12px;padding:6px 14px;">Cancelar</button>
               <span id="add-profile-msg" style="font-size:11px;color:var(--muted);align-self:center;"></span>
             </div>
           </div>
@@ -458,9 +848,9 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--teal); outl
         </div>
       </div>
 
-    </div>
-  </div>
-</div>
+    </div><!-- /content -->
+  </div><!-- /main -->
+</div><!-- /app -->
 
 <script>
 const PASS = 'connect@10';
@@ -588,7 +978,6 @@ function _renderCyclePanel() {
     const elapsed = Math.round((now - cs.startedAt) / 1000);
     const elapsedStr = elapsed >= 60 ? `${Math.floor(elapsed/60)}m${elapsed%60}s` : `${elapsed}s`;
     const attemptBadge = cs.attempt > 1 ? `<span class="cs-attempt">Retry #${cs.attempt}</span>` : '';
-    // Badge do perfil (ex: P1 Itajubá)
     const profileBadge = cs.profileIndex >= 0
       ? `<span class="cs-profile-badge">P${cs.profileIndex + 1}${cs.profileLabel ? ' ' + cs.profileLabel : ''}</span>`
       : '';
@@ -641,7 +1030,7 @@ function showKycToast(cycle, provider, level, url) {
   const container = document.getElementById('kyc-alert-toast');
   const toast = document.createElement('div');
   toast.className = 'kyc-toast';
-  const urlPart = url ? `<div style="font-size:10px;color:var(--faint);margin-top:4px;word-break:break-all;">${url.substring(0,80)}${url.length>80?'\u2026':''}</div>` : '';
+  const urlPart = url ? `<div style="font-size:10px;color:var(--faint);margin-top:5px;word-break:break-all;">${url.substring(0,80)}${url.length>80?'\u2026':''}</div>` : '';
   toast.innerHTML = `<div class="kt-header">\ud83d\udd0d KYC Detectado <span class="kt-level ${level}">${level}</span></div><div class="kt-body">Ciclo <strong>#${cycle}</strong> \u2014 <strong>${provider}</strong>${urlPart}</div>`;
   container.appendChild(toast);
   setTimeout(() => { toast.classList.add('hiding'); setTimeout(() => toast.remove(), 400); }, 4600);
@@ -715,8 +1104,8 @@ function renderProfilesList() {
         <div class="profile-item-header">
           <span><span class="profile-slot">P${i+1}</span>&nbsp;<span class="profile-label">${label}</span></span>
           <div style="display:flex;gap:6px;">
-            <button class="btn btn-ghost" style="font-size:11px;padding:3px 8px;" onclick="toggleEditProfile(${i})">✏️ Editar</button>
-            <button class="btn btn-red"   style="font-size:11px;padding:3px 8px;" onclick="deleteProfile(${i})">🗑</button>
+            <button class="btn btn-ghost" style="font-size:11px;padding:3px 10px;" onclick="toggleEditProfile(${i})">✏️ Editar</button>
+            <button class="btn btn-red"   style="font-size:11px;padding:3px 10px;" onclick="deleteProfile(${i})">🗑</button>
           </div>
         </div>
         <div class="profile-meta">${meta}</div>
@@ -740,8 +1129,8 @@ function renderProfilesList() {
             </div>
           </div>
           <div style="display:flex;gap:8px;margin-top:4px;">
-            <button class="btn btn-green" style="font-size:11px;padding:4px 10px;" onclick="saveEditProfile(${i})">\u2713 Salvar</button>
-            <button class="btn btn-ghost" style="font-size:11px;padding:4px 10px;" onclick="toggleEditProfile(${i})">Cancelar</button>
+            <button class="btn btn-green" style="font-size:11px;padding:5px 12px;" onclick="saveEditProfile(${i})">\u2713 Salvar</button>
+            <button class="btn btn-ghost" style="font-size:11px;padding:5px 12px;" onclick="toggleEditProfile(${i})">Cancelar</button>
             <span id="pe-msg-${i}" style="font-size:11px;color:var(--muted);align-self:center;"></span>
           </div>
         </div>
@@ -788,7 +1177,6 @@ async function deleteProfile(i) {
   } catch(e) { console.error(e); }
 }
 
-// Add profile form
 document.getElementById('btn-add-profile').addEventListener('click', () => {
   document.getElementById('add-profile-form').classList.toggle('open');
 });
@@ -894,7 +1282,7 @@ async function loadAccounts() {
         </div>
         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;">
           <span class="account-kyc ${providerClass(a.kycProvider)}">${a.kycProvider||'Desconhecido'} ${a.kycLevel||''}</span>
-          <button class="btn btn-ghost" style="font-size:11px;padding:4px 8px;"
+          <button class="btn btn-ghost" style="font-size:11px;padding:4px 10px;"
             onclick="deleteAccount('${a.id}')">\ud83d\uddd1</button>
         </div>
       </div>
@@ -978,7 +1366,6 @@ document.getElementById('btn-clear-logs').addEventListener('click', async () => 
 document.getElementById('btn-clear-kyc').addEventListener('click', async () => {
   await fetch('/api/kyc', { method: 'DELETE', headers: HEADERS }).catch(() => {});
   kycByCycle = {}; kycFeedSeen.clear(); kycFeedItems.length = 0;
-  // renderKycState já chama renderKycFeed internamente — sem chamada duplicada
   renderKycState({ byCycle: {} });
 });
 
