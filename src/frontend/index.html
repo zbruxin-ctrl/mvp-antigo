@@ -18,7 +18,6 @@ html, body { height: 100%; font-family: 'Segoe UI', system-ui, sans-serif; font-
   background: var(--bg); color: var(--text); }
 a { color: var(--blue); }
 
-/* ── Layout ── */
 .app { display: grid; grid-template-rows: 48px 1fr; height: 100vh; overflow: hidden; }
 .topbar {
   display: flex; align-items: center; gap: 12px;
@@ -46,7 +45,7 @@ a { color: var(--blue); }
 }
 .content { overflow-y: auto; padding: 16px; }
 
-/* ── Tabs ── */
+/* Tabs */
 .tab-nav { display: flex; gap: 2px; padding: 8px; flex-wrap: wrap; }
 .tab-btn {
   padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 500;
@@ -55,11 +54,10 @@ a { color: var(--blue); }
 }
 .tab-btn:hover { background: var(--surface2); color: var(--text); }
 .tab-btn.active { background: var(--surface2); color: var(--teal); }
-
 .tab-panel { display: none; }
 .tab-panel.active { display: block; }
 
-/* ── Cards ── */
+/* Cards */
 .card {
   background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--radius); padding: 14px; margin-bottom: 12px;
@@ -67,7 +65,7 @@ a { color: var(--blue); }
 .card-title { font-size: 11px; font-weight: 700; text-transform: uppercase;
   letter-spacing: .08em; color: var(--muted); margin-bottom: 10px; }
 
-/* ── Stats grid ── */
+/* Stats */
 .stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 12px; }
 .stat-box {
   background: var(--surface2); border: 1px solid var(--border);
@@ -79,7 +77,7 @@ a { color: var(--blue); }
 .stat-box.yellow .val { color: var(--yellow); }
 .stat-box.blue .val { color: var(--blue); }
 
-/* ── Botoes ── */
+/* Botoes */
 .btn {
   padding: 7px 16px; border-radius: 6px; font-size: 13px; font-weight: 500;
   cursor: pointer; border: none; transition: opacity .15s, transform .1s;
@@ -91,10 +89,9 @@ a { color: var(--blue); }
 .btn-red    { background: #dc2626; color: #fff; }
 .btn-ghost  { background: var(--surface2); color: var(--muted); border: 1px solid var(--border); }
 .btn:disabled { opacity: .45; cursor: not-allowed; }
-
 .btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
 
-/* ── Logs ── */
+/* Logs */
 #log-container {
   background: #0a0a0a; border: 1px solid var(--border);
   border-radius: var(--radius); height: 320px; overflow-y: auto;
@@ -112,40 +109,40 @@ a { color: var(--blue); }
 .cycle-tag { font-size: 10px; color: var(--teal); background: #0f2a2a;
   padding: 0 5px; border-radius: 4px; flex-shrink: 0; }
 
-/* ── Cycle Status Panel ── */
-.cycle-status-panel {
-  display: flex; flex-direction: column; gap: 5px; margin-bottom: 4px;
-}
+/* Cycle Status Panel */
+.cycle-status-panel { display: flex; flex-direction: column; gap: 5px; margin-bottom: 4px; }
 .cycle-status-item {
   display: grid;
-  grid-template-columns: 12px 44px 1fr auto auto;
+  grid-template-columns: 12px 44px 1fr auto auto auto;
   align-items: center; gap: 8px;
   background: var(--surface2); border: 1px solid var(--border);
-  border-radius: var(--radius); padding: 7px 10px;
-  font-size: 12px;
+  border-radius: var(--radius); padding: 7px 10px; font-size: 12px;
 }
 .cycle-status-item .cs-dot {
-  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
-  background: var(--faint);
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--faint);
 }
-.cycle-status-item.cs-running  .cs-dot { background: var(--teal);   box-shadow: 0 0 5px var(--teal);  animation: pulseDot 1.2s infinite; }
+.cycle-status-item.cs-running  .cs-dot { background: var(--teal);   box-shadow: 0 0 5px var(--teal);   animation: pulseDot 1.2s infinite; }
 .cycle-status-item.cs-retrying .cs-dot { background: var(--yellow); box-shadow: 0 0 5px var(--yellow); animation: pulseDot 0.8s infinite; }
 .cycle-status-item.cs-done     .cs-dot { background: var(--green); }
 .cycle-status-item.cs-failed   .cs-dot { background: var(--red); }
 @keyframes pulseDot { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
-
 .cycle-status-item .cs-num { font-weight: 700; color: var(--teal); font-size: 12px; }
 .cycle-status-item .cs-step { flex: 1; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cycle-status-item .cs-attempt {
   font-size: 10px; padding: 1px 6px; border-radius: 8px;
-  background: #3b2800; color: var(--yellow); font-weight: 600;
-  display: none;
+  background: #3b2800; color: var(--yellow); font-weight: 600; display: none;
 }
 .cycle-status-item.cs-retrying .cs-attempt { display: inline-block; }
 .cycle-status-item .cs-elapsed { color: var(--faint); font-size: 11px; white-space: nowrap; }
 .cs-empty { font-size: 12px; color: var(--faint); padding: 6px 0; }
+/* Badge de perfil no painel de ciclos */
+.cs-profile-badge {
+  font-size: 9px; padding: 1px 6px; border-radius: 8px;
+  background: #0d2040; color: var(--blue); font-weight: 700;
+  white-space: nowrap; flex-shrink: 0;
+}
 
-/* ── KYC Alert Toast ── */
+/* KYC Alert Toast */
 #kyc-alert-toast {
   position: fixed; bottom: 24px; right: 24px; z-index: 9999;
   display: flex; flex-direction: column; gap: 8px; pointer-events: none;
@@ -155,8 +152,7 @@ a { color: var(--blue); }
   border-radius: var(--radius); padding: 12px 16px;
   min-width: 260px; max-width: 360px;
   box-shadow: 0 4px 24px rgba(192,132,252,0.25);
-  animation: toastIn .25s ease forwards;
-  pointer-events: auto;
+  animation: toastIn .25s ease forwards; pointer-events: auto;
 }
 .kyc-toast.hiding { animation: toastOut .4s ease forwards; }
 .kyc-toast .kt-header { font-size: 13px; font-weight: 700; color: var(--purple); margin-bottom: 4px; }
@@ -168,19 +164,16 @@ a { color: var(--blue); }
 @keyframes toastIn  { from { opacity:0; transform: translateX(32px); } to { opacity:1; transform: translateX(0); } }
 @keyframes toastOut { from { opacity:1; transform: translateX(0); } to { opacity:0; transform: translateX(32px); } }
 
-/* ── KYC Detector ── */
+/* KYC Detector */
 .kyc-table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .kyc-table th { text-align: left; padding: 6px 8px; color: var(--muted);
   border-bottom: 1px solid var(--border); font-size: 10px; text-transform: uppercase; }
 .kyc-table td { padding: 6px 8px; border-bottom: 1px solid #1a1a1a; }
 .kyc-table tr:hover td { background: var(--surface2); }
-.level-tag {
-  display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 10px; font-weight: 700;
-}
+.level-tag { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 10px; font-weight: 700; }
 .level-tag.CONFIRMED { background: #14532d; color: var(--green); }
 .level-tag.LIKELY    { background: #713f12; color: var(--yellow); }
 .level-tag.WEAK      { background: #1e1b4b; color: var(--blue); }
-
 .kyc-total { display: flex; gap: 16px; padding: 10px 0; flex-wrap: wrap; }
 .kyc-counter {
   display: flex; flex-direction: column; align-items: center;
@@ -195,31 +188,28 @@ a { color: var(--blue); }
 .kyc-counter.jumio  .count { color: var(--purple); }
 .kyc-counter.other  .count { color: var(--muted); }
 
-/* ── Accounts ── */
+/* Accounts */
 .account-item {
   background: var(--surface2); border: 1px solid var(--border);
   border-radius: var(--radius); padding: 10px 12px; margin-bottom: 8px;
   display: flex; justify-content: space-between; align-items: flex-start; gap: 10px;
 }
 .account-meta { font-size: 11px; color: var(--muted); margin-top: 3px; }
-.account-kyc {
-  font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 10px;
-}
+.account-kyc { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 10px; }
 .account-kyc.socure { background: #14532d; color: var(--green); }
 .account-kyc.veriff { background: #1e3a5f; color: var(--blue); }
 .account-kyc.onfido { background: #431d04; color: var(--orange); }
 .account-kyc.jumio  { background: #2e1a4a; color: var(--purple); }
 
-/* ── Form ── */
+/* Form */
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .form-full { grid-column: 1 / -1; }
 label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 3px; }
-input, select {
+input, select, textarea {
   width: 100%; padding: 6px 8px; background: var(--surface2);
   border: 1px solid var(--border); border-radius: 5px; color: var(--text); font-size: 13px;
 }
-input:focus, select:focus { outline: 2px solid var(--teal); outline-offset: 1px; }
-
+input:focus, select:focus, textarea:focus { outline: 2px solid var(--teal); outline-offset: 1px; }
 .parallel-warn {
   display: none; margin-top: 5px; padding: 5px 8px;
   border-radius: 5px; background: #3b2800; border: 1px solid #78450a;
@@ -227,12 +217,11 @@ input:focus, select:focus { outline: 2px solid var(--teal); outline-offset: 1px;
 }
 .parallel-warn.visible { display: block; }
 
-/* ── Sidebar KYC live feed ── */
+/* Sidebar KYC live feed */
 .kyc-feed { padding: 8px; overflow-y: auto; flex: 1; }
 .kyc-feed-item {
   padding: 5px 6px; border-radius: 5px; margin-bottom: 4px;
-  background: var(--surface2); border-left: 3px solid var(--border);
-  font-size: 11px;
+  background: var(--surface2); border-left: 3px solid var(--border); font-size: 11px;
 }
 .kyc-feed-item.socure { border-left-color: var(--green); }
 .kyc-feed-item.veriff { border-left-color: var(--blue); }
@@ -248,6 +237,38 @@ input:focus, select:focus { outline: 2px solid var(--teal); outline-offset: 1px;
 .kyc-feed-item .feed-level.CONFIRMED { background: #14532d; color: var(--green); }
 .kyc-feed-item .feed-level.LIKELY    { background: #713f12; color: var(--yellow); }
 .kyc-feed-item .feed-level.WEAK      { background: #1e1b4b; color: var(--blue); }
+
+/* Profiles tab */
+.profile-item {
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 10px 12px; margin-bottom: 8px;
+}
+.profile-item-header {
+  display: flex; justify-content: space-between; align-items: center; gap: 8px;
+}
+.profile-label { font-weight: 700; font-size: 13px; }
+.profile-slot {
+  font-size: 10px; padding: 1px 7px; border-radius: 8px;
+  background: #0d2040; color: var(--blue); font-weight: 700;
+}
+.profile-meta { font-size: 11px; color: var(--muted); margin-top: 4px; }
+.profile-edit-form {
+  display: none; margin-top: 10px; padding-top: 10px;
+  border-top: 1px solid var(--border);
+  display: none; gap: 8px; flex-direction: column;
+}
+.profile-edit-form.open { display: flex; }
+.profile-edit-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.profile-edit-full { grid-column: 1 / -1; }
+
+/* Add profile form */
+#add-profile-form {
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 12px; margin-top: 8px;
+  display: none; flex-direction: column; gap: 8px;
+}
+#add-profile-form.open { display: flex; }
+#add-profile-form .form-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 
 .empty { text-align: center; color: var(--faint); padding: 32px 16px; font-size: 12px; }
 </style>
@@ -271,6 +292,7 @@ input:focus, select:focus { outline: 2px solid var(--teal); outline-offset: 1px;
         <button class="tab-btn" data-tab="kyc">KYC</button>
         <button class="tab-btn" data-tab="accounts">Contas</button>
         <button class="tab-btn" data-tab="config">Config</button>
+        <button class="tab-btn" data-tab="profiles">Perfis</button>
       </div>
       <div style="padding:8px 8px 4px; font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; border-bottom:1px solid var(--border);">
         KYC Live Feed
@@ -285,18 +307,9 @@ input:focus, select:focus { outline: 2px solid var(--teal); outline-offset: 1px;
       <!-- Dashboard -->
       <div id="tab-dashboard" class="tab-panel active">
         <div class="stats-grid">
-          <div class="stat-box green">
-            <div class="val" id="stat-completed">0</div>
-            <div class="lbl">Concluídos</div>
-          </div>
-          <div class="stat-box yellow">
-            <div class="val" id="stat-total">0</div>
-            <div class="lbl">Total</div>
-          </div>
-          <div class="stat-box blue">
-            <div class="val" id="stat-parallel">0</div>
-            <div class="lbl">Paralelo</div>
-          </div>
+          <div class="stat-box green"><div class="val" id="stat-completed">0</div><div class="lbl">Concluídos</div></div>
+          <div class="stat-box yellow"><div class="val" id="stat-total">0</div><div class="lbl">Total</div></div>
+          <div class="stat-box blue"><div class="val" id="stat-parallel">0</div><div class="lbl">Paralelo</div></div>
         </div>
 
         <div class="btn-row">
@@ -337,7 +350,6 @@ input:focus, select:focus { outline: 2px solid var(--teal); outline-offset: 1px;
             <div class="kyc-counter other" ><div class="count" id="kyc-count-other">0</div><div class="name">Outros</div></div>
           </div>
         </div>
-
         <div class="card">
           <div class="card-title">Detalhes por ciclo</div>
           <table class="kyc-table">
@@ -372,33 +384,16 @@ input:focus, select:focus { outline: 2px solid var(--teal); outline-offset: 1px;
                 <option value="mail.tm">mail.tm</option>
               </select>
             </div>
-            <div>
-              <label>Temp Mail API Key</label>
-              <input id="cfg-tempMailApiKey" type="text" />
-            </div>
-            <div>
-              <label>Invite Code</label>
-              <input id="cfg-inviteCode" type="text" />
-            </div>
-            <div>
-              <label>Cidade</label>
-              <input id="cfg-cityName" type="text" placeholder="São Paulo" />
-            </div>
-            <div>
-              <label>OTP Timeout (ms)</label>
-              <input id="cfg-otpTimeout" type="number" />
-            </div>
+            <div><label>Temp Mail API Key</label><input id="cfg-tempMailApiKey" type="text" /></div>
+            <div><label>Invite Code</label><input id="cfg-inviteCode" type="text" /></div>
+            <div><label>Cidade</label><input id="cfg-cityName" type="text" placeholder="São Paulo" /></div>
+            <div><label>OTP Timeout (ms)</label><input id="cfg-otpTimeout" type="number" /></div>
             <div>
               <label>Ciclos paralelos</label>
               <input id="cfg-parallelCycles" type="number" min="1" max="20" />
-              <div class="parallel-warn" id="parallel-warn">
-                ⚠️ Recomendado ≤ 3 ciclos em paralelo. Acima disso pode causar crash.
-              </div>
+              <div class="parallel-warn" id="parallel-warn">⚠️ Recomendado ≤ 3 ciclos em paralelo. Acima disso pode causar crash.</div>
             </div>
-            <div>
-              <label>Extra Delay (ms)</label>
-              <input id="cfg-extraDelay" type="number" />
-            </div>
+            <div><label>Extra Delay (ms)</label><input id="cfg-extraDelay" type="number" /></div>
             <div>
               <label>Headless</label>
               <select id="cfg-headless">
@@ -408,14 +403,58 @@ input:focus, select:focus { outline: 2px solid var(--teal); outline-offset: 1px;
             </div>
             <div class="form-full">
               <label>Proxies (uma por linha: host:porta ou http://user:pass@host:porta)</label>
-              <textarea id="cfg-proxies" rows="3"
-                style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:5px;color:var(--text);padding:6px 8px;font-size:12px;resize:vertical;"></textarea>
+              <textarea id="cfg-proxies" rows="3"></textarea>
             </div>
             <div class="form-full">
               <button class="btn btn-green" id="btn-save-config">💾 Salvar</button>
               <span id="cfg-msg" style="font-size:12px;color:var(--muted);margin-left:10px;"></span>
             </div>
           </div>
+        </div>
+      </div>
+
+      <!-- Perfis -->
+      <div id="tab-profiles" class="tab-panel">
+        <div class="card">
+          <div class="card-title" style="display:flex;justify-content:space-between;align-items:center;">
+            <span>Perfis de Ciclo <small id="profiles-rotation-info" style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--faint);"></small></span>
+            <button class="btn btn-green" id="btn-add-profile" style="font-size:11px;padding:4px 10px;">+ Adicionar</button>
+          </div>
+
+          <div style="font-size:11px;color:var(--muted);background:var(--surface2);border-radius:6px;padding:8px 10px;margin-bottom:10px;line-height:1.6;">
+            Cada perfil sobrescreve a config base para aquele ciclo.<br>
+            Ciclo 1 → P1, Ciclo 2 → P2, Ciclo 3 → P1 ... (round-robin automático)
+          </div>
+
+          <!-- Form adicionar -->
+          <div id="add-profile-form">
+            <div style="font-size:12px;font-weight:600;color:var(--teal);">Novo Perfil</div>
+            <div class="form-grid-2">
+              <div><label>Label (ex: Itajubá)</label><input id="np-label" type="text" placeholder="Recife" /></div>
+              <div><label>Cidade</label><input id="np-cityName" type="text" placeholder="Recife" /></div>
+              <div><label>Invite Code</label><input id="np-inviteCode" type="text" /></div>
+              <div>
+                <label>Email Provider</label>
+                <select id="np-emailProvider">
+                  <option value="">(herdar da config base)</option>
+                  <option value="tempmailc">tempmailc</option>
+                  <option value="temp-mail.io">temp-mail.io</option>
+                  <option value="mail.tm">mail.tm</option>
+                </select>
+              </div>
+              <div class="profile-edit-full" style="grid-column:1/-1;">
+                <label>Proxies do perfil (uma por linha, vazio = herdar da base)</label>
+                <textarea id="np-proxies" rows="2" placeholder="http://user:pass@host:3128"></textarea>
+              </div>
+            </div>
+            <div style="display:flex;gap:8px;">
+              <button class="btn btn-green" id="btn-save-new-profile" style="font-size:12px;padding:5px 12px;">✓ Salvar</button>
+              <button class="btn btn-ghost" id="btn-cancel-add-profile" style="font-size:12px;padding:5px 12px;">Cancelar</button>
+              <span id="add-profile-msg" style="font-size:11px;color:var(--muted);align-self:center;"></span>
+            </div>
+          </div>
+
+          <div id="profiles-list"><div class="empty">Nenhum perfil configurado — todos os ciclos usam a config base</div></div>
         </div>
       </div>
 
@@ -435,6 +474,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.classList.add('active');
     document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
     if (btn.dataset.tab === 'accounts') loadAccounts();
+    if (btn.dataset.tab === 'profiles') loadProfiles();
   });
 });
 
@@ -468,9 +508,8 @@ function renderKycState(data) {
   const onfido = totals['Onfido'] || 0;
   const jumio  = totals['Jumio']  || 0;
   let other = 0;
-  for (const [k, v] of Object.entries(totals)) {
+  for (const [k, v] of Object.entries(totals))
     if (!['Socure','Veriff','Onfido','Jumio'].includes(k)) other += v;
-  }
   document.getElementById('kyc-count-socure').textContent = socure;
   document.getElementById('kyc-count-veriff').textContent = veriff;
   document.getElementById('kyc-count-onfido').textContent = onfido;
@@ -524,7 +563,6 @@ function renderKycFeed() {
 }
 
 // ── Cycle Status Panel
-// cycleStatusMap: objeto { [cycle]: CycleStatus } vindo do backend
 let cycleStatusMap = {};
 
 function renderCycleStatusMap(map) {
@@ -533,8 +571,8 @@ function renderCycleStatusMap(map) {
 }
 
 function _renderCyclePanel() {
-  const panel  = document.getElementById('cycle-status-panel');
-  const badge  = document.getElementById('cycle-status-count');
+  const panel   = document.getElementById('cycle-status-panel');
+  const badge   = document.getElementById('cycle-status-count');
   const entries = Object.values(cycleStatusMap);
   entries.sort((a, b) => a.cycle - b.cycle);
 
@@ -550,6 +588,10 @@ function _renderCyclePanel() {
     const elapsed = Math.round((now - cs.startedAt) / 1000);
     const elapsedStr = elapsed >= 60 ? `${Math.floor(elapsed/60)}m${elapsed%60}s` : `${elapsed}s`;
     const attemptBadge = cs.attempt > 1 ? `<span class="cs-attempt">Retry #${cs.attempt}</span>` : '';
+    // Badge do perfil (ex: P1 Itajubá)
+    const profileBadge = cs.profileIndex >= 0
+      ? `<span class="cs-profile-badge">P${cs.profileIndex + 1}${cs.profileLabel ? ' ' + cs.profileLabel : ''}</span>`
+      : '';
     const statusClass = cs.status === 'running'  ? 'cs-running'
                       : cs.status === 'retrying' ? 'cs-retrying'
                       : cs.status === 'done'     ? 'cs-done'
@@ -558,24 +600,24 @@ function _renderCyclePanel() {
       <span class="cs-dot"></span>
       <span class="cs-num">#${cs.cycle}</span>
       <span class="cs-step">${cs.stepLabel || cs.step || '...'}</span>
+      ${profileBadge}
       ${attemptBadge}
       <span class="cs-elapsed">${elapsedStr}</span>
     </div>`;
   }).join('');
 }
 
-// Atualiza elapsed a cada segundo sem depender de SSE
 setInterval(() => {
   if (Object.keys(cycleStatusMap).length > 0) _renderCyclePanel();
 }, 1000);
 
-// ── KYC Alert Toast + Som (Feature 3)
+// ── KYC Alert Toast + Som
 let kycMuted = false;
 const btnMute = document.getElementById('btn-mute');
 btnMute.addEventListener('click', () => {
   kycMuted = !kycMuted;
   btnMute.textContent = kycMuted ? '\ud83d\udd15' : '\ud83d\udd14';
-  btnMute.title = kycMuted ? 'Alertas silenciados — clique para ativar' : 'Silenciar alertas KYC';
+  btnMute.title = kycMuted ? 'Alertas silenciados' : 'Silenciar alertas KYC';
   btnMute.style.color = kycMuted ? 'var(--faint)' : '';
 });
 
@@ -583,8 +625,7 @@ function playKycBeep() {
   if (kycMuted) return;
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const osc  = ctx.createOscillator();
-    const gain = ctx.createGain();
+    const osc = ctx.createOscillator(); const gain = ctx.createGain();
     osc.connect(gain); gain.connect(ctx.destination);
     osc.type = 'sine';
     osc.frequency.setValueAtTime(880, ctx.currentTime);
@@ -592,7 +633,7 @@ function playKycBeep() {
     gain.gain.setValueAtTime(0.25, ctx.currentTime);
     gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5);
     osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.5);
-  } catch(e) { /* AudioContext nao disponivel */ }
+  } catch(e) {}
 }
 
 function showKycToast(cycle, provider, level, url) {
@@ -601,13 +642,9 @@ function showKycToast(cycle, provider, level, url) {
   const toast = document.createElement('div');
   toast.className = 'kyc-toast';
   const urlPart = url ? `<div style="font-size:10px;color:var(--faint);margin-top:4px;word-break:break-all;">${url.substring(0,80)}${url.length>80?'\u2026':''}</div>` : '';
-  toast.innerHTML = `<div class="kt-header">🔍 KYC Detectado <span class="kt-level ${level}">${level}</span></div><div class="kt-body">Ciclo <strong>#${cycle}</strong> — <strong>${provider}</strong>${urlPart}</div>`;
+  toast.innerHTML = `<div class="kt-header">\ud83d\udd0d KYC Detectado <span class="kt-level ${level}">${level}</span></div><div class="kt-body">Ciclo <strong>#${cycle}</strong> \u2014 <strong>${provider}</strong>${urlPart}</div>`;
   container.appendChild(toast);
-  // Anima saida antes de remover
-  setTimeout(() => {
-    toast.classList.add('hiding');
-    setTimeout(() => toast.remove(), 400);
-  }, 4600);
+  setTimeout(() => { toast.classList.add('hiding'); setTimeout(() => toast.remove(), 400); }, 4600);
   playKycBeep();
 }
 
@@ -629,13 +666,11 @@ function applyState(state) {
 const logContainer = document.getElementById('log-container');
 const MAX_LOG_ENTRIES = 400;
 let logEntries = [];
-
 function addLogEntry(entry) {
   logEntries.unshift(entry);
   if (logEntries.length > MAX_LOG_ENTRIES) logEntries = logEntries.slice(0, MAX_LOG_ENTRIES);
   renderLogs();
 }
-
 function renderLogs() {
   logContainer.innerHTML = logEntries.map(e => {
     const ts = e.timestamp ? new Date(e.timestamp).toLocaleTimeString('pt-BR') : '';
@@ -643,6 +678,153 @@ function renderLogs() {
     return `<div class="log-entry ${e.level || 'info'}"><span class="ts">${ts}</span>${cycleTag}<span class="msg">${e.message || ''}</span></div>`;
   }).join('');
 }
+
+// ── Profiles
+let profilesList = [];
+
+async function loadProfiles() {
+  try {
+    const data = await fetch('/api/profiles', { headers: HEADERS }).then(r => r.json());
+    applyProfiles(data.profiles || []);
+  } catch(e) { console.error(e); }
+}
+
+function applyProfiles(profiles) {
+  profilesList = profiles || [];
+  renderProfilesList();
+}
+
+function renderProfilesList() {
+  const container = document.getElementById('profiles-list');
+  const info = document.getElementById('profiles-rotation-info');
+  if (profilesList.length === 0) {
+    container.innerHTML = '<div class="empty">Nenhum perfil configurado — todos os ciclos usam a config base</div>';
+    info.textContent = '';
+    return;
+  }
+  info.textContent = `${profilesList.length} em rota\u00e7\u00e3o`;
+  container.innerHTML = profilesList.map((p, i) => {
+    const label = p.label || `Perfil ${i+1}`;
+    const city  = p.cityName  ? `Cidade: <b>${p.cityName}</b>` : '';
+    const code  = p.inviteCode ? `C\u00f3digo: <b>${p.inviteCode}</b>` : '';
+    const ep    = p.emailProvider ? `Provider: ${p.emailProvider}` : '';
+    const proxyCount = Array.isArray(p.proxies) && p.proxies.length > 0 ? `${p.proxies.length} proxy(s)` : '';
+    const meta = [city, code, ep, proxyCount].filter(Boolean).join(' &nbsp;\u00b7&nbsp; ') || '<span style="color:var(--faint)">Sem sobrescrita (herda tudo da base)</span>';
+    return `
+      <div class="profile-item" id="profile-item-${i}">
+        <div class="profile-item-header">
+          <span><span class="profile-slot">P${i+1}</span>&nbsp;<span class="profile-label">${label}</span></span>
+          <div style="display:flex;gap:6px;">
+            <button class="btn btn-ghost" style="font-size:11px;padding:3px 8px;" onclick="toggleEditProfile(${i})">✏️ Editar</button>
+            <button class="btn btn-red"   style="font-size:11px;padding:3px 8px;" onclick="deleteProfile(${i})">🗑</button>
+          </div>
+        </div>
+        <div class="profile-meta">${meta}</div>
+        <div class="profile-edit-form" id="profile-edit-${i}">
+          <div class="profile-edit-grid">
+            <div><label>Label</label><input id="pe-label-${i}" type="text" value="${p.label||''}" /></div>
+            <div><label>Cidade</label><input id="pe-cityName-${i}" type="text" value="${p.cityName||''}" /></div>
+            <div><label>Invite Code</label><input id="pe-inviteCode-${i}" type="text" value="${p.inviteCode||''}" /></div>
+            <div>
+              <label>Email Provider</label>
+              <select id="pe-emailProvider-${i}">
+                <option value="">(herdar da base)</option>
+                <option value="tempmailc" ${p.emailProvider==='tempmailc'?'selected':''}>tempmailc</option>
+                <option value="temp-mail.io" ${p.emailProvider==='temp-mail.io'?'selected':''}>temp-mail.io</option>
+                <option value="mail.tm" ${p.emailProvider==='mail.tm'?'selected':''}>mail.tm</option>
+              </select>
+            </div>
+            <div class="profile-edit-full">
+              <label>Proxies (uma por linha)</label>
+              <textarea id="pe-proxies-${i}" rows="2">${Array.isArray(p.proxies) ? p.proxies.map(px => px.server + (px.username?` (${px.username})`:'') ).join('\n') : ''}</textarea>
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:4px;">
+            <button class="btn btn-green" style="font-size:11px;padding:4px 10px;" onclick="saveEditProfile(${i})">\u2713 Salvar</button>
+            <button class="btn btn-ghost" style="font-size:11px;padding:4px 10px;" onclick="toggleEditProfile(${i})">Cancelar</button>
+            <span id="pe-msg-${i}" style="font-size:11px;color:var(--muted);align-self:center;"></span>
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function toggleEditProfile(i) {
+  const form = document.getElementById(`profile-edit-${i}`);
+  form.classList.toggle('open');
+}
+
+async function saveEditProfile(i) {
+  const msgEl = document.getElementById(`pe-msg-${i}`);
+  const proxiesRaw = document.getElementById(`pe-proxies-${i}`).value.trim();
+  const body = {
+    label:         document.getElementById(`pe-label-${i}`).value.trim() || undefined,
+    cityName:      document.getElementById(`pe-cityName-${i}`).value.trim() || undefined,
+    inviteCode:    document.getElementById(`pe-inviteCode-${i}`).value.trim() || undefined,
+    emailProvider: document.getElementById(`pe-emailProvider-${i}`).value || undefined,
+    proxiesRaw:    proxiesRaw ? proxiesRaw.split('\n').map(s => s.trim()).filter(Boolean) : [],
+  };
+  try {
+    const r = await fetch(`/api/profiles/${i}`, { method: 'PUT', headers: HEADERS, body: JSON.stringify(body) });
+    const d = await r.json();
+    if (d.ok) {
+      msgEl.textContent = '\u2705 Salvo';
+      msgEl.style.color = 'var(--green)';
+      await loadProfiles();
+    } else {
+      msgEl.textContent = '\u274c ' + (d.error || 'Erro');
+      msgEl.style.color = 'var(--red)';
+    }
+  } catch(e) { msgEl.textContent = '\u274c Erro de rede'; msgEl.style.color = 'var(--red)'; }
+}
+
+async function deleteProfile(i) {
+  if (!confirm(`Remover perfil P${i+1}?`)) return;
+  try {
+    const r = await fetch(`/api/profiles/${i}`, { method: 'DELETE', headers: HEADERS });
+    const d = await r.json();
+    if (d.ok) await loadProfiles();
+    else alert('Erro: ' + (d.error || 'desconhecido'));
+  } catch(e) { console.error(e); }
+}
+
+// Add profile form
+document.getElementById('btn-add-profile').addEventListener('click', () => {
+  document.getElementById('add-profile-form').classList.toggle('open');
+});
+document.getElementById('btn-cancel-add-profile').addEventListener('click', () => {
+  document.getElementById('add-profile-form').classList.remove('open');
+  document.getElementById('add-profile-msg').textContent = '';
+});
+document.getElementById('btn-save-new-profile').addEventListener('click', async () => {
+  const msgEl = document.getElementById('add-profile-msg');
+  const proxiesRaw = document.getElementById('np-proxies').value.trim();
+  const body = {
+    label:         document.getElementById('np-label').value.trim() || undefined,
+    cityName:      document.getElementById('np-cityName').value.trim() || undefined,
+    inviteCode:    document.getElementById('np-inviteCode').value.trim() || undefined,
+    emailProvider: document.getElementById('np-emailProvider').value || undefined,
+    proxiesRaw:    proxiesRaw ? proxiesRaw.split('\n').map(s => s.trim()).filter(Boolean) : [],
+  };
+  const newList = [...profilesList, body];
+  try {
+    const r = await fetch('/api/profiles', { method: 'POST', headers: HEADERS, body: JSON.stringify({ profiles: newList }) });
+    const d = await r.json();
+    if (d.ok) {
+      msgEl.textContent = '\u2705 Perfil adicionado';
+      msgEl.style.color = 'var(--green)';
+      document.getElementById('np-label').value = '';
+      document.getElementById('np-cityName').value = '';
+      document.getElementById('np-inviteCode').value = '';
+      document.getElementById('np-emailProvider').value = '';
+      document.getElementById('np-proxies').value = '';
+      setTimeout(() => document.getElementById('add-profile-form').classList.remove('open'), 1000);
+      await loadProfiles();
+    } else {
+      msgEl.textContent = '\u274c ' + (d.error || 'Erro'); msgEl.style.color = 'var(--red)';
+    }
+  } catch(e) { msgEl.textContent = '\u274c Erro de rede'; msgEl.style.color = 'var(--red)'; }
+});
 
 // ── SSE
 let es = null;
@@ -658,11 +840,9 @@ function connectSSE() {
   es.addEventListener('log',         e => { try { addLogEntry(JSON.parse(e.data)); } catch {} });
   es.addEventListener('kyc',         e => { try { renderKycState(JSON.parse(e.data)); } catch {} });
   es.addEventListener('cycleStatus', e => { try { renderCycleStatusMap(JSON.parse(e.data)); } catch {} });
+  es.addEventListener('profiles',    e => { try { applyProfiles(JSON.parse(e.data)); } catch {} });
   es.addEventListener('kycAlert',    e => {
-    try {
-      const d = JSON.parse(e.data);
-      showKycToast(d.cycle, d.provider, d.level, d.url);
-    } catch {}
+    try { const d = JSON.parse(e.data); showKycToast(d.cycle, d.provider, d.level, d.url); } catch {}
   });
 
   es.onopen = () => {
@@ -702,7 +882,7 @@ async function loadAccounts() {
     const accs = data.accounts || [];
     document.getElementById('accounts-count').textContent = accs.length;
     if (accs.length === 0) {
-      list.innerHTML = '<div class="empty">Nenhuma conta salva (apenas Socure é salvo)</div>';
+      list.innerHTML = '<div class="empty">Nenhuma conta salva (apenas Socure \u00e9 salvo)</div>';
       return;
     }
     list.innerHTML = accs.map(a => `
@@ -793,8 +973,7 @@ document.getElementById('btn-stop').addEventListener('click', async () => {
 });
 document.getElementById('btn-clear-logs').addEventListener('click', async () => {
   await fetch('/api/logs', { method: 'DELETE', headers: HEADERS });
-  logEntries = [];
-  renderLogs();
+  logEntries = []; renderLogs();
 });
 document.getElementById('btn-clear-kyc').addEventListener('click', async () => {
   await fetch('/api/kyc', { method: 'DELETE', headers: HEADERS }).catch(() => {});
