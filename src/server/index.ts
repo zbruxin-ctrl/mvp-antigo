@@ -48,7 +48,7 @@ app.get('/api/events', (req: Request, res: Response) => {
 
   res.write(`event: state\ndata: ${JSON.stringify(globalState.getState())}\n\n`);
   res.write(`event: kyc\ndata: ${JSON.stringify(globalState.getKycState())}\n\n`);
-  res.write(`event: cycles\ndata: ${JSON.stringify(globalState.getCycleStatuses())}\n\n`);
+  res.write(`event: cycle_steps\ndata: ${JSON.stringify(globalState.getCycleSteps())}\n\n`);
 
   const keepAlive = setInterval(() => {
     try { res.write(':ping\n\n'); } catch { clearInterval(keepAlive); sseClients.delete(res); }
@@ -61,11 +61,17 @@ app.get('/api/events', (req: Request, res: Response) => {
 });
 
 // ── Patch globalState para broadcast automático ───────────────
+// addLog: emite 'state' + 'log' sempre.
+// Se level === 'step': emite também 'cycle_steps' para o painel tempo real.
 const _origAddLog = globalState.addLog.bind(globalState);
 globalState.addLog = function(level, message, cycle) {
   _origAddLog(level, message, cycle);
   broadcastSSE('log', { timestamp: new Date().toISOString(), level, message, cycle });
   broadcastSSE('state', globalState.getState());
+  // level 'step' → atualiza painel de ciclos em tempo real
+  if (level === ('step' as any)) {
+    broadcastSSE('cycle_steps', globalState.getCycleSteps());
+  }
 };
 
 const _origAddKycSignal = globalState.addKycSignal.bind(globalState);
@@ -75,11 +81,12 @@ globalState.addKycSignal = function(provider, source, weight, cycle, url) {
   broadcastSSE('state', globalState.getState());
 };
 
-// Patch setCycleStatus para broadcast automático do painel de ciclos
-const _origSetCycleStatus = globalState.setCycleStatus.bind(globalState);
-globalState.setCycleStatus = function(cycle, step, done, failed) {
-  _origSetCycleStatus(cycle, step, done, failed);
-  broadcastSSE('cycles', globalState.getCycleStatuses());
+// Patch clearKycState: também emite SSE para limpar o frontend
+const _origClearKycState = globalState.clearKycState.bind(globalState);
+globalState.clearKycState = function() {
+  _origClearKycState();
+  broadcastSSE('kyc', globalState.getKycState());
+  broadcastSSE('cycle_steps', globalState.getCycleSteps());
 };
 
 // ── Executor ─────────────────────────────────────────────────
@@ -187,12 +194,12 @@ function validateConfig(body: Partial<Config> & { proxyServer?: string; proxyUse
   return { ok: true, data: body };
 }
 
-app.get('/api/status',   (_req, res) => { res.json(globalState.getState()); });
-app.get('/api/logs',     (_req, res) => { res.json(globalState.getLogs()); });
-app.get('/api/kyc',      (_req, res) => { res.json(globalState.getKycState()); });
-app.get('/api/cycles',   (_req, res) => { res.json(globalState.getCycleStatuses()); });
-app.get('/api/config',   requireAuth, (_req, res) => { res.json(globalState.getState().config); });
-app.get('/api/accounts', requireAuth, (_req, res) => {
+app.get('/api/status',       (_req, res) => { res.json(globalState.getState()); });
+app.get('/api/logs',         (_req, res) => { res.json(globalState.getLogs()); });
+app.get('/api/kyc',          (_req, res) => { res.json(globalState.getKycState()); });
+app.get('/api/cycle-steps',  (_req, res) => { res.json(globalState.getCycleSteps()); });
+app.get('/api/config',       requireAuth, (_req, res) => { res.json(globalState.getState().config); });
+app.get('/api/accounts',     requireAuth, (_req, res) => {
   res.json({ accounts: accountStore.list() });
 });
 
