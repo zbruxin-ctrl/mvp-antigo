@@ -9,8 +9,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300..700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 /* ═══════════════════════════════════════════════════
-   MVP BOT — DASHBOARD v2
-   Paleta: roxo/indigo profundo com acentos neon suaves
+   MVP BOT — DASHBOARD v3
    ═══════════════════════════════════════════════════ */
 :root {
   --bg:         #0c0b14;
@@ -41,6 +40,7 @@
   --radius-sm:   6px;
   --radius:      10px;
   --radius-lg:   14px;
+  --radius-xl:   18px;
   --radius-pill: 999px;
 
   --shadow-sm: 0 1px 3px rgba(0,0,0,.5);
@@ -54,7 +54,7 @@
   --font-body: 'Inter', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', 'Consolas', monospace;
 
-  --sidebar-w: 220px;
+  --sidebar-w: 228px;
   --topbar-h:  52px;
 }
 
@@ -153,7 +153,9 @@ button { cursor: pointer; font-family: inherit; }
   overflow: hidden;
 }
 
-/* ── Sidebar ────────────────────────────────────── */
+/* ══════════════════════════════════════════════════
+   SIDEBAR — redesigned
+   ══════════════════════════════════════════════════ */
 .sidebar {
   background: var(--surface);
   border-right: 1px solid var(--border);
@@ -162,81 +164,114 @@ button { cursor: pointer; font-family: inherit; }
   overflow: hidden;
 }
 
-/* Tab nav */
+/* ── Tab nav ── */
 .tab-nav {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 10px 8px;
-  border-bottom: 1px solid var(--border);
+  gap: 1px;
+  padding: 12px 10px 10px;
+}
+
+.tab-nav-label {
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--faint);
+  text-transform: uppercase;
+  letter-spacing: .12em;
+  padding: 0 6px 6px;
 }
 
 .tab-btn {
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 8px 10px;
-  border-radius: var(--radius-sm);
-  font-size: 12px;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: var(--radius);
+  font-size: 12.5px;
   font-weight: 500;
   cursor: pointer;
   background: transparent;
   color: var(--muted);
   border: none;
-  transition: background 160ms var(--ease), color 160ms var(--ease);
+  transition: background var(--transition), color var(--transition), box-shadow var(--transition);
   text-align: left;
   width: 100%;
+  position: relative;
 }
+
 .tab-btn .tab-icon {
-  width: 16px; height: 16px;
+  width: 15px; height: 15px;
   flex-shrink: 0;
-  opacity: .6;
-  transition: opacity 160ms;
+  opacity: .55;
+  transition: opacity var(--transition), filter var(--transition);
 }
-.tab-btn:hover { background: var(--surface2); color: var(--text); }
-.tab-btn:hover .tab-icon { opacity: 1; }
+
+.tab-btn:hover {
+  background: rgba(255,255,255,.04);
+  color: var(--text);
+}
+.tab-btn:hover .tab-icon { opacity: .85; }
+
 .tab-btn.active {
   background: var(--accent-soft);
-  color: var(--indigo);
-  border: 1px solid rgba(124,58,237,.22);
+  color: #a5b4fc;
+  font-weight: 600;
 }
 .tab-btn.active .tab-icon {
   opacity: 1;
-  filter: drop-shadow(0 0 4px rgba(129,140,248,.6));
+  filter: drop-shadow(0 0 5px rgba(165,180,252,.5));
+}
+/* pill indicator */
+.tab-btn.active::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 50%;
+  transform: translateY(-50%);
+  width: 3px; height: 60%;
+  border-radius: 0 var(--radius-pill) var(--radius-pill) 0;
+  background: var(--indigo);
+  box-shadow: 0 0 8px rgba(129,140,248,.6);
 }
 
 .tab-panel { display: none; }
 .tab-panel.active { display: block; }
 
+/* ── Divider in sidebar ── */
+.sidebar-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 10px 8px;
+  opacity: .6;
+}
+
 /* KYC live feed */
 .feed-header {
-  padding: 10px 12px 6px;
-  font-size: 10px;
+  padding: 8px 14px 6px;
+  font-size: 9px;
   font-weight: 700;
   color: var(--faint);
   text-transform: uppercase;
-  letter-spacing: .1em;
-  border-bottom: 1px solid var(--border);
+  letter-spacing: .12em;
   display: flex;
   align-items: center;
   gap: 5px;
 }
-.feed-header::before { content: '⚡'; font-size: 11px; }
+.feed-header::before { content: '⚡'; font-size: 10px; }
 
 .kyc-feed {
-  padding: 6px 8px;
+  padding: 4px 8px 8px;
   overflow-y: auto;
   flex: 1;
 }
 .kyc-feed-item {
-  padding: 6px 8px;
-  border-radius: var(--radius-sm);
-  margin-bottom: 3px;
+  padding: 7px 9px;
+  border-radius: var(--radius);
+  margin-bottom: 4px;
   background: var(--surface2);
-  border: 1px solid var(--border);
+  border: 1px solid rgba(44,41,69,.7);
   border-left: 3px solid var(--faint);
   font-size: 11px;
-  transition: background 150ms;
+  transition: background var(--transition), border-color var(--transition);
 }
 .kyc-feed-item:hover { background: var(--surface3); }
 .kyc-feed-item.socure { border-left-color: var(--green); }
@@ -593,7 +628,113 @@ button { cursor: pointer; font-family: inherit; }
 .account-kyc.onfido { background: rgba(251,146,60,.12);  color: var(--orange); }
 .account-kyc.jumio  { background: rgba(192,132,252,.12); color: var(--purple); }
 
-/* ── Forms ──────────────────────────────────────── */
+/* ══════════════════════════════════════════════════
+   CONFIG — grouped card layout
+   ══════════════════════════════════════════════════ */
+.cfg-sections { display: flex; flex-direction: column; gap: 16px; }
+
+.cfg-section {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.cfg-section-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 16px;
+  background: rgba(255,255,255,.02);
+  border-bottom: 1px solid var(--border);
+}
+
+.cfg-section-icon {
+  width: 28px; height: 28px;
+  border-radius: var(--radius);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+.cfg-section-icon.purple { background: rgba(124,58,237,.18); }
+.cfg-section-icon.blue   { background: rgba(96,165,250,.15); }
+.cfg-section-icon.yellow { background: rgba(251,191,36,.12); }
+.cfg-section-icon.green  { background: rgba(74,222,128,.12); }
+
+.cfg-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: .01em;
+}
+.cfg-section-subtitle {
+  font-size: 11px;
+  color: var(--muted);
+  margin-left: auto;
+}
+
+.cfg-section-body {
+  padding: 14px 16px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 16px;
+}
+.cfg-section-body.single { grid-template-columns: 1fr; }
+.cfg-full { grid-column: 1 / -1; }
+
+/* ── Field wrapper ── */
+.cfg-field { display: flex; flex-direction: column; gap: 5px; }
+
+.cfg-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted);
+  letter-spacing: .01em;
+}
+
+.cfg-input, .cfg-select, .cfg-textarea {
+  width: 100%;
+  padding: 8px 11px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 12.5px;
+  font-family: inherit;
+  transition: border-color 150ms, box-shadow 150ms, background 150ms;
+  outline: none;
+}
+.cfg-input:focus, .cfg-select:focus, .cfg-textarea:focus {
+  border-color: rgba(124,58,237,.55);
+  box-shadow: 0 0 0 3px rgba(124,58,237,.12);
+  background: var(--surface3);
+}
+.cfg-input::placeholder { color: var(--faint); }
+.cfg-textarea { resize: vertical; }
+
+/* ── Config footer ── */
+.cfg-footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 0 0;
+}
+.cfg-msg {
+  font-size: 12px;
+  color: var(--muted);
+  transition: color .2s;
+}
+
+/* ── Warn ── */
+.parallel-warn {
+  display: none; margin-top: 6px; padding: 7px 11px;
+  border-radius: var(--radius);
+  background: rgba(251,191,36,.08); border: 1px solid rgba(251,191,36,.2);
+  color: var(--yellow); font-size: 11px; line-height: 1.5;
+}
+.parallel-warn.visible { display: block; }
+
+/* ── Forms generic ── */
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .form-full { grid-column: 1 / -1; }
 
@@ -614,14 +755,6 @@ input:focus, select:focus, textarea:focus {
   box-shadow: 0 0 0 3px rgba(124,58,237,.1);
 }
 textarea { resize: vertical; }
-
-.parallel-warn {
-  display: none; margin-top: 6px; padding: 6px 10px;
-  border-radius: var(--radius-sm);
-  background: rgba(251,191,36,.08); border: 1px solid rgba(251,191,36,.2);
-  color: var(--yellow); font-size: 11px; line-height: 1.5;
-}
-.parallel-warn.visible { display: block; }
 
 /* ── Profiles ───────────────────────────────────── */
 .profile-item {
@@ -696,6 +829,7 @@ textarea { resize: vertical; }
     <!-- Sidebar -->
     <div class="sidebar">
       <nav class="tab-nav">
+        <div class="tab-nav-label">Menu</div>
         <button class="tab-btn active" data-tab="dashboard">
           <svg class="tab-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6">
             <rect x="1" y="1" width="6" height="6" rx="1.2"/><rect x="9" y="1" width="6" height="6" rx="1.2"/>
@@ -718,13 +852,6 @@ textarea { resize: vertical; }
           </svg>
           Contas
         </button>
-        <button class="tab-btn" data-tab="config">
-          <svg class="tab-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6">
-            <circle cx="8" cy="8" r="2"/>
-            <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.42 1.42M11.53 11.53l1.42 1.42M3.05 12.95l1.42-1.42M11.53 4.47l1.42-1.42"/>
-          </svg>
-          Config
-        </button>
         <button class="tab-btn" data-tab="profiles">
           <svg class="tab-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6">
             <path d="M8 1L1 5l7 4 7-4-7-4z"/>
@@ -733,8 +860,19 @@ textarea { resize: vertical; }
           </svg>
           Perfis
         </button>
+
+        <div class="sidebar-divider"></div>
+
+        <button class="tab-btn" data-tab="config">
+          <svg class="tab-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6">
+            <circle cx="8" cy="8" r="2"/>
+            <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.42 1.42M11.53 11.53l1.42 1.42M3.05 12.95l1.42-1.42M11.53 4.47l1.42-1.42"/>
+          </svg>
+          Configurações
+        </button>
       </nav>
 
+      <div class="sidebar-divider" style="margin:0 0 0;"></div>
       <div class="feed-header">KYC Live Feed</div>
       <div class="kyc-feed" id="kyc-feed">
         <div class="empty">Aguardando sinais...</div>
@@ -820,45 +958,90 @@ textarea { resize: vertical; }
         </div>
       </div>
 
-      <!-- Config -->
+      <!-- Config — redesigned -->
       <div id="tab-config" class="tab-panel">
-        <div class="card">
-          <div class="card-title">Configuração</div>
-          <div class="form-grid" id="config-form">
-            <div>
-              <label>Email Provider</label>
-              <select id="cfg-emailProvider">
-                <option value="tempmailc">tempmailc</option>
-                <option value="temp-mail.io">temp-mail.io</option>
-                <option value="mail.tm">mail.tm</option>
-              </select>
+        <div class="cfg-sections">
+
+          <!-- Seção: Email -->
+          <div class="cfg-section">
+            <div class="cfg-section-header">
+              <div class="cfg-section-icon purple">✉️</div>
+              <span class="cfg-section-title">Email & Acesso</span>
             </div>
-            <div><label>Temp Mail API Key</label><input id="cfg-tempMailApiKey" type="text" /></div>
-            <div><label>Invite Code</label><input id="cfg-inviteCode" type="text" /></div>
-            <div><label>Cidade</label><input id="cfg-cityName" type="text" placeholder="São Paulo" /></div>
-            <div><label>OTP Timeout (ms)</label><input id="cfg-otpTimeout" type="number" /></div>
-            <div>
-              <label>Ciclos paralelos</label>
-              <input id="cfg-parallelCycles" type="number" min="1" max="20" />
-              <div class="parallel-warn" id="parallel-warn">⚠️ Recomendado ≤ 3 ciclos em paralelo. Acima disso pode causar crash.</div>
-            </div>
-            <div><label>Extra Delay (ms)</label><input id="cfg-extraDelay" type="number" /></div>
-            <div>
-              <label>Headless</label>
-              <select id="cfg-headless">
-                <option value="false">Visível (false)</option>
-                <option value="true">Headless (true)</option>
-              </select>
-            </div>
-            <div class="form-full">
-              <label>Proxies (uma por linha: host:porta ou http://user:pass@host:porta)</label>
-              <textarea id="cfg-proxies" rows="3"></textarea>
-            </div>
-            <div class="form-full">
-              <button class="btn btn-green" id="btn-save-config">💾 Salvar</button>
-              <span id="cfg-msg" style="font-size:12px;color:var(--muted);margin-left:12px;"></span>
+            <div class="cfg-section-body">
+              <div class="cfg-field">
+                <span class="cfg-label">Provider de Email</span>
+                <select class="cfg-select" id="cfg-emailProvider">
+                  <option value="tempmailc">tempmailc</option>
+                  <option value="temp-mail.io">temp-mail.io</option>
+                  <option value="mail.tm">mail.tm</option>
+                </select>
+              </div>
+              <div class="cfg-field">
+                <span class="cfg-label">Temp Mail API Key</span>
+                <input class="cfg-input" id="cfg-tempMailApiKey" type="text" placeholder="Sua chave de API" />
+              </div>
+              <div class="cfg-field">
+                <span class="cfg-label">Invite Code</span>
+                <input class="cfg-input" id="cfg-inviteCode" type="text" placeholder="Código de convite" />
+              </div>
+              <div class="cfg-field">
+                <span class="cfg-label">Cidade</span>
+                <input class="cfg-input" id="cfg-cityName" type="text" placeholder="São Paulo" />
+              </div>
             </div>
           </div>
+
+          <!-- Seção: Execução -->
+          <div class="cfg-section">
+            <div class="cfg-section-header">
+              <div class="cfg-section-icon blue">⚙️</div>
+              <span class="cfg-section-title">Execução</span>
+            </div>
+            <div class="cfg-section-body">
+              <div class="cfg-field">
+                <span class="cfg-label">OTP Timeout (ms)</span>
+                <input class="cfg-input" id="cfg-otpTimeout" type="number" placeholder="90000" />
+              </div>
+              <div class="cfg-field">
+                <span class="cfg-label">Extra Delay (ms)</span>
+                <input class="cfg-input" id="cfg-extraDelay" type="number" placeholder="2000" />
+              </div>
+              <div class="cfg-field">
+                <span class="cfg-label">Ciclos Paralelos</span>
+                <input class="cfg-input" id="cfg-parallelCycles" type="number" min="1" max="20" />
+                <div class="parallel-warn" id="parallel-warn">⚠️ Recomendado ≤ 3 ciclos em paralelo. Acima disso pode causar crash.</div>
+              </div>
+              <div class="cfg-field">
+                <span class="cfg-label">Headless</span>
+                <select class="cfg-select" id="cfg-headless">
+                  <option value="false">Visível (false)</option>
+                  <option value="true">Headless (true)</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Seção: Proxies -->
+          <div class="cfg-section">
+            <div class="cfg-section-header">
+              <div class="cfg-section-icon yellow">🔀</div>
+              <span class="cfg-section-title">Proxies</span>
+              <span class="cfg-section-subtitle">Uma por linha · host:porta ou http://user:pass@host:porta</span>
+            </div>
+            <div class="cfg-section-body single">
+              <div class="cfg-field cfg-full">
+                <textarea class="cfg-textarea" id="cfg-proxies" rows="4" placeholder="http://user:pass@host:3128&#10;socks5://host:1080"></textarea>
+              </div>
+            </div>
+          </div>
+
+          <!-- Footer de salvar -->
+          <div class="cfg-footer">
+            <button class="btn btn-green" id="btn-save-config">💾 Salvar configurações</button>
+            <span id="cfg-msg" class="cfg-msg"></span>
+          </div>
+
         </div>
       </div>
 
