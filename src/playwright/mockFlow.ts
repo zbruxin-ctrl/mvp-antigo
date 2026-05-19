@@ -817,12 +817,6 @@ async function stepCity(
 }
 
 // ─── [7b] TIPO DE FLUXO (veículo/moto/bicicleta) ─────────────────────────────────
-// Tela: testId "step flowTypes" — exibe cards de tipo de parceiro (P2P, UberEats, moto…).
-// Ação: clicar no card P2P (Viagens de carro) e depois em Continuar.
-//
-// BUG 5 FIX: após clicar no card P2P, aguarda o estado "selecionado" antes de prosseguir.
-// Indicadores de seleção: aria-checked="true", aria-selected="true", atributo data-selected,
-// classe "selected" / "active" / "checked", ou aria-pressed="true".
 async function stepFlowType(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '🚗 [7b] Tipo de fluxo...', cycle);
   await waitForSpinner(p, cycle, 10_000);
@@ -852,8 +846,6 @@ async function stepFlowType(p: Page, cycle: number): Promise<void> {
       globalState.addLog('info', `✔️ card P2P clicado via: ${sel}`, cycle);
       p2pClicked = true;
 
-      // BUG 5 FIX: aguarda estado selecionado antes de ir para Continuar.
-      // Verifica aria-checked, aria-selected, aria-pressed, data-selected e className.
       const selectedConfirmed = await p.waitForFunction(
         (selector: string) => {
           const node = document.querySelector(selector);
@@ -872,7 +864,6 @@ async function stepFlowType(p: Page, cycle: number): Promise<void> {
       if (selectedConfirmed) {
         globalState.addLog('info', '✔️ card P2P confirmado como selecionado', cycle);
       } else {
-        // segunda tentativa de clique caso o estado não tenha mudado
         globalState.addLog('warn', '⚠️ card P2P: estado selecionado não confirmado — re-clicando', cycle);
         await el.click({ force: true }).catch(() => {});
         await sleep(400);
@@ -914,13 +905,7 @@ async function stepFlowType(p: Page, cycle: number): Promise<void> {
   ]);
 }
 
-// ─── [7c] TIPO DE VEÍCULO ("Preciso de um veículo") ──────────────────────────────
-// Tela: testId "step vehicleWithSolutions" — radio com "Tenho um veículo" / "Preciso de um veículo".
-// Ação: selecionar "Preciso de um veículo" e clicar em Continuar.
-//
-// BUG 6 FIX: trocado [role="radiogroup"] [role="radio"]:nth-child(2) por seletor baseado em texto,
-// com fallback para radios[1] via querySelectorAll — evita quebrar se houver elementos
-// intermediários no DOM entre o radiogroup e os items.
+// ─── [7c] TIPO DE VEÍCULO ─────────────────────────────────────────────────────────
 async function stepVehicleType(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '🚘 [7c] Tipo de veículo...', cycle);
   await waitForSpinner(p, cycle, 10_000);
@@ -934,8 +919,6 @@ async function stepVehicleType(p: Page, cycle: number): Promise<void> {
 
   await dismissCookieBanner(p, cycle);
 
-  // BUG 6 FIX: seletores baseados em texto primeiro — robustos a mudanças de estrutura DOM.
-  // nth-child(2) removido pois pegava o 2º filho do container, não o 2º radio.
   const NEED_VEHICLE_CANDIDATES = [
     'label:has-text("Preciso de um veículo")',
     '[role="radio"]:has-text("Preciso de um veículo")',
@@ -958,15 +941,12 @@ async function stepVehicleType(p: Page, cycle: number): Promise<void> {
   }
 
   if (!radioClicked) {
-    // Fallback: itera APENAS sobre [role="radio"] — não sobre filhos genéricos do container
     const jsClicked = await p.evaluate(() => {
-      // querySelectorAll('[role="radio"]') retorna apenas os radios, independente de nesting
       const radios = Array.from(document.querySelectorAll('[role="radio"]')) as HTMLElement[];
       const target = radios.find(r =>
         r.offsetParent !== null && r.textContent?.includes('Preciso de um veículo')
       );
       if (target) { target.click(); return 'by-text'; }
-      // último recurso: segundo radio visível (índice 1 do array de radios)
       const visible = radios.filter(r => r.offsetParent !== null);
       if (visible.length >= 2) { visible[1].click(); return 'by-index'; }
       return null;
@@ -1242,8 +1222,6 @@ async function dismissModals(p: Page, cycle: number): Promise<void> {
 // ─── BROWSER ──────────────────────────────────────────────────────────────────────
 
 let browserInstance: Browser | null = null;
-// BUG 2 FIX: rastreia a configuração atual do browser com base em getProxyForCycle(0)
-// em vez de ler state.proxies (campo que não existe em AppState).
 let lastProxyConfig: string | null = null;
 let lastHeadless: boolean | null = null;
 
@@ -1261,8 +1239,6 @@ const BRAVE_CANDIDATES = [
 ].filter(Boolean) as string[];
 
 export class MockPlaywrightFlow {
-  // BUG 2 FIX: usa getProxyForCycle(0) como "proxy de referência" para decidir se o
-  // browser precisa ser reiniciado — elimina o acesso a state.proxies que não existe.
   static async init(headless = true): Promise<void> {
     const proxy0 = globalState.getProxyForCycle(0);
     const proxyKey = proxy0 ? proxy0.server : '';
@@ -1340,7 +1316,6 @@ export class MockPlaywrightFlow {
     config: { emailProvider: EmailProvider; tempMailApiKey: string; otpTimeout: number; extraDelay: number; inviteCode: string; cityName?: string },
     cycle: number
   ): Promise<void> {
-    // BUG 2 FIX: usa getProxyForCycle(cycle) — única fonte da verdade, sincronizado com init()
     const proxyConfig = globalState.getProxyForCycle(cycle);
 
     const ctxOpts: Parameters<Browser['newContext']>[0] = {
@@ -1422,14 +1397,17 @@ export class MockPlaywrightFlow {
 
       const kycSignals = globalState.getKycSignals(cycle);
       const topSignal  = kycSignals.length > 0 ? kycSignals[0] : null;
+
+      // FIX: usa getKycByCycleEntry em vez de cast `as any` para ler o kycLevel tipado
+      const kycLevel = topSignal
+        ? (globalState.getKycByCycleEntry(cycle)?.[topSignal.provider]?.level ?? null)
+        : null;
+
       await accountStore.saveAccount({
         email, telefone, telefoneFmt, nome, sobrenome,
         cycle,
         kycProvider: topSignal?.provider ?? null,
-        kycLevel:    topSignal ? (() => {
-          const s = globalState.getState() as any;
-          return s.kycByCycle?.[cycle]?.[topSignal.provider]?.level ?? null;
-        })() : null,
+        kycLevel,
         localizacao: config.cityName ?? 'São Paulo',
       });
       globalState.addLog('success', `✅ Ciclo ${cycle} concluído — conta: ${email}`, cycle);
