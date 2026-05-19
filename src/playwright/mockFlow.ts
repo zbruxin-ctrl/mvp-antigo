@@ -1400,8 +1400,8 @@ export class MockPlaywrightFlow {
 
       // FIX: usa getKycByCycleEntry em vez de cast `as any` para ler o kycLevel tipado
       const kycLevel = topSignal
-        ? (globalState.getKycByCycleEntry(cycle)?.[topSignal.provider]?.level ?? null)
-        : null;
+        ? (globalState.getKycByCycleEntry(cycle)?.[topSignal.provider]?.level ?? undefined)
+        : undefined;
 
       // Coleta os cookies da sessão para salvar no account store
       const cookies = await context.cookies().catch(() => []);
@@ -1410,7 +1410,7 @@ export class MockPlaywrightFlow {
       accountStore.save({
         email, telefone, telefoneFmt, nome, sobrenome,
         cycle,
-        kycProvider: topSignal?.provider ?? null,
+        kycProvider: topSignal?.provider ?? undefined,
         kycLevel,
         localizacao: config.cityName ?? 'São Paulo',
         cookies,
