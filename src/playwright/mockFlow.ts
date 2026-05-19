@@ -1264,7 +1264,8 @@ export class MockPlaywrightFlow {
   // BUG 2 FIX: usa getProxyForCycle(0) como "proxy de referência" para decidir se o
   // browser precisa ser reiniciado — elimina o acesso a state.proxies que não existe.
   static async init(headless = true): Promise<void> {
-    const proxyKey = globalState.getProxyForCycle(0) ?? '';
+    const proxy0 = globalState.getProxyForCycle(0);
+    const proxyKey = proxy0 ? proxy0.server : '';
 
     if (browserInstance && (lastProxyConfig !== proxyKey || lastHeadless !== headless)) {
       globalState.addLog('info', '🔄 Configuração mudou — reiniciando browser...');
@@ -1340,7 +1341,7 @@ export class MockPlaywrightFlow {
     cycle: number
   ): Promise<void> {
     // BUG 2 FIX: usa getProxyForCycle(cycle) — única fonte da verdade, sincronizado com init()
-    const proxyUrl = globalState.getProxyForCycle(cycle);
+    const proxyConfig = globalState.getProxyForCycle(cycle);
 
     const ctxOpts: Parameters<Browser['newContext']>[0] = {
       userAgent: MOBILE_UA,
@@ -1355,16 +1356,13 @@ export class MockPlaywrightFlow {
       extraHTTPHeaders: MOBILE_HEADERS,
     };
 
-    if (proxyUrl) {
-      try {
-        const u = new URL(proxyUrl.startsWith('http') ? proxyUrl : `http://${proxyUrl}`);
-        ctxOpts.proxy = {
-          server: `${u.protocol}//${u.hostname}:${u.port}`,
-          username: u.username ? decodeURIComponent(u.username) : undefined,
-          password: u.password ? decodeURIComponent(u.password) : undefined,
-        };
-        globalState.addLog('info', `🌐 Proxy: ${ctxOpts.proxy.server}`, cycle);
-      } catch { ctxOpts.proxy = { server: proxyUrl }; }
+    if (proxyConfig) {
+      ctxOpts.proxy = {
+        server:   proxyConfig.server,
+        username: proxyConfig.username,
+        password: proxyConfig.password,
+      };
+      globalState.addLog('info', `🌐 Proxy: ${proxyConfig.server}`, cycle);
     } else {
       globalState.addLog('info', '🌐 Sem proxy (VPN)', cycle);
     }

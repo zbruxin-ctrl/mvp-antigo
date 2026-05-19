@@ -190,6 +190,7 @@ class GlobalState {
   getKycSignals(cycle: number): KycSignal[] {
     const cycleMap = this.kycByCycle[cycle];
     if (!cycleMap) return [];
+    // retorna sinais ordenados por score descendente (provider mais forte primeiro)
     const sorted = Object.values(cycleMap).sort((a, b) => b.score - a.score);
     const result: KycSignal[] = [];
     for (const state of sorted) result.push(...state.signals);
@@ -326,7 +327,7 @@ class GlobalState {
       this.state.activeParallel += 1;
       const cycle = this.currentCycle;
       // BUG 3 FIX: cyclesTotal só incrementa quando o executor de fato começa
-      // (o incremento agora é feito dentro de executeCycleWithRetry na 1ª tentativa)
+      // clearKycCycle garante que sinais de execuções anteriores com mesmo número não acumulem
       this.clearKycCycle(cycle);
       return this.executeCycleWithRetry(cycle).finally(() => {
         this.state.activeParallel = Math.max(0, this.state.activeParallel - 1);
