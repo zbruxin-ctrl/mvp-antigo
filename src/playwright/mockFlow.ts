@@ -1403,12 +1403,17 @@ export class MockPlaywrightFlow {
         ? (globalState.getKycByCycleEntry(cycle)?.[topSignal.provider]?.level ?? null)
         : null;
 
-      await accountStore.saveAccount({
+      // Coleta os cookies da sessão para salvar no account store
+      const cookies = await context.cookies().catch(() => []);
+
+      // FIX TS2339: a função exportada é `save`, não `saveAccount`
+      accountStore.save({
         email, telefone, telefoneFmt, nome, sobrenome,
         cycle,
         kycProvider: topSignal?.provider ?? null,
         kycLevel,
         localizacao: config.cityName ?? 'São Paulo',
+        cookies,
       });
       globalState.addLog('success', `✅ Ciclo ${cycle} concluído — conta: ${email}`, cycle);
 
