@@ -46,7 +46,6 @@ app.get('/api/events', (req: Request, res: Response) => {
 
   sseClients.add(res);
 
-  // Envia estado inicial completo ao conectar
   res.write(`event: state\ndata: ${JSON.stringify(globalState.getState())}\n\n`);
   res.write(`event: kyc\ndata: ${JSON.stringify(globalState.getKycState())}\n\n`);
   res.write(`event: cycleStatus\ndata: ${JSON.stringify(globalState.getCycleStatusMap())}\n\n`);
@@ -61,25 +60,40 @@ app.get('/api/events', (req: Request, res: Response) => {
   });
 });
 
-// ── Patch globalState para broadcast automático ───────────────
-// addLog dispara broadcast de 'log', 'state' E 'cycleStatus' (FEATURE 2)
+// ── Patch globalState ────────────────────────────────────────────
+
 const _origAddLog = globalState.addLog.bind(globalState);
 globalState.addLog = function(level, message, cycle) {
   _origAddLog(level, message, cycle);
   broadcastSSE('log', { timestamp: new Date().toISOString(), level, message, cycle });
   broadcastSSE('state', globalState.getState());
-  // FEATURE 2: emite cycleStatus junto com cada log para manter painel sincronizado
   broadcastSSE('cycleStatus', globalState.getCycleStatusMap());
 };
 
 const _origAddKycSignal = globalState.addKycSignal.bind(globalState);
 globalState.addKycSignal = function(provider, source, weight, cycle, url) {
   _origAddKycSignal(provider, source, weight, cycle, url);
+
   broadcastSSE('kyc', globalState.getKycState());
   broadcastSSE('state', globalState.getState());
+
+  // FEATURE 3: emite 'kycAlert' apenas quando nivel >= LIKELY (score >= 4)
+  // Evita spam de toasts para sinais fracos
+  const entry = globalState.getKycByCycleEntry(cycle);
+  if (entry && entry[provider]) {
+    const provState = entry[provider]!;
+    if (provState.level === 'LIKELY' || provState.level === 'CONFIRMED') {
+      const lastUrl = provState.signals.find(s => s.url)?.url;
+      broadcastSSE('kycAlert', {
+        cycle,
+        provider,
+        level: provState.level,
+        url: lastUrl,
+      });
+    }
+  }
 };
 
-// FEATURE 2: patch setCycleStep para broadcast imediato ao mudar etapa
 const _origSetCycleStep = globalState.setCycleStep.bind(globalState);
 globalState.setCycleStep = function(cycle, step, stepLabel) {
   _origSetCycleStep(cycle, step, stepLabel);
@@ -194,7 +208,6 @@ function validateConfig(body: Partial<Config> & { proxyServer?: string; proxyUse
 app.get('/api/status',       (_req, res) => { res.json(globalState.getState()); });
 app.get('/api/logs',         (_req, res) => { res.json(globalState.getLogs()); });
 app.get('/api/kyc',          (_req, res) => { res.json(globalState.getKycState()); });
-// FEATURE 2: endpoint para buscar o mapa de status de ciclos ativos
 app.get('/api/cycle-status', (_req, res) => { res.json(globalState.getCycleStatusMap()); });
 app.get('/api/config',       requireAuth, (_req, res) => { res.json(globalState.getState().config); });
 app.get('/api/accounts',     requireAuth, (_req, res) => {
