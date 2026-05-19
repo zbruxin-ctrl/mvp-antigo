@@ -1,6 +1,6 @@
 import express, { Request, Response, NextFunction } from 'express';
 import path from 'path';
-import { globalState, parseProxyString } from '../state/globalState';
+import { globalState, parseProxyString, CycleStatus } from '../state/globalState';
 import { MockPlaywrightFlow } from '../playwright/mockFlow';
 import { diagnoseUberForm } from '../playwright/diagnose';
 import * as accountStore from '../store/accountStore';
@@ -48,6 +48,7 @@ app.get('/api/events', (req: Request, res: Response) => {
 
   res.write(`event: state\ndata: ${JSON.stringify(globalState.getState())}\n\n`);
   res.write(`event: kyc\ndata: ${JSON.stringify(globalState.getKycState())}\n\n`);
+  res.write(`event: cycleStatus\ndata: ${JSON.stringify(globalState.getCycleStatuses())}\n\n`);
 
   const keepAlive = setInterval(() => {
     try { res.write(':ping\n\n'); } catch { clearInterval(keepAlive); sseClients.delete(res); }
@@ -60,8 +61,7 @@ app.get('/api/events', (req: Request, res: Response) => {
 });
 
 // ── Patch globalState para broadcast automático ───────────────
-// BUG 1 FIX: addLog agora sempre emite 'state' — cyclesCompleted é
-// incrementado ANTES de chamar addLog, então o valor atualizado chega ao frontend.
+
 const _origAddLog = globalState.addLog.bind(globalState);
 globalState.addLog = function(level, message, cycle) {
   _origAddLog(level, message, cycle);
@@ -74,6 +74,22 @@ globalState.addKycSignal = function(provider, source, weight, cycle, url) {
   _origAddKycSignal(provider, source, weight, cycle, url);
   broadcastSSE('kyc', globalState.getKycState());
   broadcastSSE('state', globalState.getState());
+};
+
+// STOP FIX: onStateChange garante broadcast mesmo quando stop() é chamado
+// sem passar por addLog (ex: STOPPING → STOPPED ao final do runLoop).
+globalState.onStateChange = (state) => {
+  broadcastSSE('state', state);
+};
+
+// CYCLE STATUS: broadcast do painel de status por ciclo em tempo real
+globalState.onCycleStatusChange = (statuses: CycleStatus[]) => {
+  broadcastSSE('cycleStatus', statuses);
+};
+
+// KYC ALERT: broadcast de alerta sonoro/visual quando KYC é detectado
+globalState.onKycDetected = (cycle, provider, level, url) => {
+  broadcastSSE('kycAlert', { cycle, provider, level, url });
 };
 
 // ── Executor ─────────────────────────────────────────────────
@@ -107,7 +123,6 @@ const VALID_EMAIL_PROVIDERS = ['tempmailc', 'temp-mail.io', 'mail.tm'];
 function validateConfig(body: Partial<Config> & { proxyServer?: string; proxyUser?: string; proxyPass?: string; proxiesRaw?: string[] }): { ok: true; data: Partial<Config> } | { ok: false; error: string } {
   const errors: string[] = [];
 
-  // ── BUG 3 FIX: processa proxiesRaw (array de strings vindo do frontend) ──
   if (Array.isArray((body as any).proxiesRaw)) {
     const lines: string[] = (body as any).proxiesRaw;
     body.proxies = lines
@@ -182,11 +197,12 @@ function validateConfig(body: Partial<Config> & { proxyServer?: string; proxyUse
   return { ok: true, data: body };
 }
 
-app.get('/api/status',   (_req, res) => { res.json(globalState.getState()); });
-app.get('/api/logs',     (_req, res) => { res.json(globalState.getLogs()); });
-app.get('/api/kyc',      (_req, res) => { res.json(globalState.getKycState()); });
-app.get('/api/config',   requireAuth, (_req, res) => { res.json(globalState.getState().config); });
-app.get('/api/accounts', requireAuth, (_req, res) => {
+app.get('/api/status',        (_req, res) => { res.json(globalState.getState()); });
+app.get('/api/logs',          (_req, res) => { res.json(globalState.getLogs()); });
+app.get('/api/kyc',           (_req, res) => { res.json(globalState.getKycState()); });
+app.get('/api/cycle-status',  (_req, res) => { res.json(globalState.getCycleStatuses()); });
+app.get('/api/config',        requireAuth, (_req, res) => { res.json(globalState.getState().config); });
+app.get('/api/accounts',      requireAuth, (_req, res) => {
   res.json({ accounts: accountStore.list() });
 });
 
@@ -205,8 +221,6 @@ app.delete('/api/logs', requireAuth, (_req, res) => {
   res.json({ ok: true });
 });
 
-// FIX Parte 1: DELETE /api/kyc agora exige autenticação (requireAuth adicionado).
-// Antes qualquer cliente sem senha podia limpar o estado KYC.
 app.delete('/api/kyc', requireAuth, (_req, res) => {
   globalState.clearKycState();
   res.json({ ok: true });
@@ -270,9 +284,6 @@ app.listen(PORT, () => {
   console.log(`📁 Frontend dir: ${FRONTEND_DIR}`);
 });
 
-// FIX Parte 1: cleanup() era chamado no gracefulShutdown mas não existia em MockPlaywrightFlow →
-// TypeError em runtime ao receber SIGINT/SIGTERM. Agora delega para o método estático adicionado
-// em mockFlow.ts (Parte 2).
 async function gracefulShutdown(signal: string) {
   console.log(`\n🛑 Recebido ${signal} — encerrando graciosamente...`);
   await MockPlaywrightFlow.cleanup();
