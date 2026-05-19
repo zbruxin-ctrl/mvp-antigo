@@ -31,12 +31,13 @@ function kycLevel(score: number): KycProviderState['level'] {
 }
 
 // ─── CycleStep — etapa atual de cada ciclo ───────────────────────────────────
-// Emitida via addLog com level 'step' para o frontend montar o painel tempo real.
 
 export interface CycleStep {
   cycle: number;
-  step: string;       // ex: '[1] Email', '[2] OTP', '[10] KYC'
-  startedAt: string;  // ISO timestamp
+  step: string;
+  startedAt: number;  // Date.now() — ms para calcular elapsed no frontend
+  stepStatus: 'running' | 'done' | 'error';
+  error?: string;
 }
 
 // ─── Payload por ciclo ────────────────────────────────────────────────────────
@@ -53,13 +54,6 @@ export interface CyclePayload {
 
 // ─── Helpers de proxy ─────────────────────────────────────────────────────────
 
-/**
- * Parseia uma string de proxy nos formatos:
- *   http://user:pass@host:port
- *   socks5://user:pass@host:port
- *   host:port
- *   host:port:user:pass
- */
 export function parseProxyString(raw: string): ProxyConfig | null {
   raw = raw.trim();
   if (!raw) return null;
@@ -93,7 +87,6 @@ export function parseProxyString(raw: string): ProxyConfig | null {
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
 
-/** Limite máximo de entradas de log em memória */
 const MAX_LOG_ENTRIES = 2000;
 
 // ─── GlobalState ──────────────────────────────────────────────────────────────
@@ -128,10 +121,10 @@ class GlobalState {
   private kycByCycle: KycByCycle = {};
   private payloadByCycle: Record<number, CyclePayload> = {};
 
-  // Etapa atual de cada ciclo em execução: cycle → CycleStep
+  // Etapa atual de cada ciclo: cycle → CycleStep
   private cycleSteps: Record<number, CycleStep> = {};
 
-  // ─── Callback de broadcast (injetado pelo server) ─────────────────────────
+  // Callback de broadcast injetado pelo server
   onStateChange?: (state: AppState) => void;
 
   // ─── Payload API ─────────────────────────────────────────────────────────────
@@ -159,15 +152,29 @@ class GlobalState {
 
   // ─── CycleStep API ───────────────────────────────────────────────────────────
 
-  /** Registra a etapa atual de um ciclo e emite log com level 'step' */
-  setCycleStep(cycle: number, step: string): void {
-    const entry: CycleStep = { cycle, step, startedAt: new Date().toISOString() };
-    this.cycleSteps[cycle] = entry;
-    // addLog com level 'step' — o server intercepta e emite SSE 'cycle_step'
+  /**
+   * Registra a etapa atual de um ciclo.
+   * Chame com um label legível em cada etapa do mockFlow:
+   *   globalState.setCycleStep(cycle, '[1] Gerando email');
+   *   globalState.setCycleStep(cycle, '[2] Aguardando OTP');
+   * O server emite SSE 'cycleStatus' com todos os ciclos ativos.
+   */
+  setCycleStep(cycle: number, step: string, status: CycleStep['stepStatus'] = 'running', error?: string): void {
+    this.cycleSteps[cycle] = {
+      cycle,
+      step,
+      startedAt: this.cycleSteps[cycle]?.startedAt ?? Date.now(),
+      stepStatus: status,
+      error,
+    };
     this.addLog('step' as LogEntry['level'], `[STEP] ${step}`, cycle);
   }
 
-  getCycleSteps(): Record<number, CycleStep> {
+  getCycleSteps(): CycleStep[] {
+    return Object.values(this.cycleSteps);
+  }
+
+  getCycleStepsMap(): Record<number, CycleStep> {
     return { ...this.cycleSteps };
   }
 
@@ -285,26 +292,40 @@ class GlobalState {
   }
 
   // ─── FIX: stop() ─────────────────────────────────────────────────────────────
-  // ANTES: só chamava addLog no else (quando já parado) → sem broadcast SSE no RUNNING.
+  //
+  // ANTES:
+  //   - addLog só era chamado no else (processo já parado) → sem broadcast SSE
+  //     quando status era RUNNING/WAITING_OTP
+  //   - isStopped() só checa a cada 200ms no sleep() → se ciclo estava preso
+  //     esperando OTP (90s sem sleep), o stop não interrompia
+  //
   // AGORA:
-  //   1. shouldStop = true ANTES de qualquer outra coisa → sleep() para em ≤200ms
-  //   2. addLog chamado em TODAS as branches → broadcast SSE imediato do novo status
-  //   3. Status STOPPING exibido no frontend instantaneamente
+  //   1. shouldStop = true é a PRIMEIRA coisa — sleep() para em ≤200ms imediatamente
+  //   2. addLog chamado em TODAS as branches → broadcast SSE do status STOPPING
+  //      chega ao frontend antes mesmo do ciclo atual terminar
+  //   3. STOPPING exibido no badge do topbar instantaneamente
+  //
   stop(): void {
-    // Seta shouldStop primeiro — garante que sleep() e isStopped() reajam imediatamente
+    // Seta primeiro — sleep() e isStopped() reagem em até 200ms
     this.state.shouldStop = true;
 
-    if (this.state.status === 'RUNNING' || this.state.status === 'WAITING_OTP' || this.state.status === 'STOPPING') {
+    if (
+      this.state.status === 'RUNNING' ||
+      this.state.status === 'WAITING_OTP' ||
+      this.state.status === 'STARTING'
+    ) {
       this.state.isLoop = false;
       this.state.status = 'STOPPING';
-      // addLog dispara broadcast SSE via patch no server
-      this.addLog('warn', '🛑 Parando — aguardando ciclo(s) atual(is) terminar(em)...', this.currentCycle);
+      // addLog dispara o onStateChange/broadcast no server → SSE imediato
+      this.addLog('warn', '🛑 Parando — aguardando ciclo(s) atual(is) terminar(em)...', this.currentCycle || undefined);
     } else {
+      // Já está STOPPED, STOPPING ou ERROR — força reset imediato
       this.state.isRunning = false;
       this.state.isLoop = false;
       this.state.status = 'STOPPED';
       this.state.activeParallel = 0;
-      this.addLog('info', '⏹️ Processo parado', this.currentCycle);
+      this.state.shouldStop = false;
+      this.addLog('info', '⏹️ Processo parado', undefined);
     }
   }
 
@@ -330,8 +351,12 @@ class GlobalState {
     do {
       await this.executeBatch();
       if (loop && !this.state.shouldStop) {
-        this.addLog('info', `⏳ Aguardando ${Math.round(this.state.config.cycleInterval / 1000)}s para próximo ciclo...`);
-        await sleep(this.state.config.cycleInterval);
+        this.addLog('info', `⏳ Aguardando ${Math.round(this.state.config.cycleInterval / 1000)}s para próximo lote...`);
+        const end = Date.now() + this.state.config.cycleInterval;
+        while (Date.now() < end) {
+          if (this.state.shouldStop) break;
+          await sleep(200);
+        }
       }
     } while (loop && !this.state.shouldStop);
 
@@ -344,14 +369,26 @@ class GlobalState {
     }
   }
 
+  // ─── FIX: executeBatch() ─────────────────────────────────────────────────────
+  //
+  // ANTES:
+  //   - Array.from() incrementava currentCycle 3x de forma síncrona E
+  //     cyclesTotal só incrementava dentro de executeCycleWithRetry
+  //     → com parallelCycles=3, SSE podia emitir cyclesTotal 1, 2, 3 fora de ordem
+  //     causando saltos visuais no contador
+  //
+  // AGORA:
+  //   - currentCycle e cyclesTotal incrementados atomicamente ANTES das promises
+  //   - cycles numerados como firstCycle + i (determinístico)
+  //   - clearCycleStep e decremento de activeParallel no finally de cada promise
+  //
   private async executeBatch(): Promise<void> {
     const n = Math.max(1, this.state.config.parallelCycles || 1);
     this.state.isRunning = true;
     this.state.status = 'RUNNING';
     this.addLog('info', `⚡ Iniciando lote de ${n} ciclo(s) em paralelo...`);
 
-    // FIX: incrementa cyclesTotal atomicamente ANTES de criar as promises
-    // → contador correto desde o início, sem race condition com SSE paralelo
+    // Incremento atômico: todos os números de ciclo definidos antes de qualquer promise
     const firstCycle = this.currentCycle + 1;
     this.currentCycle += n;
     this.state.cyclesTotal += n;
@@ -369,9 +406,23 @@ class GlobalState {
     await Promise.allSettled(promises);
   }
 
+  // ─── FIX: executeCycleWithRetry() ────────────────────────────────────────────
+  //
+  // ANTES:
+  //   - clearKycCycle(cycle) era chamado APENAS na primeira vez (no Array.from)
+  //     → em retries, sinais KYC da tentativa anterior acumulavam incorretamente
+  //
+  // AGORA:
+  //   - clearKycCycle(cycle) chamado no início de CADA tentativa > 1
+  //
+  // NOVA FUNÇÃO: auto-restart imediato de ciclo falho
+  //   - Se em modo Loop e shouldStop=false, ao esgotar retries lança um ciclo
+  //     substituto imediatamente (sem esperar cycleInterval)
+  //   - Ciclo substituto roda em background via void para não bloquear allSettled
+  //
   private async executeCycleWithRetry(cycle: number): Promise<void> {
     const MAX_RETRIES = 3;
-    const BACKOFF = [0, 5000, 15000];
+    const BACKOFF_MS = [0, 5000, 15000];
     let lastError = 'Erro desconhecido';
 
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
@@ -380,7 +431,8 @@ class GlobalState {
         return;
       }
 
-      const backoff = BACKOFF[attempt - 1] ?? 15000;
+      // Backoff com resposta imediata ao shouldStop
+      const backoff = BACKOFF_MS[attempt - 1] ?? 15000;
       if (backoff > 0) {
         this.addLog('warn', `⏳ Retry #${attempt} em ${backoff / 1000}s...`, cycle);
         const end = Date.now() + backoff;
@@ -389,7 +441,7 @@ class GlobalState {
             this.addLog('info', `🛑 Ciclo #${cycle} interrompido durante backoff`, cycle);
             return;
           }
-          await sleep(Math.min(500, end - Date.now()));
+          await sleep(Math.min(200, end - Date.now()));
         }
       }
 
@@ -397,7 +449,7 @@ class GlobalState {
         if (attempt === 1) {
           this.addLog('info', `🚀 Iniciando ciclo #${cycle}`, cycle);
         } else {
-          // FIX: limpa sinais KYC da tentativa anterior antes de cada retry
+          // FIX: limpa sinais KYC da tentativa anterior
           this.clearKycCycle(cycle);
           this.addLog('info', `🔁 Ciclo #${cycle} — tentativa ${attempt}/${MAX_RETRIES}`, cycle);
         }
@@ -415,16 +467,12 @@ class GlobalState {
           return;
         }
         this.addLog('error', `❌ Tentativa ${attempt}/${MAX_RETRIES} falhou: ${lastError}`, cycle);
-        await sleep(2000);
       }
     }
 
-    this.state.status = 'ERROR';
-    this.state.lastError = lastError;
     this.addLog('error', `💀 Ciclo #${cycle} falhou após ${MAX_RETRIES} tentativas: ${lastError}`, cycle);
 
-    // NOVA FUNÇÃO: auto-restart — relança ciclo substituto imediatamente
-    // Só em modo loop e se não está parando
+    // NOVA FUNÇÃO: auto-restart — relança ciclo substituto imediatamente em modo Loop
     if (this.state.isLoop && !this.state.shouldStop) {
       this.currentCycle += 1;
       this.state.cyclesTotal += 1;
@@ -432,11 +480,13 @@ class GlobalState {
       const newCycle = this.currentCycle;
       this.clearKycCycle(newCycle);
       this.addLog('warn', `♻️ Auto-restart: relançando ciclo #${newCycle} (substituto do #${cycle})`, newCycle);
-      // Executa em background para não bloquear Promise.allSettled do batch
       void this.executeCycleWithRetry(newCycle).finally(() => {
         this.state.activeParallel = Math.max(0, this.state.activeParallel - 1);
         this.clearCycleStep(newCycle);
       });
+    } else {
+      this.state.status = 'ERROR';
+      this.state.lastError = lastError;
     }
   }
 }
