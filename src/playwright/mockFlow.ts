@@ -111,13 +111,13 @@ const KYC_RULES: KycRule[] = [
     provider: 'iProov',
     weight: () => 6,
   },
-  // Onfido — adicionado
+  // Onfido
   {
     pattern: /onfido\.com/i,
     provider: 'Onfido',
     weight: (url) => /\/sdk|\/applicants|\/checks/i.test(url) ? 10 : 6,
   },
-  // Jumio — adicionado
+  // Jumio
   {
     pattern: /jumio\.com/i,
     provider: 'Jumio',
@@ -126,7 +126,6 @@ const KYC_RULES: KycRule[] = [
 ];
 
 function detectKycFromUrl(url: string, cycle: number, source: string): void {
-  // Ignora URLs vazias, about:blank, chrome-extension etc.
   if (!url || url === 'about:blank' || url.startsWith('chrome')) return;
 
   for (const rule of KYC_RULES) {
@@ -144,33 +143,27 @@ function detectKycFromUrl(url: string, cycle: number, source: string): void {
 }
 
 function attachPageListeners(page: Page, cycle: number, label: string): void {
-  // frame navigate (muda URL da aba)
   page.on('framenavigated', (frame) => {
     try { detectKycFromUrl(frame.url(), cycle, `${label}:frame-navigate`); } catch { /* ignora */ }
   });
-  // respostas de rede (requisições XHR/fetch para o provedor KYC)
   page.on('response', (response) => {
     try { detectKycFromUrl(response.url(), cycle, `${label}:network`); } catch { /* ignora */ }
   });
-  // FIX v2: requisições — captura URL antes da resposta chegar (cobre redirects JS do Veriff)
+  // captura URL antes da resposta chegar (cobre redirects JS do Veriff)
   page.on('request', (request) => {
     try { detectKycFromUrl(request.url(), cycle, `${label}:request`); } catch { /* ignora */ }
   });
-  // URL atual da aba ao abrir (cobre o caso de popup que já nasce com a URL certa)
   try { detectKycFromUrl(page.url(), cycle, `${label}:page-open`); } catch { /* ignora */ }
 }
 
 function installKycInterceptor(context: BrowserContext, cycle: number): void {
-  // Escuta novas abas/popups abertas pela Uber/KYC provider
   context.on('page', (newPage) => {
     attachPageListeners(newPage, cycle, 'popup');
-    // Também checa a URL assim que a aba carregar
     newPage.once('load', () => {
       try { detectKycFromUrl(newPage.url(), cycle, 'popup:load'); } catch { /* ignora */ }
     });
   });
 
-  // Respostas de rede do contexto inteiro (cobre iframes e workers)
   context.on('response', (response) => {
     try { detectKycFromUrl(response.url(), cycle, 'ctx:network'); } catch { /* ignora */ }
   });
@@ -843,7 +836,6 @@ async function stepFlowType(p: Page, cycle: number): Promise<void> {
 
   await dismissCookieBanner(p, cycle);
 
-  // Tenta selecionar o card P2P (Viagens de carro com veículo próprio)
   const P2P_CANDIDATES = [
     '[data-testid="P2P:default"]',
     'button:has-text("Viagens de carro")',
@@ -860,7 +852,8 @@ async function stepFlowType(p: Page, cycle: number): Promise<void> {
       globalState.addLog('info', `✔️ card P2P clicado via: ${sel}`, cycle);
       p2pClicked = true;
 
-      // FIX bug 5: aguarda estado selecionado antes de ir para Continuar
+      // BUG 5 FIX: aguarda estado selecionado antes de ir para Continuar.
+      // Verifica aria-checked, aria-selected, aria-pressed, data-selected e className.
       const selectedConfirmed = await p.waitForFunction(
         (selector: string) => {
           const node = document.querySelector(selector);
@@ -894,7 +887,6 @@ async function stepFlowType(p: Page, cycle: number): Promise<void> {
 
   await sleep(400);
 
-  // Clica em Continuar
   const CONTINUE_CANDIDATES = [
     '[data-testid="step-button-primary"]',
     'button:has-text("Continuar")',
@@ -942,7 +934,7 @@ async function stepVehicleType(p: Page, cycle: number): Promise<void> {
 
   await dismissCookieBanner(p, cycle);
 
-  // FIX bug 6: seletores baseados em texto primeiro — robustos a mudanças de estrutura DOM.
+  // BUG 6 FIX: seletores baseados em texto primeiro — robustos a mudanças de estrutura DOM.
   // nth-child(2) removido pois pegava o 2º filho do container, não o 2º radio.
   const NEED_VEHICLE_CANDIDATES = [
     'label:has-text("Preciso de um veículo")',
@@ -989,7 +981,6 @@ async function stepVehicleType(p: Page, cycle: number): Promise<void> {
 
   await sleep(400);
 
-  // Clica em Continuar
   const SUBMIT_CANDIDATES = [
     '[data-testid="step-submit-button"]',
     'button:has-text("Continuar")',
@@ -1204,7 +1195,6 @@ async function stepProfilePhoto(p: Page, cycle: number): Promise<void> {
     }
   }
 
-  // ── Aguarda sinais KYC por até 90s após o clique ──────────────────────────────
   globalState.addLog('info', '⏳ [KYC] Aguardando abertura do KYC provider (popup/nova aba)...', cycle);
   const KYC_WAIT_MS = 90_000;
   const kycStart = Date.now();
@@ -1218,7 +1208,6 @@ async function stepProfilePhoto(p: Page, cycle: number): Promise<void> {
     await new Promise<void>(r => setTimeout(r, 500));
   }
 
-  // ── Log do resultado KYC do ciclo ──────────────────────────────────────────
   const finalSignals = globalState.getKycSignals(cycle);
   if (finalSignals.length === 0) {
     globalState.addLog('warn', '⚠️ [KYC] Nenhum provedor detectado neste ciclo', cycle);
@@ -1253,7 +1242,7 @@ async function dismissModals(p: Page, cycle: number): Promise<void> {
 // ─── BROWSER ──────────────────────────────────────────────────────────────────────
 
 let browserInstance: Browser | null = null;
-// FIX bug 2: rastreia a configuração atual do browser com base em getProxyForCycle(0)
+// BUG 2 FIX: rastreia a configuração atual do browser com base em getProxyForCycle(0)
 // em vez de ler state.proxies (campo que não existe em AppState).
 let lastProxyConfig: string | null = null;
 let lastHeadless: boolean | null = null;
@@ -1272,7 +1261,7 @@ const BRAVE_CANDIDATES = [
 ].filter(Boolean) as string[];
 
 export class MockPlaywrightFlow {
-  // FIX bug 2: usa getProxyForCycle(0) como "proxy de referência" para decidir se o
+  // BUG 2 FIX: usa getProxyForCycle(0) como "proxy de referência" para decidir se o
   // browser precisa ser reiniciado — elimina o acesso a state.proxies que não existe.
   static async init(headless = true): Promise<void> {
     const proxyKey = globalState.getProxyForCycle(0) ?? '';
@@ -1322,6 +1311,13 @@ export class MockPlaywrightFlow {
     globalState.addLog('info', `✅ Browser iniciado`);
   }
 
+  static async cleanup(): Promise<void> {
+    if (browserInstance) {
+      await browserInstance.close().catch(() => {});
+      browserInstance = null;
+    }
+  }
+
   static async execute(
     cadastroUrl: string,
     config: { emailProvider: EmailProvider; tempMailApiKey: string; otpTimeout: number; extraDelay: number; inviteCode: string; cityName?: string },
@@ -1343,7 +1339,7 @@ export class MockPlaywrightFlow {
     config: { emailProvider: EmailProvider; tempMailApiKey: string; otpTimeout: number; extraDelay: number; inviteCode: string; cityName?: string },
     cycle: number
   ): Promise<void> {
-    // FIX bug 2: usa getProxyForCycle(cycle) — única fonte da verdade, sincronizado com init()
+    // BUG 2 FIX: usa getProxyForCycle(cycle) — única fonte da verdade, sincronizado com init()
     const proxyUrl = globalState.getProxyForCycle(cycle);
 
     const ctxOpts: Parameters<Browser['newContext']>[0] = {
@@ -1375,7 +1371,6 @@ export class MockPlaywrightFlow {
 
     const context = await browserInstance!.newContext(ctxOpts);
 
-    // ── KYC interceptor instalado no context ANTES de qualquer navegação ──────
     installKycInterceptor(context, cycle);
 
     await context.addInitScript(MOBILE_INIT_SCRIPT);
@@ -1384,10 +1379,8 @@ export class MockPlaywrightFlow {
     p.setDefaultTimeout(20_000);
     p.setDefaultNavigationTimeout(30_000);
 
-    // Listeners também na aba principal
     attachPageListeners(p, cycle, 'main');
 
-    // Variáveis para salvar a conta no final
     let email = '';
     let telefone = '';
     let telefoneFmt = '';
@@ -1429,7 +1422,6 @@ export class MockPlaywrightFlow {
         await sleep(config.extraDelay);
       }
 
-      // Salva conta
       const kycSignals = globalState.getKycSignals(cycle);
       const topSignal  = kycSignals.length > 0 ? kycSignals[0] : null;
       await accountStore.saveAccount({
