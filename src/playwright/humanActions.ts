@@ -7,6 +7,9 @@
 import { Page } from 'playwright';
 import { globalState } from '../state/globalState';
 
+// ─── Constante de delay extra (ms adicionados em cada ação) ───────────────────
+const EXTRA_DELAY = 500;
+
 // ─── Speed mode ───────────────────────────────────────────────────────────────
 
 export function isSpeedMode(): boolean {
@@ -14,9 +17,9 @@ export function isSpeedMode(): boolean {
   return !!(s.config as any)?.speedMode;
 }
 
-/** Multiplica ms pelo fator de velocidade (speed=0.3, normal=1.0) */
+/** Multiplica ms pelo fator de velocidade (speed=0.3, normal=1.0) e adiciona EXTRA_DELAY */
 export function sp(ms: number): number {
-  return isSpeedMode() ? Math.round(ms * 0.3) : ms;
+  return (isSpeedMode() ? Math.round(ms * 0.3) : ms) + EXTRA_DELAY;
 }
 
 export function randInt(min: number, max: number): number {
@@ -30,7 +33,7 @@ export function randFloat(min: number, max: number): number {
 // ─── Pausas ───────────────────────────────────────────────────────────────────
 
 export async function humanPause(ms: number): Promise<void> {
-  await new Promise<void>((r) => setTimeout(r, ms));
+  await new Promise<void>((r) => setTimeout(r, ms + EXTRA_DELAY));
 }
 
 export async function cogPause(minMs: number, maxMs: number): Promise<void> {
