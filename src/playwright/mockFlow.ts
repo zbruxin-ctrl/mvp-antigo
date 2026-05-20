@@ -1240,7 +1240,8 @@ const BRAVE_CANDIDATES = [
 
 export class MockPlaywrightFlow {
   static async init(headless = true): Promise<void> {
-    const proxy0 = globalState.getProxyForCycle(0);
+    // FIX: ciclos começam em 1, não 0 — getProxyForCycle(0) causava índice -1 e crash
+    const proxy0 = globalState.getProxyForCycle(1);
     const proxyKey = proxy0 ? proxy0.server : '';
 
     if (browserInstance && (lastProxyConfig !== proxyKey || lastHeadless !== headless)) {
