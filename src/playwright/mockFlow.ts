@@ -709,7 +709,7 @@ const CITY_INPUT_SELS = [
   'input[aria-label*="city" i]',
 ];
 
-// Seletores de opção do dropdown de cidade — expandidos para cobrir mais variações do Uber
+// Seletores de opção do dropdown — expanded para cobrir variações do Uber
 const CITY_OPTION_SELS = [
   '[data-testid="flow-type-city-selector-v2-option"]',
   '[data-testid*="city-selector"][data-testid*="option"]',
@@ -728,6 +728,28 @@ const CITY_OPTION_SELS = [
   'ul[role="listbox"] li',
   'ul li',
 ];
+
+// ─── [7] CIDADE ───────────────────────────────────────────────────────────────────
+//
+// FIX v3 — 4 melhorias para resolver o submit-button desabilitado:
+//
+//  PARTE 1 — reactFill ANTES do pressSequentially:
+//    O Uber usa um input React controlado. O pressSequentially digita no DOM mas o
+//    React não detecta a mudança porque o setter nativo foi sobrescrito pelo React.
+//    A solução é chamar reactFill (que usa o nativeInputValueSetter + dispatchEvent)
+//    ANTES de começar a digitar — isso garante que o React receba o valor inicial
+//    e ligue o autocomplete. O pressSequentially depois serve só para simular humano.
+//
+//  PARTE 2 — polling ativo até 5000ms pelo dropdown:
+//    O código anterior esperava 1500ms fixos e tentava 1x. Agora faz polling a cada
+//    500ms por até 5s, testando todos os CITY_OPTION_SELS.
+//
+//  PARTE 3 — verificação do enabled state antes do click no submit-button:
+//    Polling de até 3s pelo enabled state. Se ainda desabilitado, clica com force:true
+//    em vez de deixar o Playwright jogar o Timeout 20000ms.
+//
+//  PARTE 4 — nunca aborta o ciclo se o dropdown não aparecer:
+//    Em vez de throw, tenta o submit com force:true mesmo sem opção selecionada.
 
 async function stepCity(
   p: Page,
@@ -767,15 +789,12 @@ async function stepCity(
   await el.scrollIntoViewIfNeeded();
   await sleep(300 + EXTRA_DELAY);
 
-  // 1. Foca, limpa e digita letra por letra para acionar o autocomplete
+  // PARTE 1 — limpa + dispara eventos React via nativeInputValueSetter ANTES de digitar
+  // Isso faz o React registrar o valor e ativar o autocomplete de cidade.
   await el.click({ clickCount: 3 });
   await p.keyboard.press('Delete');
-  await sleep(200 + EXTRA_DELAY);
-  await el.pressSequentially(cityName, { delay: 60 + Math.random() * 40 });
-  globalState.addLog('info', `✔️ fill cidade: ${cityName}`, cycle);
+  await sleep(150 + EXTRA_DELAY);
 
-  // 2. Dispara eventos React (input/change/focus) via nativeInputValueSetter
-  //    para garantir que o componente controlado detecte a mudança de valor
   await p.evaluate(({ sel, val }: { sel: string; val: string }) => {
     const node = document.querySelector(sel) as HTMLInputElement | null;
     if (!node) return;
@@ -784,11 +803,17 @@ async function stepCity(
     node.dispatchEvent(new Event('focus',  { bubbles: true }));
     node.dispatchEvent(new Event('input',  { bubbles: true }));
     node.dispatchEvent(new Event('change', { bubbles: true }));
-    node.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: cityName.slice(-1) }));
-    node.dispatchEvent(new KeyboardEvent('keyup',   { bubbles: true, key: cityName.slice(-1) }));
+    // Simula keydown/keyup da última letra para acionar o listener de teclado do React
+    const lastChar = val.slice(-1);
+    node.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: lastChar, code: `Key${lastChar.toUpperCase()}` }));
+    node.dispatchEvent(new KeyboardEvent('keyup',   { bubbles: true, key: lastChar, code: `Key${lastChar.toUpperCase()}` }));
   }, { sel: cityInput, val: cityName });
 
-  // 3. Polling ativo de até 5000ms pelo dropdown — verifica todos os seletores a cada 500ms
+  // Digita letra a letra depois do reactFill para parecer humano e acionar eventos adicionais
+  await el.pressSequentially(cityName, { delay: 60 + Math.random() * 40 });
+  globalState.addLog('info', `✔️ fill cidade: ${cityName}`, cycle);
+
+  // PARTE 2 — polling ativo de até 5000ms pelo dropdown
   let optionClicked = false;
   const dropdownDeadline = Date.now() + 5_000;
 
@@ -807,21 +832,25 @@ async function stepCity(
   }
 
   if (!optionClicked) {
-    // Fallback JS: tenta clicar no primeiro item visível de qualquer lista no DOM
+    // Fallback JS — clica no primeiro item visível de qualquer lista do DOM
     const jsClicked = await p.evaluate(() => {
       const candidates = [
         ...Array.from(document.querySelectorAll('[role="option"]')),
         ...Array.from(document.querySelectorAll('[role="listitem"]')),
         ...Array.from(document.querySelectorAll('li')),
       ] as HTMLElement[];
-      const visible = candidates.find(el => el.offsetParent !== null && (el.textContent?.trim().length ?? 0) > 0);
+      const visible = candidates.find(
+        el => el.offsetParent !== null && (el.textContent?.trim().length ?? 0) > 0
+      );
       if (visible) { visible.click(); return visible.textContent?.trim().slice(0, 40) ?? 'ok'; }
       return null;
     });
+
     if (jsClicked) {
       globalState.addLog('info', `✔️ cidade selecionada via JS fallback: "${jsClicked}"`, cycle);
       optionClicked = true;
     } else {
+      // PARTE 4 — não aborta: continua para tentar o submit com force:true
       globalState.addLog('warn', '⚠️ Dropdown de cidade não apareceu — prosseguindo sem selecionar opção', cycle);
     }
   }
@@ -847,12 +876,11 @@ async function stepCity(
     await sleep(300 + EXTRA_DELAY);
   }
 
-  // 4. Aguarda submit-button habilitado (até 3000ms) — evita o Timeout 20000ms
+  // PARTE 3 — aguarda submit-button habilitado (polling 3s) → force:true como fallback
   const submitBtn = p.locator('[data-testid="submit-button"]').first();
   const submitVisible = await submitBtn.isVisible({ timeout: 3_000 }).catch(() => false);
 
   if (submitVisible) {
-    // Polling pelo enabled state
     let enabled = false;
     const enabledDeadline = Date.now() + 3_000;
     while (Date.now() < enabledDeadline) {
@@ -865,12 +893,11 @@ async function stepCity(
       await submitBtn.click();
       globalState.addLog('info', '✔️ click: submit-button (cidade) — habilitado', cycle);
     } else {
-      // 5. force: true como fallback se ainda desabilitado
+      // PARTE 4 — force:true em vez de deixar o Timeout 20000ms explodir
       await submitBtn.click({ force: true });
       globalState.addLog('warn', '⚠️ submit-button ainda desabilitado — clicado com force:true', cycle);
     }
   } else {
-    // submit-button não encontrado: usa forward-button
     await clickForward(p, cycle);
   }
 
