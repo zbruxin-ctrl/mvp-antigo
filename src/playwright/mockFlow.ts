@@ -709,6 +709,26 @@ const CITY_INPUT_SELS = [
   'input[aria-label*="city" i]',
 ];
 
+// Seletores de opção do dropdown de cidade — expandidos para cobrir mais variações do Uber
+const CITY_OPTION_SELS = [
+  '[data-testid="flow-type-city-selector-v2-option"]',
+  '[data-testid*="city-selector"][data-testid*="option"]',
+  '[data-testid*="city-option"]',
+  '[data-testid*="dropdown"] [role="option"]',
+  '[data-testid*="dropdown"] li',
+  '[role="listbox"] [role="option"]',
+  '[role="listbox"] li',
+  '[aria-expanded="true"] + * [role="option"]',
+  'div[id*="listbox"] > *',
+  '[role="option"]',
+  '[role="listitem"]',
+  '[data-testid*="suggestion"]',
+  '[data-testid*="option"]',
+  'li[data-value]',
+  'ul[role="listbox"] li',
+  'ul li',
+];
+
 async function stepCity(
   p: Page,
   inviteCode: string,
@@ -746,42 +766,69 @@ async function stepCity(
   const el = p.locator(cityInput).first();
   await el.scrollIntoViewIfNeeded();
   await sleep(300 + EXTRA_DELAY);
+
+  // 1. Foca, limpa e digita letra por letra para acionar o autocomplete
   await el.click({ clickCount: 3 });
   await p.keyboard.press('Delete');
   await sleep(200 + EXTRA_DELAY);
   await el.pressSequentially(cityName, { delay: 60 + Math.random() * 40 });
   globalState.addLog('info', `✔️ fill cidade: ${cityName}`, cycle);
 
-  await sleep(1500 + EXTRA_DELAY);
+  // 2. Dispara eventos React (input/change/focus) via nativeInputValueSetter
+  //    para garantir que o componente controlado detecte a mudança de valor
+  await p.evaluate(({ sel, val }: { sel: string; val: string }) => {
+    const node = document.querySelector(sel) as HTMLInputElement | null;
+    if (!node) return;
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+    if (setter) setter.call(node, val);
+    node.dispatchEvent(new Event('focus',  { bubbles: true }));
+    node.dispatchEvent(new Event('input',  { bubbles: true }));
+    node.dispatchEvent(new Event('change', { bubbles: true }));
+    node.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: cityName.slice(-1) }));
+    node.dispatchEvent(new KeyboardEvent('keyup',   { bubbles: true, key: cityName.slice(-1) }));
+  }, { sel: cityInput, val: cityName });
 
-  const OPTION_CANDIDATES = [
-    '[data-testid="flow-type-city-selector-v2-option"]',
-    '[data-testid*="city-selector"][data-testid*="option"]',
-    '[role="option"]',
-    '[role="listitem"]',
-    '[data-testid*="suggestion"]',
-    '[data-testid*="option"]',
-    'li[data-value]',
-    'ul li',
-  ];
-
+  // 3. Polling ativo de até 5000ms pelo dropdown — verifica todos os seletores a cada 500ms
   let optionClicked = false;
-  for (const sel of OPTION_CANDIDATES) {
-    const opt = p.locator(sel).first();
-    if (await opt.isVisible({ timeout: 2500 }).catch(() => false)) {
-      await opt.click();
-      globalState.addLog('info', `✔️ cidade selecionada (1ª opção) via: ${sel}`, cycle);
-      optionClicked = true;
-      break;
+  const dropdownDeadline = Date.now() + 5_000;
+
+  while (Date.now() < dropdownDeadline && !optionClicked) {
+    for (const sel of CITY_OPTION_SELS) {
+      const opt = p.locator(sel).first();
+      if (await opt.isVisible({ timeout: 300 }).catch(() => false)) {
+        await opt.scrollIntoViewIfNeeded().catch(() => {});
+        await opt.click({ force: true });
+        globalState.addLog('info', `✔️ cidade selecionada (1ª opção) via: ${sel}`, cycle);
+        optionClicked = true;
+        break;
+      }
     }
+    if (!optionClicked) await sleep(500);
   }
 
   if (!optionClicked) {
-    globalState.addLog('warn', '⚠️ Dropdown de cidade não apareceu — tentando continuar sem selecionar', cycle);
+    // Fallback JS: tenta clicar no primeiro item visível de qualquer lista no DOM
+    const jsClicked = await p.evaluate(() => {
+      const candidates = [
+        ...Array.from(document.querySelectorAll('[role="option"]')),
+        ...Array.from(document.querySelectorAll('[role="listitem"]')),
+        ...Array.from(document.querySelectorAll('li')),
+      ] as HTMLElement[];
+      const visible = candidates.find(el => el.offsetParent !== null && (el.textContent?.trim().length ?? 0) > 0);
+      if (visible) { visible.click(); return visible.textContent?.trim().slice(0, 40) ?? 'ok'; }
+      return null;
+    });
+    if (jsClicked) {
+      globalState.addLog('info', `✔️ cidade selecionada via JS fallback: "${jsClicked}"`, cycle);
+      optionClicked = true;
+    } else {
+      globalState.addLog('warn', '⚠️ Dropdown de cidade não apareceu — prosseguindo sem selecionar opção', cycle);
+    }
   }
 
   await sleep(500 + EXTRA_DELAY);
 
+  // Invite code
   if (inviteCode) {
     const CODE_CANDIDATES = [
       '[data-testid="signup-step::invite-code-input"]',
@@ -800,11 +847,30 @@ async function stepCity(
     await sleep(300 + EXTRA_DELAY);
   }
 
+  // 4. Aguarda submit-button habilitado (até 3000ms) — evita o Timeout 20000ms
   const submitBtn = p.locator('[data-testid="submit-button"]').first();
-  if (await submitBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
-    await submitBtn.click();
-    globalState.addLog('info', '✔️ click: submit-button (cidade)', cycle);
+  const submitVisible = await submitBtn.isVisible({ timeout: 3_000 }).catch(() => false);
+
+  if (submitVisible) {
+    // Polling pelo enabled state
+    let enabled = false;
+    const enabledDeadline = Date.now() + 3_000;
+    while (Date.now() < enabledDeadline) {
+      enabled = await submitBtn.isEnabled({ timeout: 200 }).catch(() => false);
+      if (enabled) break;
+      await sleep(300);
+    }
+
+    if (enabled) {
+      await submitBtn.click();
+      globalState.addLog('info', '✔️ click: submit-button (cidade) — habilitado', cycle);
+    } else {
+      // 5. force: true como fallback se ainda desabilitado
+      await submitBtn.click({ force: true });
+      globalState.addLog('warn', '⚠️ submit-button ainda desabilitado — clicado com force:true', cycle);
+    }
   } else {
+    // submit-button não encontrado: usa forward-button
     await clickForward(p, cycle);
   }
 
