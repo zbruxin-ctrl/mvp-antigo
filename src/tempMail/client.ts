@@ -261,24 +261,31 @@ export class MailTmClient implements IEmailClient {
 }
 
 // ────────────────────────────────────────────────────────────────────────────────
-// TempMailCClient  (tempmailc.com)
-// Base URL correto: https://private.tempmailc.com  (conforme documentação)
+// TempMailCClient  (tempmailc.com — plano Starter)
+// Domínios customizados: nuivo.org e rumsee.com (rotação aleatória)
 // Endpoint OTP: GET /api/v1/code?email=X&code=APIKEY
-// Domínio fixo: kaamoolzy.it.com (licença trial)
 // ────────────────────────────────────────────────────────────────────────────────
 
-export class TempMailCClient implements IEmailClient {
-  private readonly baseUrl = 'https://private.tempmailc.com';  // ← corrigido
-  private readonly apiCode: string;
-  private readonly domain = 'kaamoolzy.it.com';
+/** Domínios do plano Starter adquirido. Altere aqui caso os domínios mudem. */
+const TEMPMAILC_DOMAINS = ['nuivo.org', 'rumsee.com'] as const;
 
-  constructor(apiCode: string, _fixedDomain?: string) {
+export class TempMailCClient implements IEmailClient {
+  private readonly baseUrl = 'https://private.tempmailc.com';
+  private readonly apiCode: string;
+
+  constructor(apiCode: string) {
     this.apiCode = apiCode;
   }
 
+  /** Escolhe um domínio aleatoriamente entre os disponíveis no plano. */
+  private pickDomain(): string {
+    return TEMPMAILC_DOMAINS[Math.floor(Math.random() * TEMPMAILC_DOMAINS.length)];
+  }
+
   async createRandomEmail(): Promise<EmailAccount> {
+    const domain = this.pickDomain();
     const localPart = 'user' + Math.random().toString(36).slice(2, 10);
-    const email = `${localPart}@${this.domain}`;
+    const email = `${localPart}@${domain}`;
     globalState.addLog('info', `✅ [tempmailc] Email gerado: ${email}`);
     return { email, token: email };
   }
@@ -342,11 +349,11 @@ export class TempMailCClient implements IEmailClient {
 export function createEmailClient(
   provider: 'temp-mail.io' | 'mail.tm' | 'tempmailc',
   apiKey: string,
-  tempmailcDomain?: string
+  _tempmailcDomain?: string  // mantido por compatibilidade, ignorado (domínios são fixos no plano)
 ): IEmailClient {
   if (provider === 'tempmailc') {
     if (!apiKey) throw new Error('tempmailc requer um API code (apiKey)');
-    return new TempMailCClient(apiKey, tempmailcDomain);
+    return new TempMailCClient(apiKey);
   }
   if (provider === 'mail.tm') return new MailTmClient();
   return new TempMailClient(apiKey);
