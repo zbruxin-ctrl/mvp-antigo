@@ -11,6 +11,9 @@ import * as accountStore from '../store/accountStore';
 
 const CYCLE_TIMEOUT_MS = 8 * 60 * 1_000;
 
+// Delay adicional adicionado a cada ação para simular comportamento humano mais lento
+const EXTRA_DELAY = 500;
+
 type State = ReturnType<typeof globalState.getState>;
 
 function isStopped(): boolean {
@@ -190,10 +193,10 @@ async function waitForSpinner(p: Page, cycle: number, maxMs = 30_000): Promise<v
   while (Date.now() - start < maxMs) {
     if (!(await hasElement(p, SPINNER_SEL, 400))) {
       globalState.addLog('info', '✔️ Spinner sumiu', cycle);
-      await sleep(600);
+      await sleep(600 + EXTRA_DELAY);
       return;
     }
-    await sleep(400);
+    await sleep(400 + EXTRA_DELAY);
   }
   globalState.addLog('warn', '⚠️ Spinner timeout — continuando mesmo assim', cycle);
 }
@@ -211,12 +214,12 @@ async function waitForNextScreen(
     for (const sel of selectors) {
       if (await hasElement(p, sel, 400)) {
         globalState.addLog('info', '✔️ Próxima tela detectada', cycle);
-        await sleep(400);
+        await sleep(400 + EXTRA_DELAY);
         return;
       }
     }
     await waitForSpinner(p, cycle, 5_000);
-    await sleep(500);
+    await sleep(500 + EXTRA_DELAY);
   }
   globalState.addLog('warn', '⚠️ Timeout aguardando próxima tela — continuando mesmo assim', cycle);
 }
@@ -234,13 +237,13 @@ async function waitOrReload(
     for (const sel of selectors) {
       if (await hasElement(p, sel, 400)) return true;
     }
-    await sleep(500);
+    await sleep(500 + EXTRA_DELAY);
   }
 
   globalState.addLog('warn', '⚠️ Tela presa no spinner — recarregando página...', cycle);
   await p.reload({ waitUntil: 'domcontentloaded', timeout: 20_000 }).catch(() => {});
   globalState.addLog('info', '🔄 Página recarregada', cycle);
-  await sleep(1_500);
+  await sleep(1_500 + EXTRA_DELAY);
 
   const start2 = Date.now();
   while (Date.now() - start2 < afterReloadMs) {
@@ -252,7 +255,7 @@ async function waitOrReload(
       }
     }
     await waitForSpinner(p, cycle, 5_000);
-    await sleep(500);
+    await sleep(500 + EXTRA_DELAY);
   }
 
   globalState.addLog('warn', '⚠️ Tela não apareceu nem após reload — continuando mesmo assim', cycle);
@@ -312,7 +315,7 @@ async function dismissCookieBanner(p: Page, cycle: number): Promise<void> {
     );
   }
 
-  await sleep(400);
+  await sleep(400 + EXTRA_DELAY);
   const stillThere = await hasElement(p, BANNER_SEL, 800);
   if (stillThere) {
     await p.evaluate((bannerSel: string) => {
@@ -346,12 +349,12 @@ async function fillById(p: Page, id: string, value: string, label: string, cycle
   const el = p.locator(`#${id}, [id="${id}"]`).first();
   await el.waitFor({ state: 'visible', timeout: 15_000 });
   await el.scrollIntoViewIfNeeded();
-  await sleep(150 + Math.random() * 100);
+  await sleep(150 + Math.random() * 100 + EXTRA_DELAY);
   await el.click();
-  await sleep(80);
+  await sleep(80 + EXTRA_DELAY);
   await el.click({ clickCount: 3 });
   await p.keyboard.press('Delete');
-  await sleep(60);
+  await sleep(60 + EXTRA_DELAY);
   await el.pressSequentially(value, { delay: 55 + Math.random() * 45 });
   globalState.addLog('info', `✔️ fill [#${id}]: ${label}`, cycle);
 }
@@ -361,10 +364,10 @@ async function clickForward(p: Page, cycle: number): Promise<void> {
   await el.waitFor({ state: 'visible', timeout: 15_000 });
   for (let i = 0; i < 25; i++) {
     if (await el.isEnabled({ timeout: 200 }).catch(() => false)) break;
-    await sleep(200);
+    await sleep(200 + EXTRA_DELAY);
   }
   await el.scrollIntoViewIfNeeded();
-  await sleep(200 + Math.random() * 100);
+  await sleep(200 + Math.random() * 100 + EXTRA_DELAY);
   await el.click();
   globalState.addLog('info', '✔️ click: Avançar (forward-button)', cycle);
 }
@@ -386,7 +389,7 @@ async function stepEmail(p: Page, email: string, cycle: number): Promise<void> {
   await p.waitForSelector(EMAIL_SEL, { state: 'visible', timeout: 15_000 });
   const el = p.locator(EMAIL_SEL).first();
   await el.click();
-  await sleep(80);
+  await sleep(80 + EXTRA_DELAY);
   await el.pressSequentially(email, { delay: 55 + Math.random() * 45 });
   globalState.addLog('info', '✔️ fill: email', cycle);
   await clickForward(p, cycle);
@@ -421,22 +424,22 @@ async function stepOTP(
     for (let i = 0; i < Math.min(splitCount, otp.length); i++) {
       const box = splitInputs.nth(i);
       await box.click();
-      await sleep(60);
+      await sleep(60 + EXTRA_DELAY);
       await box.pressSequentially(otp[i], { delay: 70 });
-      await sleep(50);
+      await sleep(50 + EXTRA_DELAY);
     }
   } else {
     const el = p.locator(OTP_SEL).first();
     await el.click();
-    await sleep(80);
+    await sleep(80 + EXTRA_DELAY);
     await el.click({ clickCount: 3 });
     await p.keyboard.press('Delete');
-    await sleep(60);
+    await sleep(60 + EXTRA_DELAY);
     await el.pressSequentially(otp, { delay: 70 + Math.random() * 40 });
     globalState.addLog('info', '✔️ OTP preenchido (input único)', cycle);
   }
 
-  await sleep(800);
+  await sleep(800 + EXTRA_DELAY);
 
   const fwdVisible = await hasElement(p, '[data-testid="forward-button"]', 1500);
   if (fwdVisible) {
@@ -509,14 +512,14 @@ async function stepPhone(p: Page, cycle: number): Promise<{ display: string; dig
   const el = p.locator(phoneInput).first();
   await el.scrollIntoViewIfNeeded();
   await el.click();
-  await sleep(150);
+  await sleep(150 + EXTRA_DELAY);
   await p.keyboard.press('Control+a');
   await p.keyboard.press('Delete');
-  await sleep(80);
+  await sleep(80 + EXTRA_DELAY);
   await reactFill(p, phoneInput, digits);
-  await sleep(150);
+  await sleep(150 + EXTRA_DELAY);
   await el.evaluate((node: HTMLInputElement) => { node.blur(); node.focus(); });
-  await sleep(200);
+  await sleep(200 + EXTRA_DELAY);
   globalState.addLog('info', `✔️ fill telefone via: ${phoneInput}`, cycle);
 
   const hasError = await hasElement(p, '[data-testid="phone-number-error"]', 800);
@@ -528,7 +531,7 @@ async function stepPhone(p: Page, cycle: number): Promise<{ display: string; dig
 
   await clickForward(p, cycle);
 
-  await sleep(600);
+  await sleep(600 + EXTRA_DELAY);
   const hasErrorAfter = await hasElement(p, '[data-testid="phone-number-error"]', 800);
   if (hasErrorAfter) {
     const errMsg = await p.locator('[data-testid="phone-number-error"]').first().innerText().catch(() => '');
@@ -568,10 +571,10 @@ async function stepPassword(p: Page, cycle: number): Promise<void> {
   await el.waitFor({ state: 'visible', timeout: 10_000 });
   await el.scrollIntoViewIfNeeded();
   await el.click();
-  await sleep(100);
+  await sleep(100 + EXTRA_DELAY);
   await p.keyboard.press('Control+a');
   await p.keyboard.press('Delete');
-  await sleep(80);
+  await sleep(80 + EXTRA_DELAY);
   await el.pressSequentially(PASSWORD, { delay: 60 + Math.random() * 40 });
   globalState.addLog('info', '✔️ fill [password]: senha digitada', cycle);
 
@@ -637,7 +640,7 @@ async function stepTerms(p: Page, cycle: number): Promise<void> {
     return;
   }
 
-  await sleep(500);
+  await sleep(500 + EXTRA_DELAY);
 
   const CHECKBOX_CANDIDATES = [
     'input[type="checkbox"]',
@@ -654,7 +657,7 @@ async function stepTerms(p: Page, cycle: number): Promise<void> {
       const el = p.locator(sel).first();
       if (await el.isVisible({ timeout: 800 }).catch(() => false)) {
         await el.scrollIntoViewIfNeeded();
-        await sleep(200);
+        await sleep(200 + EXTRA_DELAY);
         await el.click({ force: true });
         globalState.addLog('info', `✔️ checkbox clicado via: ${sel}`, cycle);
         clicked = true;
@@ -679,7 +682,7 @@ async function stepTerms(p: Page, cycle: number): Promise<void> {
       cycle);
   }
 
-  await sleep(600);
+  await sleep(600 + EXTRA_DELAY);
   await clickForward(p, cycle);
 
   await waitForNextScreen(p, cycle, [
@@ -742,14 +745,14 @@ async function stepCity(
 
   const el = p.locator(cityInput).first();
   await el.scrollIntoViewIfNeeded();
-  await sleep(300);
+  await sleep(300 + EXTRA_DELAY);
   await el.click({ clickCount: 3 });
   await p.keyboard.press('Delete');
-  await sleep(200);
+  await sleep(200 + EXTRA_DELAY);
   await el.pressSequentially(cityName, { delay: 60 + Math.random() * 40 });
   globalState.addLog('info', `✔️ fill cidade: ${cityName}`, cycle);
 
-  await sleep(1500);
+  await sleep(1500 + EXTRA_DELAY);
 
   const OPTION_CANDIDATES = [
     '[data-testid="flow-type-city-selector-v2-option"]',
@@ -777,7 +780,7 @@ async function stepCity(
     globalState.addLog('warn', '⚠️ Dropdown de cidade não apareceu — tentando continuar sem selecionar', cycle);
   }
 
-  await sleep(500);
+  await sleep(500 + EXTRA_DELAY);
 
   if (inviteCode) {
     const CODE_CANDIDATES = [
@@ -794,7 +797,7 @@ async function stepCity(
         break;
       }
     }
-    await sleep(300);
+    await sleep(300 + EXTRA_DELAY);
   }
 
   const submitBtn = p.locator('[data-testid="submit-button"]').first();
@@ -841,7 +844,7 @@ async function stepFlowType(p: Page, cycle: number): Promise<void> {
     const el = p.locator(sel).first();
     if (await el.isVisible({ timeout: 2_000 }).catch(() => false)) {
       await el.scrollIntoViewIfNeeded();
-      await sleep(300);
+      await sleep(300 + EXTRA_DELAY);
       await el.click({ force: true });
       globalState.addLog('info', `✔️ card P2P clicado via: ${sel}`, cycle);
       p2pClicked = true;
@@ -866,7 +869,7 @@ async function stepFlowType(p: Page, cycle: number): Promise<void> {
       } else {
         globalState.addLog('warn', '⚠️ card P2P: estado selecionado não confirmado — re-clicando', cycle);
         await el.click({ force: true }).catch(() => {});
-        await sleep(400);
+        await sleep(400 + EXTRA_DELAY);
       }
       break;
     }
@@ -876,7 +879,7 @@ async function stepFlowType(p: Page, cycle: number): Promise<void> {
     globalState.addLog('warn', '⚠️ Card P2P não encontrado — tentando continuar mesmo assim', cycle);
   }
 
-  await sleep(400);
+  await sleep(400 + EXTRA_DELAY);
 
   const CONTINUE_CANDIDATES = [
     '[data-testid="step-button-primary"]',
@@ -887,7 +890,7 @@ async function stepFlowType(p: Page, cycle: number): Promise<void> {
     const btn = p.locator(sel).first();
     if (await btn.isVisible({ timeout: 3_000 }).catch(() => false)) {
       await btn.scrollIntoViewIfNeeded();
-      await sleep(200);
+      await sleep(200 + EXTRA_DELAY);
       await btn.click();
       globalState.addLog('info', `✔️ click: Continuar (flowType) via: ${sel}`, cycle);
       break;
@@ -932,7 +935,7 @@ async function stepVehicleType(p: Page, cycle: number): Promise<void> {
     const el = p.locator(sel).first();
     if (await el.isVisible({ timeout: 2_000 }).catch(() => false)) {
       await el.scrollIntoViewIfNeeded();
-      await sleep(300);
+      await sleep(300 + EXTRA_DELAY);
       await el.click({ force: true });
       globalState.addLog('info', `✔️ "Preciso de um veículo" selecionado via: ${sel}`, cycle);
       radioClicked = true;
@@ -959,7 +962,7 @@ async function stepVehicleType(p: Page, cycle: number): Promise<void> {
     }
   }
 
-  await sleep(400);
+  await sleep(400 + EXTRA_DELAY);
 
   const SUBMIT_CANDIDATES = [
     '[data-testid="step-submit-button"]',
@@ -970,7 +973,7 @@ async function stepVehicleType(p: Page, cycle: number): Promise<void> {
     const btn = p.locator(sel).first();
     if (await btn.isVisible({ timeout: 3_000 }).catch(() => false)) {
       await btn.scrollIntoViewIfNeeded();
-      await sleep(200);
+      await sleep(200 + EXTRA_DELAY);
       await btn.click();
       globalState.addLog('info', `✔️ click: Continuar (vehicleType) via: ${sel}`, cycle);
       break;
@@ -1057,7 +1060,7 @@ async function stepHubPhotoClick(p: Page, cycle: number): Promise<void> {
       }
     }
     if (hubFound) break;
-    await sleep(800);
+    await sleep(800 + EXTRA_DELAY);
   }
 
   if (!hubFound) {
@@ -1070,7 +1073,7 @@ async function stepHubPhotoClick(p: Page, cycle: number): Promise<void> {
     return;
   }
 
-  await sleep(800);
+  await sleep(800 + EXTRA_DELAY);
   await dismissCookieBanner(p, cycle);
 
   let photoItemClicked = false;
@@ -1079,7 +1082,7 @@ async function stepHubPhotoClick(p: Page, cycle: number): Promise<void> {
     if (await el.isVisible({ timeout: 2000 }).catch(() => false)) {
       try {
         await el.scrollIntoViewIfNeeded();
-        await sleep(300);
+        await sleep(300 + EXTRA_DELAY);
         await el.click({ timeout: 5_000 });
       } catch {
         await el.click({ force: true, timeout: 5_000 }).catch(async () => {
@@ -1159,7 +1162,7 @@ async function stepProfilePhoto(p: Page, cycle: number): Promise<void> {
     const btn = p.locator(sel).first();
     if (await btn.isVisible({ timeout: 2000 }).catch(() => false)) {
       await btn.scrollIntoViewIfNeeded();
-      await sleep(300);
+      await sleep(300 + EXTRA_DELAY);
       try {
         await btn.click({ timeout: 5_000 });
       } catch {
@@ -1214,7 +1217,7 @@ async function dismissModals(p: Page, cycle: number): Promise<void> {
     if (await hasElement(p, sel, 400)) {
       await p.locator(sel).first().click({ force: true }).catch(() => {});
       globalState.addLog('info', `🚪 modal: ${sel}`, cycle);
-      await sleep(400);
+      await sleep(400 + EXTRA_DELAY);
     }
   }
 }
