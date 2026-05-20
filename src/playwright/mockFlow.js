@@ -32,1185 +32,1205 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.MockPlaywrightFlow = void 0;
-const playwright_extra_1 = require("playwright-extra");
-const puppeteer_extra_plugin_stealth_1 = __importDefault(require("puppeteer-extra-plugin-stealth"));
+// NOTE: playwright-extra + stealth removidos — crashava com
+// "Cannot read properties of null (reading '1')" ao criar a página.
 const playwright_1 = require("playwright");
 const globalState_1 = require("../state/globalState");
 const client_1 = require("../tempMail/client");
-const dataGenerators_1 = require("../utils/dataGenerators");
-const artifacts_1 = require("../utils/artifacts");
 const accountStore = __importStar(require("../store/accountStore"));
-playwright_extra_1.chromium.use((0, puppeteer_extra_plugin_stealth_1.default)());
-// ─── Instâncias de browser (uma por configuração de proxy de launch) ───────────
-// Mantemos um browser por "assinatura de proxy de launch" para que ciclos com
-// proxies diferentes usem browsers separados (e para não ter problema de
-// "browser já rodando com proxy X, ciclo Y quer proxy Z").
-// Para simplificar: mantemos 1 browser por proxy de launch. Quando não há proxy
-// configurado o browser herda a VPN/sistema via --proxy-server="".
-let browser = null;
-let browserLaunching = false;
-let currentLaunchProxy = null; // proxy usado no último launch
-const contextosPorCiclo = new Map();
-/** Timeout máximo de um ciclo completo (10 minutos). */
-const CYCLE_TIMEOUT_MS = 10 * 60 * 1000;
-const BRAVE_PATH = 'C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe';
-const MOBILE_DEVICE = playwright_1.devices['iPhone 14'];
-// ─── Speed helpers ────────────────────────────────────────────────────────────
-function isSpeedMode() {
-    return !!globalState_1.globalState.getState().config?.speedMode;
+const CYCLE_TIMEOUT_MS = 8 * 60 * 1000;
+const EXTRA_DELAY = 500;
+function isStopped() {
+    return !!globalState_1.globalState.getState().shouldStop;
 }
-function sp(normal) {
-    return isSpeedMode() ? Math.max(530, Math.round(normal * 0.4) + 500) : normal;
-}
-// ─── Helpers humanos ──────────────────────────────────────────────────────────
-function randInt(min, max) {
-    return Math.floor(Math.random() * (max - min + 1)) + min;
-}
-async function humanPause(baseMs) {
-    const effective = sp(baseMs);
-    const jitter = randInt(-Math.floor(effective * 0.15), Math.floor(effective * 0.2));
-    await new Promise((r) => setTimeout(r, Math.max(30, effective + jitter)));
-}
-async function humanMouseMove(p, x, y) {
-    const steps = isSpeedMode() ? randInt(2, 4) : randInt(5, 10);
-    const startX = randInt(50, 300);
-    const startY = randInt(100, 400);
-    const cpX = startX + (x - startX) * 0.4 + randInt(-20, 20);
-    const cpY = startY + (y - startY) * 0.4 + randInt(-15, 15);
-    for (let i = 0; i <= steps; i++) {
-        const t = i / steps;
-        const bx = Math.round((1 - t) * (1 - t) * startX + 2 * (1 - t) * t * cpX + t * t * x);
-        const by = Math.round((1 - t) * (1 - t) * startY + 2 * (1 - t) * t * cpY + t * t * y);
-        await p.mouse.move(bx, by);
-        await humanPause(randInt(3, isSpeedMode() ? 6 : 12));
+async function sleep(ms) {
+    const step = 200;
+    const end = Date.now() + ms;
+    while (Date.now() < end) {
+        if (isStopped()) throw new Error('Parado pelo usuário');
+        await new Promise((r) => setTimeout(r, Math.min(step, end - Date.now())));
     }
 }
-async function humanType(p, selector, value) {
-    await p.waitForSelector(selector, { state: 'visible', timeout: 15000 });
-    const box = await p.locator(selector).boundingBox();
-    if (box) {
-        const tx = Math.round(box.x + box.width * (0.3 + Math.random() * 0.4));
-        const ty = Math.round(box.y + box.height * (0.3 + Math.random() * 0.4));
-        await humanMouseMove(p, tx, ty);
-        await humanPause(randInt(sp(50), sp(100)));
-    }
-    await p.click(selector);
-    await p.fill(selector, '');
-    await humanPause(randInt(sp(60), sp(150)));
-    const fast = isSpeedMode();
-    for (let i = 0; i < value.length; i++) {
-        const ch = value[i];
-        if (!fast && Math.random() < 0.03 && /[a-zA-Z]/.test(ch)) {
-            const typo = String.fromCharCode(ch.charCodeAt(0) + (Math.random() > 0.5 ? 1 : -1));
-            await p.keyboard.type(typo, { delay: randInt(40, 80) });
-            await humanPause(randInt(50, 120));
-            await p.keyboard.press('Backspace');
-            await humanPause(randInt(40, 90));
-        }
-        const charDelay = fast ? randInt(15, 40) : randInt(35, 90);
-        await p.keyboard.type(ch, { delay: charDelay });
-        if (!fast) {
-            if (ch === ' ' || ch === '@' || ch === '.')
-                await humanPause(randInt(80, 200));
-            else if (Math.random() < 0.05)
-                await humanPause(randInt(100, 300));
-        }
-    }
+async function hasElement(p, sel, timeout = 600) {
+    return p.locator(sel).first().isVisible({ timeout }).catch(() => false);
 }
-async function humanTypeForce(p, selector, value) {
-    await p.waitForSelector(selector, { state: 'visible', timeout: 15000 });
-    const box = await p.locator(selector).boundingBox();
-    if (box) {
-        const tx = Math.round(box.x + box.width * (0.3 + Math.random() * 0.4));
-        const ty = Math.round(box.y + box.height * (0.3 + Math.random() * 0.4));
-        await humanMouseMove(p, tx, ty);
-        await humanPause(randInt(sp(50), sp(100)));
-    }
-    await p.click(selector, { force: true });
-    await p.fill(selector, '');
-    await humanPause(randInt(sp(60), sp(150)));
-    const fast = isSpeedMode();
-    for (let i = 0; i < value.length; i++) {
-        const ch = value[i];
-        if (!fast && Math.random() < 0.03 && /[a-zA-Z]/.test(ch)) {
-            const typo = String.fromCharCode(ch.charCodeAt(0) + (Math.random() > 0.5 ? 1 : -1));
-            await p.keyboard.type(typo, { delay: randInt(40, 80) });
-            await humanPause(randInt(50, 120));
-            await p.keyboard.press('Backspace');
-            await humanPause(randInt(40, 90));
-        }
-        const charDelay = fast ? randInt(15, 40) : randInt(35, 90);
-        await p.keyboard.type(ch, { delay: charDelay });
-        if (!fast) {
-            if (ch === ' ' || ch === '@' || ch === '.')
-                await humanPause(randInt(80, 200));
-            else if (Math.random() < 0.05)
-                await humanPause(randInt(100, 300));
-        }
-    }
-}
-async function humanClick(p, selector) {
-    await p.waitForSelector(selector, { state: 'visible', timeout: 15000 });
-    const box = await p.locator(selector).boundingBox();
-    if (box) {
-        const tx = Math.round(box.x + box.width * (0.25 + Math.random() * 0.5));
-        const ty = Math.round(box.y + box.height * (0.25 + Math.random() * 0.5));
-        await humanMouseMove(p, tx, ty);
-        await humanPause(randInt(sp(40), sp(100)));
-        await p.mouse.click(tx, ty);
-    }
-    else {
-        await p.click(selector);
-    }
-}
-async function dispensarCookies(p) {
-    const candidatos = [
-        'button:has-text("Aceitar todos")',
-        'button:has-text("Accept all")',
-        'button:has-text("Aceitar")',
-        'button:has-text("Accept")',
-        '[id*="cookie"] button:has-text("Concordo")',
-        '[class*="cookie"] button',
-        '[class*="consent"] button',
-        '[data-testid="cookie-banner-accept"]',
-        '[data-testid="accept-cookies"]',
-        '#onetrust-accept-btn-handler',
-        '.onetrust-accept-btn-handler',
-        'button#accept-recommended-btn-handler',
-    ];
-    for (const seletor of candidatos) {
-        try {
-            const el = p.locator(seletor).first();
-            const visivel = await el.isVisible({ timeout: 1500 }).catch(() => false);
-            if (visivel) {
-                const box = await el.boundingBox().catch(() => null);
-                if (box) {
-                    await humanMouseMove(p, box.x + box.width / 2, box.y + box.height / 2);
-                    await humanPause(randInt(sp(100), sp(200)));
-                }
-                await el.click({ timeout: 3000 });
-                globalState_1.globalState.addLog('info', `🍪 Banner de cookies dispensado (${seletor})`);
-                await humanPause(randInt(sp(300), sp(600)));
-                return;
-            }
-        }
-        catch { /* ignora */ }
-    }
-}
-async function aceitarTermos(p) {
-    await humanPause(randInt(sp(500), sp(900)));
-    const candidatos = [
-        async () => {
-            const el = p.locator('input[type="checkbox"]').first();
-            await el.waitFor({ state: 'attached', timeout: 8000 });
-            const box = await el.boundingBox().catch(() => null);
-            if (box) {
-                await humanMouseMove(p, box.x + box.width / 2, box.y + box.height / 2);
-                await humanPause(randInt(sp(80), sp(160)));
-            }
-            await el.check({ force: true, timeout: 5000 });
-        },
-        async () => {
-            const el = p.locator('label:has-text("Concordo"), [class*="label"]:has-text("Concordo")').first();
-            await el.waitFor({ state: 'attached', timeout: 5000 });
-            const box = await el.boundingBox().catch(() => null);
-            if (box)
-                await humanMouseMove(p, box.x + box.width / 2, box.y + box.height / 2);
-            await humanPause(randInt(sp(60), sp(140)));
-            await el.click({ force: true, timeout: 5000 });
-        },
-        async () => {
-            const el = p.locator('[role="checkbox"]').first();
-            await el.waitFor({ state: 'attached', timeout: 5000 });
-            const box = await el.boundingBox().catch(() => null);
-            if (box)
-                await humanMouseMove(p, box.x + box.width / 2, box.y + box.height / 2);
-            await humanPause(randInt(sp(60), sp(140)));
-            await el.click({ force: true, timeout: 5000 });
-        },
-        async () => { await p.click('text=Concordo', { force: true, timeout: 5000 }); },
-    ];
-    let aceitou = false;
-    for (const tentativa of candidatos) {
-        try {
-            await tentativa();
-            aceitou = true;
-            break;
-        }
-        catch { /* tenta próximo */ }
-    }
-    if (!aceitou)
-        throw new Error('Não foi possível aceitar os termos — nenhum seletor funcionou');
-    globalState_1.globalState.addLog('info', '☑️ Termos aceitos');
-}
-// ─── Seleciona cidade ─────────────────────────────────────────────────────────
-async function selecionarCidade(p, cidade, cycle) {
-    const INPUT_SEL = '[data-testid="flow-type-city-selector-v2-input"]';
-    const DROPDOWN_ITEM_SELS = [
-        '[data-testid="flow-type-city-selector-v2-option"]',
-        '[role="option"]',
-        '[role="listbox"] li',
-        '[class*="suggestion"]',
-        '[class*="option"]',
-        '[class*="item"]',
-    ];
-    const norm = (s) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
-    const nomeBusca = cidade.split(',')[0].trim();
-    const nomeBuscaNorm = norm(nomeBusca);
-    globalState_1.globalState.addLog('info', `📍 Digitando cidade: "${nomeBusca}"`, cycle);
-    await p.waitForSelector(INPUT_SEL, { state: 'visible', timeout: 15000 });
-    const box = await p.locator(INPUT_SEL).boundingBox().catch(() => null);
-    if (box) {
-        await humanMouseMove(p, box.x + box.width / 2, box.y + box.height / 2);
-        await humanPause(randInt(sp(80), sp(160)));
-    }
-    await p.click(INPUT_SEL);
-    await p.fill(INPUT_SEL, '');
-    await humanPause(randInt(sp(100), sp(200)));
-    for (const ch of nomeBusca) {
-        const charDelay = isSpeedMode() ? randInt(20, 50) : randInt(50, 110);
-        await p.keyboard.type(ch, { delay: charDelay });
-        if (!isSpeedMode() && Math.random() < 0.08)
-            await humanPause(randInt(80, 200));
-    }
-    globalState_1.globalState.addLog('info', '⏳ Aguardando dropdown de cidade...', cycle);
-    let itemSel = null;
-    const pollMs = isSpeedMode() ? 200 : 500;
-    const fimDropdown = Date.now() + 8000;
-    while (Date.now() < fimDropdown) {
-        for (const sel of DROPDOWN_ITEM_SELS) {
-            try {
-                const count = await p.locator(sel).count();
-                if (count > 0) {
-                    const visivel = await p.locator(sel).first().isVisible({ timeout: 800 }).catch(() => false);
-                    if (visivel) {
-                        itemSel = sel;
-                        break;
-                    }
-                }
-            }
-            catch { /* tenta próximo */ }
-        }
-        if (itemSel)
-            break;
-        await humanPause(pollMs);
-    }
-    if (!itemSel) {
-        globalState_1.globalState.addLog('warn', '⚠️ Dropdown não detectado, tentando ArrowDown+Enter', cycle);
-        await humanPause(randInt(sp(300), sp(600)));
-        await p.keyboard.press('ArrowDown');
-        await humanPause(randInt(sp(150), sp(300)));
-        await p.keyboard.press('Enter');
-        return;
-    }
-    await humanPause(randInt(sp(300), sp(600)));
-    const opcoes = p.locator(itemSel);
-    const total = await opcoes.count();
-    globalState_1.globalState.addLog('info', `📍 Dropdown aberto com ${total} opções`, cycle);
-    let clicou = false;
-    for (let i = 0; i < total; i++) {
-        try {
-            const opcao = opcoes.nth(i);
-            const texto = await opcao.innerText().catch(() => '');
-            if (norm(texto).includes(nomeBuscaNorm)) {
-                const opcaoBox = await opcao.boundingBox().catch(() => null);
-                if (opcaoBox) {
-                    await humanMouseMove(p, opcaoBox.x + opcaoBox.width / 2, opcaoBox.y + opcaoBox.height / 2);
-                    await humanPause(randInt(sp(150), sp(300)));
-                }
-                await opcao.click({ timeout: 5000 });
-                globalState_1.globalState.addLog('info', `✅ Cidade selecionada: "${texto.trim()}"`, cycle);
-                clicou = true;
-                break;
-            }
-        }
-        catch { /* tenta próxima */ }
-    }
-    if (!clicou) {
-        globalState_1.globalState.addLog('warn', `⚠️ Nenhuma opção com "${nomeBusca}", clicando na primeira`, cycle);
-        try {
-            const primeiraBox = await opcoes.first().boundingBox().catch(() => null);
-            if (primeiraBox) {
-                await humanMouseMove(p, primeiraBox.x + primeiraBox.width / 2, primeiraBox.y + primeiraBox.height / 2);
-                await humanPause(randInt(sp(150), sp(300)));
-            }
-            await opcoes.first().click({ timeout: 5000 });
-        }
-        catch {
-            await p.keyboard.press('ArrowDown');
-            await humanPause(randInt(sp(150), sp(300)));
-            await p.keyboard.press('Enter');
-        }
-    }
-    await humanPause(randInt(sp(400), sp(700)));
-}
-// ─── JS helpers ───────────────────────────────────────────────────────────────
-const JS_NAO_ATIVAR = `
-  (function() {
-    var normalize = function(s) {
-      return s.normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toUpperCase().trim();
-    };
-    var botoes = Array.from(document.querySelectorAll('button'));
-    var alvo = botoes.find(function(b) {
-      var t = normalize(b.innerText);
-      return t.indexOf('NAO ATIVAR') !== -1 || t.indexOf('N AO ATIVAR') !== -1;
-    });
-    if (alvo) { alvo.click(); return true; }
-    return false;
-  })()
+// ─── MOBILE CONTEXT ───────────────────────────────────────────────────────────
+const MOBILE_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 ' +
+    '(KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1';
+const MOBILE_W = 390;
+const MOBILE_H = 844;
+const MOBILE_DPR = 3;
+const MOBILE_HEADERS = {
+    'Sec-CH-UA-Mobile': '?1',
+    'Sec-CH-UA-Platform': '"iOS"',
+    'Sec-CH-UA': '"Not/A)Brand";v="8", "Chromium";v="126", "Mobile Safari";v="17"',
+    'Accept-Language': 'pt-BR,pt;q=0.9,en;q=0.8',
+};
+const MOBILE_INIT_SCRIPT = `
+(function() {
+  const ua = ${JSON.stringify(MOBILE_UA)};
+  Object.defineProperty(navigator, 'userAgent',      { get: () => ua,       configurable: true });
+  Object.defineProperty(navigator, 'appVersion',     { get: () => ua.replace('Mozilla/', ''), configurable: true });
+  Object.defineProperty(navigator, 'platform',       { get: () => 'iPhone', configurable: true });
+  Object.defineProperty(navigator, 'maxTouchPoints', { get: () => 5,        configurable: true });
+  Object.defineProperty(navigator, 'vendor',         { get: () => 'Apple Computer, Inc.', configurable: true });
+  window.ontouchstart = null;
+  window.ontouchmove  = null;
+  window.ontouchend   = null;
+})();
 `;
-const JS_FALLBACK_SUBMIT = `
-  (function() {
-    var normalize = function(s) {
-      return s.normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toUpperCase().trim();
-    };
-    var botoes = Array.from(document.querySelectorAll('button[type="submit"]'));
-    var alvo = botoes.find(function(b) {
-      var t = normalize(b.innerText);
-      return !t.includes('CONTINUAR') && !t.includes('AJUDA') && b.offsetParent !== null;
-    });
-    if (alvo) { alvo.click(); return alvo.innerText; }
-    return null;
-  })()
-`;
-// ─── KYC init script ──────────────────────────────────────────────────────────
-const KYC_INIT_SCRIPT = `
-  (function() {
-    if (window.__kycInjected) return;
-    window.__kycInjected = true;
-
-    var PROVIDERS = {
-      'Socure':  ['socure', 'devicer.io', 'sigma.socure', 'verify.socure'],
-      'Veriff':  ['veriff', 'magic.veriff', 'api.veriff.me', 'cdn.veriff'],
-      'Jumio':   ['jumio', 'lon.jumio', 'netverify'],
-      'Onfido':  ['onfido', 'sdk.onfido'],
-      'Persona': ['withpersona', 'persona.id'],
-      'Stripe':  ['identity.stripe', 'stripe-js'],
-      'Au10tix': ['au10tix'],
-      'Mitek':   ['miteksystems', 'mitek'],
-    };
-
-    function analyze(url, source) {
-      if (!url || typeof url !== 'string') return;
-      var u = url.toLowerCase();
-      for (var provider in PROVIDERS) {
-        var patterns = PROVIDERS[provider];
-        for (var i = 0; i < patterns.length; i++) {
-          if (u.indexOf(patterns[i]) !== -1) {
-            try { window.__kycSignal(provider, source, url, 5); } catch(e) {}
-            window.dispatchEvent(new CustomEvent('__kyc_hit', { detail: { provider: provider, source: source, url: url } }));
-            return;
-          }
-        }
-      }
-    }
-
-    var _fetch = window.fetch;
-    window.fetch = function() {
-      try { analyze(arguments[0] && (arguments[0].url || arguments[0]), 'fetch'); } catch(e) {}
-      return _fetch.apply(this, arguments);
-    };
-
-    var _open = XMLHttpRequest.prototype.open;
-    XMLHttpRequest.prototype.open = function(method, url) {
-      try { analyze(url, 'xhr'); } catch(e) {}
-      return _open.apply(this, arguments);
-    };
-
-    var _WS = window.WebSocket;
-    if (_WS) {
-      window.WebSocket = function(url, proto) {
-        try { analyze(url, 'websocket'); } catch(e) {}
-        return proto ? new _WS(url, proto) : new _WS(url);
-      };
-      window.WebSocket.prototype = _WS.prototype;
-    }
-
-    var _create = document.createElement.bind(document);
-    document.createElement = function(tag) {
-      var el = _create(tag);
-      var t = tag.toLowerCase();
-      if (t === 'script' || t === 'iframe') {
-        var proto = t === 'script' ? HTMLScriptElement.prototype : HTMLIFrameElement.prototype;
-        var d = Object.getOwnPropertyDescriptor(proto, 'src');
-        if (d) {
-          Object.defineProperty(el, 'src', {
-            set: function(v) { analyze(v, t + '-tag'); return d.set.call(this, v); },
-            get: function()  { return d.get.call(this); },
-            configurable: true
-          });
-        }
-      }
-      return el;
-    };
-
-    new MutationObserver(function(ms) {
-      ms.forEach(function(m) {
-        m.addedNodes.forEach(function(n) {
-          if (!n.tagName) return;
-          var tag = n.tagName.toUpperCase();
-          if (tag === 'SCRIPT' || tag === 'IFRAME') {
-            var src = n.src || n.getAttribute('src') || '';
-            analyze(src, tag.toLowerCase() + '-dom');
-          }
-          if (tag === 'LINK') {
-            var href = n.href || n.getAttribute('href') || '';
-            analyze(href, 'link-dom');
-          }
-        });
-      });
-    }).observe(document.documentElement, { childList: true, subtree: true });
-
-    try {
-      var po = new PerformanceObserver(function(list) {
-        list.getEntries().forEach(function(entry) {
-          analyze(entry.name, 'perf-observer');
-        });
-      });
-      po.observe({ type: 'resource', buffered: true });
-    } catch(e) {}
-
-  })();
-`;
-// ─── WhatsApp ─────────────────────────────────────────────────────────────────
-async function dispensarWhatsApp(p, cycle) {
-    try {
-        await humanPause(randInt(sp(2000), sp(3500)));
-        const SELETORES_WHATSAPP = [
-            'button:has-text("ÃO ATIVAR")',
-            'button:has-text("Nao ativar")',
-            'button:has-text("Not now")',
-            'button:has-text("Agora não")',
-            '[data-testid*="whatsapp"]',
-            'button[type="submit"]',
-        ];
-        const TIMEOUT_MS = 30000;
-        const POLL_MS = isSpeedMode() ? 1000 : 3000;
-        const inicio = Date.now();
-        let detectado = false;
-        globalState_1.globalState.addLog('info', '🔍 Aguardando tela do WhatsApp (até 30s)...', cycle);
-        while (Date.now() - inicio < TIMEOUT_MS) {
-            for (const sel of SELETORES_WHATSAPP) {
-                try {
-                    const visivel = await p.locator(sel).first().isVisible({ timeout: 1000 }).catch(() => false);
-                    if (visivel) {
-                        detectado = true;
-                        break;
-                    }
-                }
-                catch { /* ignora */ }
-            }
-            if (detectado)
-                break;
-            await humanPause(POLL_MS);
-        }
-        if (!detectado) {
-            globalState_1.globalState.addLog('warn', '⚠️ Tela WhatsApp não detectada após 30s, pulando...', cycle);
-            return;
-        }
-        globalState_1.globalState.addLog('info', '📲 Tela WhatsApp detectada, clicando em NÃO ATIVAR...', cycle);
-        await humanPause(randInt(sp(400), sp(800)));
-        for (const sel of ['button:has-text("NÃO ATIVAR")', 'button:has-text("Nao ativar")', 'button:has-text("Not now")', 'button:has-text("Agora não")']) {
-            try {
-                const el = p.locator(sel).first();
-                const visivel = await el.isVisible({ timeout: 2000 }).catch(() => false);
-                if (visivel) {
-                    const box = await el.boundingBox().catch(() => null);
-                    if (box) {
-                        await humanMouseMove(p, box.x + box.width / 2, box.y + box.height / 2);
-                        await humanPause(randInt(sp(150), sp(300)));
-                    }
-                    await el.click({ timeout: 5000 });
-                    globalState_1.globalState.addLog('info', `🔕 WhatsApp: NÃO ATIVAR clicado (${sel})`, cycle);
-                    await humanPause(randInt(sp(400), sp(800)));
-                    return;
-                }
-            }
-            catch { /* tenta próxima */ }
-        }
-        try {
-            const clicou = await p.evaluate(JS_NAO_ATIVAR);
-            if (clicou) {
-                globalState_1.globalState.addLog('info', '🔕 WhatsApp: NÃO ATIVAR clicado (JS normalize)', cycle);
-                return;
-            }
-        }
-        catch { /* ignora */ }
-        try {
-            const clicou = await p.evaluate(JS_FALLBACK_SUBMIT);
-            if (clicou) {
-                globalState_1.globalState.addLog('info', `🔕 WhatsApp: botão "${clicou}" clicado (fallback)`, cycle);
-                return;
-            }
-        }
-        catch { /* ignora */ }
-        globalState_1.globalState.addLog('warn', '⚠️ Tela detectada mas não foi possível clicar em NÃO ATIVAR — continuando...', cycle);
-    }
-    catch (err) {
-        globalState_1.globalState.addLog('warn', `⚠️ dispensarWhatsApp erro inesperado (ignorado): ${err}`, cycle);
-    }
-}
-// ─── KYC: resolve provider dominante ─────────────────────────────────────────
-function resolverProviderDominante(cycle, scoreMinimo = 4) {
-    const { byCycle } = globalState_1.globalState.getKycState();
-    const cicloMap = byCycle[cycle];
-    if (!cicloMap)
-        return null;
-    let melhor = null;
-    for (const [provider, state] of Object.entries(cicloMap)) {
-        if (state.score >= scoreMinimo) {
-            if (!melhor || state.score > melhor.score) {
-                melhor = { provider, score: state.score, url: state.signals[0]?.url ?? '' };
-            }
-        }
-    }
-    return melhor;
-}
-// ─── Polling do botão "Tirar foto" ────────────────────────────────────────────
-async function pollingBotaoTirarFoto(p, seletoresItem, seletoresBotao, cycle, timeoutMs = 60000) {
-    const POLL_INTERVAL_MS = isSpeedMode() ? 1500 : 3000;
-    const inicio = Date.now();
-    let tentativa = 0;
-    globalState_1.globalState.addLog('info', `📸 [TirarFoto] Iniciando polling (timeout: ${timeoutMs / 1000}s, intervalo: ${POLL_INTERVAL_MS / 1000}s)`, cycle);
-    while (Date.now() - inicio < timeoutMs) {
-        tentativa++;
-        globalState_1.globalState.addLog('info', `🔄 [TirarFoto] Poll #${tentativa} — buscando botão...`, cycle);
-        for (const sel of seletoresBotao) {
-            try {
-                const el = p.locator(sel).first();
-                const visivel = await el.isVisible({ timeout: 1200 }).catch(() => false);
-                if (visivel) {
-                    const box = await el.boundingBox().catch(() => null);
-                    if (box) {
-                        await humanMouseMove(p, box.x + box.width / 2, box.y + box.height / 2);
-                        await humanPause(randInt(sp(200), sp(400)));
-                    }
-                    await el.click({ force: true, timeout: 5000 });
-                    globalState_1.globalState.addLog('info', `✅ [TirarFoto] Poll #${tentativa} — botão clicado! (${sel})`, cycle);
-                    return true;
-                }
-            }
-            catch { /* tenta próximo seletor */ }
-        }
-        globalState_1.globalState.addLog('info', `📌 [TirarFoto] Poll #${tentativa} — botão não encontrado ainda`, cycle);
-        if (tentativa % 2 === 0) {
-            try {
-                const scrollY = tentativa % 4 === 0 ? 0 : 300;
-                await p.evaluate(`window.scrollBy(0, ${scrollY})`);
-                globalState_1.globalState.addLog('info', `📌 [TirarFoto] Poll #${tentativa} — scroll aplicado (${scrollY > 0 ? '+' + scrollY : 'topo'})`, cycle);
-                await humanPause(randInt(sp(300), sp(600)));
-                for (const sel of seletoresBotao) {
-                    try {
-                        const el = p.locator(sel).first();
-                        const visivel = await el.isVisible({ timeout: 1200 }).catch(() => false);
-                        if (visivel) {
-                            const box = await el.boundingBox().catch(() => null);
-                            if (box) {
-                                await humanMouseMove(p, box.x + box.width / 2, box.y + box.height / 2);
-                                await humanPause(randInt(sp(200), sp(400)));
-                            }
-                            await el.click({ force: true, timeout: 5000 });
-                            globalState_1.globalState.addLog('info', `✅ [TirarFoto] Poll #${tentativa} (pós-scroll) — botão clicado! (${sel})`, cycle);
-                            return true;
-                        }
-                    }
-                    catch { /* ignora */ }
-                }
-            }
-            catch (e) {
-                globalState_1.globalState.addLog('warn', `⚠️ [TirarFoto] Poll #${tentativa} — erro no scroll: ${e}`, cycle);
-            }
-        }
-        if (tentativa % 3 === 0) {
-            globalState_1.globalState.addLog('info', `🔁 [TirarFoto] Poll #${tentativa} — re-clicando em "Foto do perfil"...`, cycle);
-            try {
-                await p.evaluate('window.scrollTo(0, 0)');
-                await humanPause(randInt(sp(400), sp(700)));
-                for (const sel of seletoresItem) {
-                    try {
-                        const el = p.locator(sel).first();
-                        const visivel = await el.isVisible({ timeout: 1500 }).catch(() => false);
-                        if (visivel) {
-                            const box = await el.boundingBox().catch(() => null);
-                            if (box) {
-                                await humanMouseMove(p, box.x + box.width / 2, box.y + box.height / 2);
-                                await humanPause(randInt(sp(200), sp(400)));
-                            }
-                            await el.click({ force: true, timeout: 5000 });
-                            globalState_1.globalState.addLog('info', `📸 [TirarFoto] Poll #${tentativa} — "Foto do perfil" re-clicado (${sel})`, cycle);
-                            await humanPause(randInt(sp(1000), sp(2000)));
-                            break;
-                        }
-                    }
-                    catch { /* ignora */ }
-                }
-            }
-            catch (e) {
-                globalState_1.globalState.addLog('warn', `⚠️ [TirarFoto] Poll #${tentativa} — erro no re-clique: ${e}`, cycle);
-            }
-        }
-        const restante = timeoutMs - (Date.now() - inicio);
-        if (restante > 0) {
-            globalState_1.globalState.addLog('info', `⏳ [TirarFoto] Poll #${tentativa} — aguardando ${POLL_INTERVAL_MS / 1000}s (restam ${Math.round(restante / 1000)}s)...`, cycle);
-            await humanPause(POLL_INTERVAL_MS);
-        }
-    }
-    globalState_1.globalState.addLog('warn', `❌ [TirarFoto] Timeout após ${tentativa} polls (${timeoutMs / 1000}s) — botão não encontrado`, cycle);
-    return false;
-}
-// ─── Foto do perfil + KYC ─────────────────────────────────────────────────────
-async function clicarFotoPerfil(p, cycle, context) {
-    globalState_1.globalState.addLog('info', '📸 Aguardando tela de lista de requisitos (Foto do perfil)...', cycle);
-    const SELETORES_ITEM = [
-        '[data-testid="stepItem profilePhoto"]',
-        '[data-dgui="requirement-list-item"]:has-text("Foto do perfil")',
-        '[data-dgui="requirement-list-item"]:has-text("Foto")',
-        'a:has-text("Foto do perfil")',
-        'a:has-text("Foto")',
-        '[data-tracking-name="requirement-list-item"]:has-text("Foto")',
-        '[role="listitem"]:has-text("Foto do perfil")',
-        '[role="listitem"]:has-text("Foto")',
-        'li:has-text("Foto do perfil")',
-        'li:has-text("Foto")',
-    ];
-    const SELETORES_BOTAO_FOTO = [
-        '[data-dgui="button"]:has-text("Tirar foto")',
-        'button:has-text("Tirar foto")',
-        'button:has-text("Usar meu telefone")',
-        'button:has-text("Enviar foto")',
-        'button:has-text("Escolher foto")',
-        'button:has-text("Take photo")',
-        'button:has-text("Upload photo")',
-        '[data-testid="step-bottom-navigation"] button',
-        '[data-testid="step-bottom-navigation"] [data-dgui="button"]',
-        '[data-dgui="button"]',
-    ];
-    const TIMEOUT_ITEM = 20000;
-    const inicioItem = Date.now();
-    let clicouItem = false;
-    while (Date.now() - inicioItem < TIMEOUT_ITEM) {
-        for (const sel of SELETORES_ITEM) {
-            try {
-                const el = p.locator(sel).first();
-                const visivel = await el.isVisible({ timeout: 1500 }).catch(() => false);
-                if (visivel) {
-                    const box = await el.boundingBox().catch(() => null);
-                    if (box) {
-                        await humanMouseMove(p, box.x + box.width / 2, box.y + box.height / 2);
-                        await humanPause(randInt(sp(200), sp(400)));
-                    }
-                    await el.click({ force: true, timeout: 5000 });
-                    globalState_1.globalState.addLog('info', `📸 "Foto do perfil" clicado (${sel})`, cycle);
-                    clicouItem = true;
-                    break;
-                }
-            }
-            catch { /* tenta próximo seletor */ }
-        }
-        if (clicouItem)
-            break;
-        await humanPause(isSpeedMode() ? 600 : 1500);
-    }
-    if (!clicouItem) {
-        globalState_1.globalState.addLog('warn', '⚠️ "Foto do perfil" não encontrado após 20s, pulando...', cycle);
-        return;
-    }
-    await humanPause(randInt(sp(1200), sp(2000)));
-    const botaoClicado = await pollingBotaoTirarFoto(p, SELETORES_ITEM, SELETORES_BOTAO_FOTO, cycle, 60000);
-    if (!botaoClicado) {
-        globalState_1.globalState.addLog('warn', '⚠️ Botão de foto não encontrado após polling completo', cycle);
-    }
-    const salvarContaSocure = async () => {
-        const payload = globalState_1.globalState.getPayload(cycle);
-        if (!payload) {
-            globalState_1.globalState.addLog('warn', '⚠️ Payload não encontrado — conta não salva', cycle);
-            return;
-        }
-        try {
-            const cookies = await context.cookies();
-            const saved = accountStore.save({
-                cycle,
-                provider: 'Socure',
-                nome: payload.nome,
-                sobrenome: payload.sobrenome,
-                email: payload.email,
-                telefone: payload.telefone,
-                senha: payload.senha,
-                localizacao: payload.localizacao,
-                codigoIndicacao: payload.codigoIndicacao,
-                cookies,
-            });
-            globalState_1.globalState.addLog('success', `💾 Conta salva! id=${saved.id} | ${payload.email}`, cycle);
-        }
-        catch (e) {
-            globalState_1.globalState.addLog('warn', `⚠️ Erro ao salvar conta: ${e}`, cycle);
-        }
-        finally {
-            globalState_1.globalState.clearPayload(cycle);
-        }
-    };
-    const detectarEFechar = async (provider, score, url) => {
-        if (provider === 'Veriff') {
-            globalState_1.globalState.addLog('info', `🗑️ Veriff detectado (score=${score}) → fechando aba para liberar RAM`, cycle);
-            await humanPause(randInt(sp(500), sp(1000)));
-            await context.close().catch(() => { });
-            contextosPorCiclo.delete(cycle);
-            globalState_1.globalState.clearPayload(cycle);
-        }
-        else {
-            globalState_1.globalState.addLog('success', `🟢 ${provider} detectado (score=${score}, url=${url}) → aba mantida aberta`, cycle);
-            if (provider === 'Socure')
-                await salvarContaSocure();
-        }
-    };
-    globalState_1.globalState.addLog('info', '⏳ Aguardando KYC inicializar (até 30s)...', cycle);
-    const fimKyc1 = Date.now() + 30000;
-    while (Date.now() < fimKyc1) {
-        const dominante = resolverProviderDominante(cycle, 4);
-        if (dominante) {
-            globalState_1.globalState.addLog('info', `✅ KYC detectado: ${dominante.provider} (score=${dominante.score})`, cycle);
-            await detectarEFechar(dominante.provider, dominante.score, dominante.url);
-            return;
-        }
-        await humanPause(isSpeedMode() ? 500 : 1000);
-    }
-    globalState_1.globalState.addLog('warn', '⚠️ KYC não detectado após 30s — aguardando mais 20s (re-poll)...', cycle);
-    const fimKyc2 = Date.now() + 20000;
-    while (Date.now() < fimKyc2) {
-        const dominante = resolverProviderDominante(cycle, 4);
-        if (dominante) {
-            globalState_1.globalState.addLog('info', `✅ KYC detectado (re-poll): ${dominante.provider} (score=${dominante.score})`, cycle);
-            await detectarEFechar(dominante.provider, dominante.score, dominante.url);
-            return;
-        }
-        await humanPause(isSpeedMode() ? 500 : 1000);
-    }
-    globalState_1.globalState.addLog('warn', '⚠️ KYC não detectado após 50s total. Aba mantida aberta para inspeção.', cycle);
-}
-// ─── Stealth script ───────────────────────────────────────────────────────────
-const stealthScript = `
-  (function() {
-    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-    Object.defineProperty(navigator, 'platform',          { get: () => 'iPhone' });
-    Object.defineProperty(navigator, 'maxTouchPoints',    { get: () => 5 });
-    Object.defineProperty(navigator, 'languages',         { get: () => ['pt-BR', 'pt', 'en-US', 'en'] });
-    Object.defineProperty(navigator, 'hardwareConcurrency',{ get: () => 6 });
-    Object.defineProperty(navigator, 'plugins', {
-      get: () => {
-        const arr = Object.create(PluginArray.prototype);
-        Object.defineProperty(arr, 'length', { value: 0 });
-        arr.item = () => null;
-        arr.namedItem = () => null;
-        arr.refresh = () => {};
-        return arr;
-      }
-    });
-    if (navigator.connection) {
-      Object.defineProperty(navigator.connection, 'effectiveType', { get: () => '4g' });
-      Object.defineProperty(navigator.connection, 'rtt',           { get: () => 80 });
-      Object.defineProperty(navigator.connection, 'downlink',      { get: () => 8 });
-      Object.defineProperty(navigator.connection, 'saveData',      { get: () => false });
-    }
-    Object.defineProperty(screen, 'colorDepth', { get: () => 24 });
-    Object.defineProperty(screen, 'pixelDepth', { get: () => 24 });
-    const _origQuery = window.navigator.permissions.query.bind(navigator.permissions);
-    window.navigator.permissions.query = (p) =>
-      p.name === 'notifications'
-        ? Promise.resolve({ state: Notification.permission, onchange: null })
-        : _origQuery(p);
-    const origToDataURL = HTMLCanvasElement.prototype.toDataURL;
-    HTMLCanvasElement.prototype.toDataURL = function(type) {
-      const ctx = this.getContext('2d');
-      if (ctx) {
-        const noise = ctx.createImageData(1, 1);
-        noise.data[0] = Math.floor(Math.random() * 3);
-        ctx.putImageData(noise, Math.random() * this.width | 0, Math.random() * this.height | 0);
-      }
-      return origToDataURL.apply(this, arguments);
-    };
-    const getParameter = WebGLRenderingContext.prototype.getParameter;
-    WebGLRenderingContext.prototype.getParameter = function(param) {
-      if (param === 37445) return 'Apple Inc.';
-      if (param === 37446) return 'Apple GPU';
-      return getParameter.call(this, param);
-    };
-  })();
-`;
-// ─── KYC patterns ─────────────────────────────────────────────────────────────
-const KYC_PATTERNS = [
-    { pattern: /socure/i, provider: 'Socure' },
-    { pattern: /devicer\.io/i, provider: 'Socure' },
-    { pattern: /sigma\.socure/i, provider: 'Socure' },
-    { pattern: /verify\.socure/i, provider: 'Socure' },
-    { pattern: /veriff/i, provider: 'Veriff' },
-    { pattern: /magic\.veriff/i, provider: 'Veriff' },
-    { pattern: /api\.veriff\.me/i, provider: 'Veriff' },
-    { pattern: /cdn\.veriff/i, provider: 'Veriff' },
-    { pattern: /jumio/i, provider: 'Jumio' },
-    { pattern: /lon\.jumio/i, provider: 'Jumio' },
-    { pattern: /netverify/i, provider: 'Jumio' },
-    { pattern: /onfido/i, provider: 'Onfido' },
-    { pattern: /sdk\.onfido/i, provider: 'Onfido' },
-    { pattern: /withpersona/i, provider: 'Persona' },
-    { pattern: /persona\.id/i, provider: 'Persona' },
-    { pattern: /identity\.stripe/i, provider: 'Stripe' },
-    { pattern: /au10tix/i, provider: 'Au10tix' },
-    { pattern: /miteksystems/i, provider: 'Mitek' },
+// ─── KYC DETECTOR ─────────────────────────────────────────────────────────────
+const KYC_RULES = [
+    { pattern: /socure\.com/i, provider: 'Socure', weight: (url) => /\/dv\/|\/sv\/|document/i.test(url) ? 10 : 6 },
+    { pattern: /magic\.veriff\.me/i, provider: 'Veriff', weight: () => 10 },
+    { pattern: /veriff\.com/i, provider: 'Veriff', weight: (url) => /\/v\d|\/attempt|\/media|magic/i.test(url) ? 10 : 7 },
+    { pattern: /withpersona\.com/i, provider: 'Persona', weight: () => 6 },
+    { pattern: /getid\.company/i, provider: 'GetID', weight: () => 6 },
+    { pattern: /iproov\.com/i, provider: 'iProov', weight: () => 6 },
+    { pattern: /onfido\.com/i, provider: 'Onfido', weight: (url) => /\/sdk|\/applicants|\/checks/i.test(url) ? 10 : 6 },
+    { pattern: /jumio\.com/i, provider: 'Jumio', weight: (url) => /\/netverify|\/initiate|\/acquire/i.test(url) ? 10 : 6 },
 ];
-function detectKycProvider(url) {
-    for (const { pattern, provider } of KYC_PATTERNS) {
-        if (pattern.test(url))
-            return provider;
+function detectKycFromUrl(url, cycle, source) {
+    if (!url || url === 'about:blank' || url.startsWith('chrome')) return;
+    for (const rule of KYC_RULES) {
+        if (rule.pattern.test(url)) {
+            const weight = rule.weight(url);
+            globalState_1.globalState.addKycSignal(rule.provider, source, weight, cycle, url);
+            globalState_1.globalState.addLog('kyc', `🔎 KYC detectado: ${rule.provider} via ${source} | ${url.substring(0, 100)}`, cycle);
+            return;
+        }
     }
-    return null;
 }
-// ─── Listeners ────────────────────────────────────────────────────────────────
-function registrarListenersFrame(frame, cycle) {
-    try {
-        const url = frame.url();
-        const provider = detectKycProvider(url);
-        if (provider)
-            globalState_1.globalState.addKycSignal(provider, 'frame-url', 5, cycle, url);
-    }
-    catch { /* ignora */ }
-}
-function registrarListenersPage(page, cycle) {
-    try {
-        for (const frame of page.frames())
-            registrarListenersFrame(frame, cycle);
-    }
-    catch { /* ignora */ }
-    page.on('frameattached', (frame) => registrarListenersFrame(frame, cycle));
+function attachPageListeners(page, cycle, label) {
     page.on('framenavigated', (frame) => {
-        const url = frame.url();
-        const provider = detectKycProvider(url);
-        if (provider)
-            globalState_1.globalState.addKycSignal(provider, 'frame-navigated', 5, cycle, url);
+        try { detectKycFromUrl(frame.url(), cycle, `${label}:frame-navigate`); } catch { /* ignora */ }
     });
-    page.on('websocket', (ws) => {
-        const url = ws.url();
-        const provider = detectKycProvider(url);
-        if (provider)
-            globalState_1.globalState.addKycSignal(provider, 'websocket-native', 5, cycle, url);
+    page.on('response', (response) => {
+        try { detectKycFromUrl(response.url(), cycle, `${label}:network`); } catch { /* ignora */ }
     });
-    page.on('request', (req) => {
-        const url = req.url();
-        const provider = detectKycProvider(url);
-        if (provider)
-            globalState_1.globalState.addKycSignal(provider, 'page-request', 4, cycle, url);
+    page.on('request', (request) => {
+        try { detectKycFromUrl(request.url(), cycle, `${label}:request`); } catch { /* ignora */ }
     });
-    page.exposeFunction('__kycSignal', (provider, source, url, weight) => {
-        globalState_1.globalState.addKycSignal(provider, source, weight, cycle, url);
-    }).catch(() => { });
+    try { detectKycFromUrl(page.url(), cycle, `${label}:page-open`); } catch { /* ignora */ }
 }
-// ─── Determina proxy para o launch do browser ─────────────────────────────────
-// Usamos o proxy do PRIMEIRO ciclo disponível como proxy de launch.
-// Isso garante que todo o tráfego do browser (incluindo DNS) passe pelo proxy.
-// Cada contexto pode sobrescrever com seu próprio proxy.
-function getFirstAvailableProxy() {
-    const proxies = globalState_1.globalState.getState().config.proxies;
-    if (!proxies || proxies.length === 0)
-        return null;
-    return proxies[0] ?? null;
+function installKycInterceptor(context, cycle) {
+    context.on('page', (newPage) => {
+        attachPageListeners(newPage, cycle, 'popup');
+        newPage.once('load', () => {
+            try { detectKycFromUrl(newPage.url(), cycle, 'popup:load'); } catch { /* ignora */ }
+        });
+    });
+    context.on('response', (response) => {
+        try { detectKycFromUrl(response.url(), cycle, 'ctx:network'); } catch { /* ignora */ }
+    });
+    context.on('request', (request) => {
+        try { detectKycFromUrl(request.url(), cycle, 'ctx:request'); } catch { /* ignora */ }
+    });
 }
-// ─── Cria contexto isolado ─────────────────────────────────────────────────────
-async function criarContextoIsolado(cycle) {
-    const proxy = globalState_1.globalState.getProxyForCycle(cycle);
-    if (proxy) {
-        globalState_1.globalState.addLog('info', `🌐 [Proxy] Ciclo #${cycle} → usando proxy: ${proxy.server}` +
-            (proxy.username ? ` | usuário: ${proxy.username}` : ''), cycle);
+// ─── SPINNER ──────────────────────────────────────────────────────────────────
+const SPINNER_SEL = [
+    '[data-testid="loading_component"]',
+    '[data-testid="spinner"]',
+    '[data-testid="loading_component_SessionVerification"]',
+    '[data-testid="loader"]',
+].join(', ');
+async function waitForSpinner(p, cycle, maxMs = 30000) {
+    const visible = await hasElement(p, SPINNER_SEL, 1200);
+    if (!visible) return;
+    globalState_1.globalState.addLog('info', '⏳ Aguardando spinner...', cycle);
+    const start = Date.now();
+    while (Date.now() - start < maxMs) {
+        if (!(await hasElement(p, SPINNER_SEL, 400))) {
+            globalState_1.globalState.addLog('info', '✔️ Spinner sumiu', cycle);
+            await sleep(600 + EXTRA_DELAY);
+            return;
+        }
+        await sleep(400 + EXTRA_DELAY);
     }
-    else {
-        globalState_1.globalState.addLog('warn', `⚠️ [Proxy] Ciclo #${cycle} → SEM proxy configurado (usando conexão do sistema / VPN)`, cycle);
-    }
-    const context = await browser.newContext({
-        ...MOBILE_DEVICE,
-        locale: 'pt-BR',
-        timezoneId: 'America/Sao_Paulo',
-        geolocation: { latitude: -23.5505, longitude: -46.6333 },
-        permissions: ['geolocation'],
-        extraHTTPHeaders: {
-            'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
-        },
-        // Proxy por contexto: sobrescreve o proxy de launch para este ciclo específico
-        ...(proxy ? { proxy: { server: proxy.server, username: proxy.username, password: proxy.password } } : {}),
-    });
-    await context.addInitScript({ content: stealthScript });
-    await context.addInitScript({ content: KYC_INIT_SCRIPT });
-    await context.route('**/*', (route) => {
-        const url = route.request().url();
-        const provider = detectKycProvider(url);
-        if (provider)
-            globalState_1.globalState.addKycSignal(provider, 'network-route', 3, cycle, url);
-        route.continue();
-    });
-    const page = await context.newPage();
-    // ── FIX: Interceptar novas abas abertas PELO SITE (popup com window.open) ───
-    // ATENÇÃO: só fechamos a aba se ela tiver um "opener" (ou seja, foi aberta
-    // via window.open / target="_blank" pelo próprio site controlado).
-    // Abas abertas manualmente pelo usuário (nova guia, menu do browser) NÃO
-    // possuem opener e NÃO devem ser fechadas — são abas independentes do usuário.
-    context.on('page', async (novaPage) => {
-        try {
-            // Verifica se a nova página tem opener (foi aberta pelo site via JS)
-            const temOpener = await novaPage.evaluate(() => window.opener !== null).catch(() => false);
-            if (!temOpener) {
-                // Aba aberta pelo usuário manualmente — não interferir
-                globalState_1.globalState.addLog('info', `🪟 Nova aba detectada sem opener (aberta pelo usuário) — ignorando`, cycle);
+    globalState_1.globalState.addLog('warn', '⚠️ Spinner timeout — continuando mesmo assim', cycle);
+}
+async function waitForNextScreen(p, cycle, selectors, maxMs = 60000) {
+    globalState_1.globalState.addLog('info', '⏳ Aguardando próxima tela...', cycle);
+    const start = Date.now();
+    while (Date.now() - start < maxMs) {
+        if (isStopped()) throw new Error('Parado pelo usuário');
+        for (const sel of selectors) {
+            if (await hasElement(p, sel, 400)) {
+                globalState_1.globalState.addLog('info', '✔️ Próxima tela detectada', cycle);
+                await sleep(400 + EXTRA_DELAY);
                 return;
             }
-            // É um popup do site (window.open) — interceptar e fechar
-            const url = novaPage.url();
-            globalState_1.globalState.addLog('info', `📌 Popup do site interceptado (url: ${url || 'about:blank'}) — fechando automaticamente`, cycle);
-            // Registra listeners KYC antes de fechar (pode ter KYC signal)
-            registrarListenersPage(novaPage, cycle);
-            // Aguarda um instante para capturar qualquer signal de rede antes de fechar
-            await new Promise((r) => setTimeout(r, 800));
-            await novaPage.close().catch(() => { });
         }
-        catch {
-            // Se não conseguir verificar o opener, não fecha a aba (mais seguro)
-        }
-    });
-    try {
-        const cdp = await context.newCDPSession(page);
-        await cdp.send('Emulation.setDeviceMetricsOverride', {
-            mobile: true,
-            width: MOBILE_DEVICE.viewport?.width ?? 390,
-            height: MOBILE_DEVICE.viewport?.height ?? 844,
-            deviceScaleFactor: MOBILE_DEVICE.deviceScaleFactor ?? 3,
-            screenOrientation: { angle: 0, type: 'portraitPrimary' },
-        });
-        await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
-        await cdp.send('Emulation.setUserAgentOverride', {
-            userAgent: MOBILE_DEVICE.userAgent ?? '',
-            acceptLanguage: 'pt-BR,pt;q=0.9',
-            platform: 'iPhone',
-        });
-        globalState_1.globalState.addLog('info', `📱 CDP mobile ativado (${MOBILE_DEVICE.viewport?.width}x${MOBILE_DEVICE.viewport?.height})`, cycle);
+        await waitForSpinner(p, cycle, 5000);
+        await sleep(500 + EXTRA_DELAY);
     }
-    catch (e) {
-        globalState_1.globalState.addLog('warn', `⚠️ CDP mobile falhou, usando contexto padrão: ${e}`, cycle);
-    }
-    registrarListenersPage(page, cycle);
-    contextosPorCiclo.set(cycle, context);
-    return { context, page };
+    globalState_1.globalState.addLog('warn', '⚠️ Timeout aguardando próxima tela — continuando mesmo assim', cycle);
 }
-// ─── Fecha contexto de um ciclo (sem afetar outros) ───────────────────────────
-async function fecharContextoCiclo(cycle, motivo) {
-    const ctx = contextosPorCiclo.get(cycle);
-    if (ctx) {
-        globalState_1.globalState.addLog('warn', `🧹 Fechando aba do ciclo #${cycle} — motivo: ${motivo}`, cycle);
-        await ctx.close().catch(() => { });
-        contextosPorCiclo.delete(cycle);
+async function waitOrReload(p, cycle, selectors, quickMs = 8000, afterReloadMs = 30000) {
+    const start = Date.now();
+    while (Date.now() - start < quickMs) {
+        if (isStopped()) throw new Error('Parado pelo usuário');
+        for (const sel of selectors) {
+            if (await hasElement(p, sel, 400)) return true;
+        }
+        await sleep(500 + EXTRA_DELAY);
     }
-    globalState_1.globalState.clearPayload(cycle);
-}
-// ─── Flow principal ───────────────────────────────────────────────────────────
-class MockPlaywrightFlow {
-    /**
-     * Inicia o browser (Brave).
-     *
-     * Regras de proxy no launch:
-     * - Se há proxies configurados → lança com --proxy-server=<primeiro proxy>
-     *   para que TODO o tráfego (incluindo DNS e requests fora dos contextos)
-     *   passe pelo proxy. Cada contexto ainda pode sobrescrever com seu próprio.
-     * - Se NÃO há proxies → lança com --proxy-server="" para que o Brave herde
-     *   a configuração de rede do sistema operacional (inclui VPN ativa).
-     *
-     * Se a configuração de proxy mudar entre calls, o browser anterior é destruído
-     * e um novo é lançado com as novas configurações.
-     */
-    static async init(headless = false) {
-        const firstProxy = getFirstAvailableProxy();
-        const launchProxyKey = firstProxy ? firstProxy.server : '__system__';
-        // Se o browser já existe com o mesmo proxy de launch, reutiliza
-        if (browser && currentLaunchProxy === launchProxyKey) {
-            globalState_1.globalState.addLog('info', '🦁 Browser já está rodando — próximo ciclo abrirá nova aba');
-            return;
-        }
-        // Se o browser existe mas com proxy diferente, destrói e recria
-        if (browser && currentLaunchProxy !== launchProxyKey) {
-            globalState_1.globalState.addLog('warn', '🔄 Proxy de launch mudou — reiniciando browser...');
-            await browser.close().catch(() => { });
-            browser = null;
-            currentLaunchProxy = null;
-            contextosPorCiclo.clear();
-        }
-        if (browserLaunching) {
-            globalState_1.globalState.addLog('info', '⏳ Aguardando browser iniciar (outro ciclo já está subindo)...');
-            const deadline = Date.now() + 30000;
-            while (!browser && Date.now() < deadline) {
-                await new Promise((r) => setTimeout(r, 200));
+    globalState_1.globalState.addLog('warn', '⚠️ Tela presa no spinner — recarregando página...', cycle);
+    await p.reload({ waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
+    globalState_1.globalState.addLog('info', '🔄 Página recarregada', cycle);
+    await sleep(1500 + EXTRA_DELAY);
+    const start2 = Date.now();
+    while (Date.now() - start2 < afterReloadMs) {
+        if (isStopped()) throw new Error('Parado pelo usuário');
+        for (const sel of selectors) {
+            if (await hasElement(p, sel, 400)) {
+                globalState_1.globalState.addLog('info', '✔️ Tela detectada após reload', cycle);
+                return true;
             }
-            if (!browser)
-                throw new Error('Timeout aguardando browser iniciar');
-            return;
         }
-        browserLaunching = true;
+        await waitForSpinner(p, cycle, 5000);
+        await sleep(500 + EXTRA_DELAY);
+    }
+    globalState_1.globalState.addLog('warn', '⚠️ Tela não apareceu nem após reload — continuando mesmo assim', cycle);
+    return false;
+}
+// ─── COOKIE BANNER ────────────────────────────────────────────────────────────
+async function dismissCookieBanner(p, cycle) {
+    const BANNER_SEL = '#privacy-cookie-banners-root';
+    const bannerVisible = await hasElement(p, BANNER_SEL, 1500);
+    if (!bannerVisible) return;
+    globalState_1.globalState.addLog('info', '🍪 Banner de cookies detectado — fechando...', cycle);
+    const ACCEPT_CANDIDATES = [
+        `${BANNER_SEL} button:has-text("Aceitar")`,
+        `${BANNER_SEL} button:has-text("Aceitar tudo")`,
+        `${BANNER_SEL} button:has-text("Concordo")`,
+        `${BANNER_SEL} button:has-text("OK")`,
+        `${BANNER_SEL} button:has-text("Confirmar")`,
+        `${BANNER_SEL} button:has-text("Salvar preferências")`,
+        `${BANNER_SEL} button:has-text("Accept")`,
+        `${BANNER_SEL} button:has-text("Accept all")`,
+        `${BANNER_SEL} button:has-text("Allow all")`,
+        `${BANNER_SEL} button:has-text("Save preferences")`,
+        `${BANNER_SEL} button:has-text("Confirm")`,
+        `${BANNER_SEL} button[data-testid*="accept"]`,
+        `${BANNER_SEL} button[data-testid*="confirm"]`,
+        `${BANNER_SEL} button[data-testid*="allow"]`,
+        `${BANNER_SEL} button`,
+    ];
+    let dismissed = false;
+    for (const sel of ACCEPT_CANDIDATES) {
         try {
-            // Determina o argumento de proxy para o launch
-            let proxyArg;
-            if (firstProxy) {
-                proxyArg = firstProxy.server;
-                globalState_1.globalState.addLog('info', `🌐 [Browser Launch] Proxy de launch: ${proxyArg}`);
+            const btn = p.locator(sel).first();
+            if (await btn.isVisible({ timeout: 600 }).catch(() => false)) {
+                await btn.click({ force: true, timeout: 5000 });
+                globalState_1.globalState.addLog('info', `✔️ Cookie banner fechado via: ${sel}`, cycle);
+                dismissed = true;
+                break;
             }
-            else {
-                // Sem proxy configurado → herda VPN/sistema.
-                // String vazia faz o Chromium usar as configurações de proxy do SO.
-                proxyArg = '';
-                globalState_1.globalState.addLog('info', '🌐 [Browser Launch] Sem proxy — usando conexão do sistema (VPN se ativa)');
-            }
-            globalState_1.globalState.addLog('info', '🦁 Iniciando Brave...');
-            browser = await playwright_extra_1.chromium.launch({
-                headless,
-                executablePath: BRAVE_PATH,
-                slowMo: 0,
-                args: [
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-blink-features=AutomationControlled',
-                    '--disable-infobars',
-                    '--disable-dev-shm-usage',
-                    '--no-first-run',
-                    '--no-default-browser-check',
-                    // ── PROXY DE LAUNCH ──────────────────────────────────────────────────
-                    // Força TODO tráfego pelo proxy (inclui DNS-over-HTTPS, WebSockets etc.)
-                    // Quando proxyArg === '' o Chromium lê as configurações do SO (VPN).
-                    ...(proxyArg ? [`--proxy-server=${proxyArg}`, '--proxy-bypass-list=<-loopback>'] : []),
-                    // ── SEM PROXY: deixa o SO controlar (VPN funciona) ───────────────────
-                    // Sem --proxy-server o Brave usa wpad/sistema → VPN é respeitada.
-                ],
-            });
-            currentLaunchProxy = launchProxyKey;
-            globalState_1.globalState.addLog('info', '✅ Browser pronto — cada ciclo abrirá uma aba com emulação iPhone 14 via CDP');
+        } catch { /* tenta próximo */ }
+    }
+    if (!dismissed) {
+        const removed = await p.evaluate((bannerSel) => {
+            const el = document.querySelector(bannerSel);
+            if (el) { el.remove(); return true; }
+            return false;
+        }, BANNER_SEL);
+        globalState_1.globalState.addLog(removed ? 'info' : 'warn',
+            removed ? '✔️ Cookie banner removido via JS (DOM remove)' : '⚠️ Cookie banner não encontrado para remover',
+            cycle);
+    }
+    await sleep(400 + EXTRA_DELAY);
+    const stillThere = await hasElement(p, BANNER_SEL, 800);
+    if (stillThere) {
+        await p.evaluate((bannerSel) => {
+            const el = document.querySelector(bannerSel);
+            if (el) el.style.display = 'none';
+        }, BANNER_SEL);
+        globalState_1.globalState.addLog('warn', '⚠️ Banner persistente — ocultado via display:none', cycle);
+    }
+}
+// ─── HELPERS ──────────────────────────────────────────────────────────────────
+async function reactFill(p, selector, value) {
+    await p.evaluate(({ sel, val }) => {
+        const el = document.querySelector(sel);
+        if (!el) throw new Error(`reactFill: elemento não encontrado — "${sel}"`);
+        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+        if (nativeInputValueSetter) {
+            nativeInputValueSetter.call(el, val);
+        } else {
+            el.value = val;
         }
-        finally {
-            browserLaunching = false;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+    }, { sel: selector, val: value });
+}
+async function fillById(p, id, value, label, cycle) {
+    const el = p.locator(`#${id}, [id="${id}"]`).first();
+    await el.waitFor({ state: 'visible', timeout: 15000 });
+    await el.scrollIntoViewIfNeeded();
+    await sleep(150 + Math.random() * 100 + EXTRA_DELAY);
+    await el.click();
+    await sleep(80 + EXTRA_DELAY);
+    await el.click({ clickCount: 3 });
+    await p.keyboard.press('Delete');
+    await sleep(60 + EXTRA_DELAY);
+    await el.pressSequentially(value, { delay: 55 + Math.random() * 45 });
+    globalState_1.globalState.addLog('info', `✔️ fill [#${id}]: ${label}`, cycle);
+}
+async function clickForward(p, cycle) {
+    const el = p.locator('[data-testid="forward-button"]').first();
+    await el.waitFor({ state: 'visible', timeout: 15000 });
+    for (let i = 0; i < 25; i++) {
+        if (await el.isEnabled({ timeout: 200 }).catch(() => false)) break;
+        await sleep(200 + EXTRA_DELAY);
+    }
+    await el.scrollIntoViewIfNeeded();
+    await sleep(200 + Math.random() * 100 + EXTRA_DELAY);
+    await el.click();
+    globalState_1.globalState.addLog('info', '✔️ click: Avançar (forward-button)', cycle);
+}
+function gerarTelefoneBR() {
+    const ddds = ['11', '21', '31', '41', '51', '61', '71', '81', '85', '91'];
+    const ddd = ddds[Math.floor(Math.random() * ddds.length)];
+    const rest = Array.from({ length: 8 }, () => Math.floor(Math.random() * 10)).join('');
+    const digits = `${ddd}9${rest}`;
+    const display = `(${ddd}) 9${rest.slice(0, 4)}-${rest.slice(4)}`;
+    return { display, digits };
+}
+// ─── ETAPAS ───────────────────────────────────────────────────────────────────
+async function stepEmail(p, email, cycle) {
+    globalState_1.globalState.addLog('info', '📧 [1] Email...', cycle);
+    const EMAIL_SEL = 'input[type="email"], input[autocomplete="email"], #EMAIL, #EMAIL_ADDRESS';
+    await p.waitForSelector(EMAIL_SEL, { state: 'visible', timeout: 15000 });
+    const el = p.locator(EMAIL_SEL).first();
+    await el.click();
+    await sleep(80 + EXTRA_DELAY);
+    await el.pressSequentially(email, { delay: 55 + Math.random() * 45 });
+    globalState_1.globalState.addLog('info', '✔️ fill: email', cycle);
+    await clickForward(p, cycle);
+    await waitForNextScreen(p, cycle, [
+        'input[autocomplete="one-time-code"]',
+        'input[inputmode="numeric"][maxlength]',
+        'input[maxlength="1"]',
+        SPINNER_SEL,
+    ]);
+}
+async function stepOTP(p, emailClient, email, otpTimeout, cycle) {
+    globalState_1.globalState.addLog('info', '🔢 [2] Aguardando OTP...', cycle);
+    const OTP_SEL = 'input[autocomplete="one-time-code"], input[inputmode="numeric"][maxlength], input[maxlength="1"]';
+    await p.waitForSelector(OTP_SEL, { state: 'visible', timeout: 20000 });
+    globalState_1.globalState.addLog('info', '✔️ Tela OTP detectada', cycle);
+    const otp = await emailClient.waitForOTP(email, otpTimeout, cycle);
+    globalState_1.globalState.addLog('info', `🔢 OTP recebido: ${otp}`, cycle);
+    const splitInputs = p.locator('input[maxlength="1"]');
+    const splitCount = await splitInputs.count().catch(() => 0);
+    if (splitCount >= 4) {
+        globalState_1.globalState.addLog('info', `✔️ OTP split: ${splitCount} boxes`, cycle);
+        for (let i = 0; i < Math.min(splitCount, otp.length); i++) {
+            const box = splitInputs.nth(i);
+            await box.click();
+            await sleep(60 + EXTRA_DELAY);
+            await box.pressSequentially(otp[i], { delay: 70 });
+            await sleep(50 + EXTRA_DELAY);
+        }
+    } else {
+        const el = p.locator(OTP_SEL).first();
+        await el.click();
+        await sleep(80 + EXTRA_DELAY);
+        await el.click({ clickCount: 3 });
+        await p.keyboard.press('Delete');
+        await sleep(60 + EXTRA_DELAY);
+        await el.pressSequentially(otp, { delay: 70 + Math.random() * 40 });
+        globalState_1.globalState.addLog('info', '✔️ OTP preenchido (input único)', cycle);
+    }
+    await sleep(800 + EXTRA_DELAY);
+    const fwdVisible = await hasElement(p, '[data-testid="forward-button"]', 1500);
+    if (fwdVisible) {
+        await clickForward(p, cycle);
+    } else {
+        const btn = p.locator('button[type="submit"]:not([disabled])').first();
+        if (await btn.isVisible({ timeout: 2000 }).catch(() => false)) {
+            await btn.click();
+            globalState_1.globalState.addLog('info', '✔️ confirmar-otp via submit', cycle);
+        }
+    }
+    await waitForNextScreen(p, cycle, [
+        '#PHONE_NUMBER',
+        'input[autocomplete="tel-national"]',
+        'input[type="tel"]',
+        '#PASSWORD',
+        SPINNER_SEL,
+    ]);
+}
+async function stepPhone(p, cycle) {
+    globalState_1.globalState.addLog('info', '📱 [3] Telefone...', cycle);
+    await waitForSpinner(p, cycle, 10000);
+    const PHONE_CANDIDATES = [
+        '#PHONE_NUMBER',
+        'input[autocomplete="tel-national"]',
+        '[data-testid="PHONE_COUNTRY_CODE"] ~ input',
+        '[data-testid="PHONE_COUNTRY_CODE"] + input',
+        'input[data-testid*="phone" i]',
+        'input[placeholder*="telefone" i]',
+        'input[placeholder*="phone" i]',
+        'input[type="tel"]',
+    ];
+    let phoneInput = null;
+    for (const sel of PHONE_CANDIDATES) {
+        if (await hasElement(p, sel, 2000)) { phoneInput = sel; break; }
+    }
+    if (!phoneInput) {
+        const found = await p.evaluate(() => {
+            const inputs = Array.from(document.querySelectorAll('input'));
+            const tel = inputs.find(i =>
+                (i.type === 'tel' || i.inputMode === 'tel' || i.inputMode === 'numeric') &&
+                i.maxLength !== 1 &&
+                i.offsetParent !== null
+            );
+            return tel ? (tel.id ? `#${tel.id}` : null) : null;
+        });
+        if (found) phoneInput = found;
+    }
+    const phoneData = gerarTelefoneBR();
+    if (!phoneInput) {
+        const testIds = await p.evaluate(() =>
+            Array.from(document.querySelectorAll('[data-testid]'))
+                .map(el => el.dataset['testid'])
+                .filter(Boolean).slice(0, 20)
+        ).catch(() => []);
+        globalState_1.globalState.addLog('warn', `⏩ Tela de telefone não encontrada. testids: ${JSON.stringify(testIds)}`, cycle);
+        return phoneData;
+    }
+    const { display, digits } = phoneData;
+    globalState_1.globalState.addLog('info', `📞 Telefone gerado: ${display} (enviando: ${digits})`, cycle);
+    const el = p.locator(phoneInput).first();
+    await el.scrollIntoViewIfNeeded();
+    await el.click();
+    await sleep(150 + EXTRA_DELAY);
+    await p.keyboard.press('Control+a');
+    await p.keyboard.press('Delete');
+    await sleep(80 + EXTRA_DELAY);
+    await reactFill(p, phoneInput, digits);
+    await sleep(150 + EXTRA_DELAY);
+    await el.evaluate((node) => { node.blur(); node.focus(); });
+    await sleep(200 + EXTRA_DELAY);
+    globalState_1.globalState.addLog('info', `✔️ fill telefone via: ${phoneInput}`, cycle);
+    const hasError = await hasElement(p, '[data-testid="phone-number-error"]', 800);
+    if (hasError) {
+        const errMsg = await p.locator('[data-testid="phone-number-error"]').first().innerText().catch(() => '');
+        globalState_1.globalState.addLog('warn', `⚠️ Erro no telefone: "${errMsg.trim()}" — abortando ciclo`, cycle);
+        throw new Error(`Telefone rejeitado pelo Uber: ${errMsg.trim()}`);
+    }
+    await clickForward(p, cycle);
+    await sleep(600 + EXTRA_DELAY);
+    const hasErrorAfter = await hasElement(p, '[data-testid="phone-number-error"]', 800);
+    if (hasErrorAfter) {
+        const errMsg = await p.locator('[data-testid="phone-number-error"]').first().innerText().catch(() => '');
+        globalState_1.globalState.addLog('warn', `⚠️ Erro pós-submit no telefone: "${errMsg.trim()}" — abortando ciclo`, cycle);
+        throw new Error(`Telefone rejeitado pós-submit: ${errMsg.trim()}`);
+    }
+    await waitForNextScreen(p, cycle, [
+        '#PASSWORD',
+        'input[autocomplete="new-password"]',
+        'input[type="password"]',
+        '#FIRST_NAME',
+        SPINNER_SEL,
+    ]);
+    return phoneData;
+}
+const PASSWORD = 'connect@10';
+async function stepPassword(p, cycle) {
+    globalState_1.globalState.addLog('info', '🔒 [4] Senha...', cycle);
+    await waitForSpinner(p, cycle, 10000);
+    const PWD_SEL = '#PASSWORD, input[autocomplete="new-password"], input[type="password"]';
+    const visible = await hasElement(p, PWD_SEL, 8000);
+    if (!visible) {
+        globalState_1.globalState.addLog('info', '⏩ Tela de senha não encontrada — pulando', cycle);
+        return;
+    }
+    const hasPwdId = await hasElement(p, '#PASSWORD', 500);
+    const el = hasPwdId
+        ? p.locator('#PASSWORD').first()
+        : p.locator('input[autocomplete="new-password"], input[type="password"]').first();
+    await el.waitFor({ state: 'visible', timeout: 10000 });
+    await el.scrollIntoViewIfNeeded();
+    await el.click();
+    await sleep(100 + EXTRA_DELAY);
+    await p.keyboard.press('Control+a');
+    await p.keyboard.press('Delete');
+    await sleep(80 + EXTRA_DELAY);
+    await el.pressSequentially(PASSWORD, { delay: 60 + Math.random() * 40 });
+    globalState_1.globalState.addLog('info', '✔️ fill [password]: senha digitada', cycle);
+    await clickForward(p, cycle);
+    await waitForNextScreen(p, cycle, [
+        '#FIRST_NAME',
+        'input[autocomplete="given-name"]',
+        '#LAST_NAME',
+        SPINNER_SEL,
+    ]);
+}
+async function stepPersonalInfo(p, cycle) {
+    globalState_1.globalState.addLog('info', '👤 [5] Nome...', cycle);
+    await waitForSpinner(p, cycle, 10000);
+    const firstNames = ['Lucas', 'Pedro', 'Matheus', 'Gabriel', 'Rafael', 'Felipe', 'Bruno'];
+    const lastNames = ['Silva', 'Santos', 'Oliveira', 'Souza', 'Lima', 'Ferreira', 'Costa'];
+    const fn = firstNames[Math.floor(Math.random() * firstNames.length)];
+    const ln = lastNames[Math.floor(Math.random() * lastNames.length)];
+    const visible = await hasElement(p, '#FIRST_NAME, input[autocomplete="given-name"]', 8000);
+    if (!visible) {
+        globalState_1.globalState.addLog('info', '⏩ Tela de nome não encontrada — pulando', cycle);
+        return { nome: fn, sobrenome: ln };
+    }
+    await fillById(p, 'FIRST_NAME', fn, 'primeiro nome', cycle);
+    const hasLast = await hasElement(p, '#LAST_NAME, input[autocomplete="family-name"]', 1000);
+    if (hasLast) await fillById(p, 'LAST_NAME', ln, 'sobrenome', cycle);
+    await clickForward(p, cycle);
+    await waitForNextScreen(p, cycle, [
+        'input[type="checkbox"]',
+        '[role="checkbox"]',
+        '[data-testid="accept-terms"]',
+        'text=Concordo',
+        '[data-testid*="city"]',
+        'input[placeholder*="cidade" i]',
+        SPINNER_SEL,
+    ]);
+    return { nome: fn, sobrenome: ln };
+}
+async function stepTerms(p, cycle) {
+    globalState_1.globalState.addLog('info', '📝 [6] Termos...', cycle);
+    await waitForSpinner(p, cycle, 10000);
+    const TELA_SEL = [
+        '[data-testid="accept-terms"]',
+        'text=Concordo',
+        'text=Aceite os Termos',
+        'input[type="checkbox"]',
+        '[role="checkbox"]',
+    ];
+    let telaFound = false;
+    for (const sel of TELA_SEL) {
+        if (await hasElement(p, sel, 5000)) { telaFound = true; break; }
+    }
+    if (!telaFound) {
+        globalState_1.globalState.addLog('info', '⏩ Tela de termos não encontrada — pulando', cycle);
+        return;
+    }
+    await sleep(500 + EXTRA_DELAY);
+    const CHECKBOX_CANDIDATES = [
+        'input[type="checkbox"]',
+        '[role="checkbox"]',
+        'label:has-text("Concordo")',
+        'text=Concordo',
+        '[data-testid="accept-terms"] ~ * input',
+        '[data-testid="accept-terms"] ~ * label',
+    ];
+    let clicked = false;
+    for (const sel of CHECKBOX_CANDIDATES) {
+        try {
+            const el = p.locator(sel).first();
+            if (await el.isVisible({ timeout: 800 }).catch(() => false)) {
+                await el.scrollIntoViewIfNeeded();
+                await sleep(200 + EXTRA_DELAY);
+                await el.click({ force: true });
+                globalState_1.globalState.addLog('info', `✔️ checkbox clicado via: ${sel}`, cycle);
+                clicked = true;
+                break;
+            }
+        } catch { /* tenta próximo */ }
+    }
+    if (!clicked) {
+        const jsClicked = await p.evaluate(() => {
+            const cb = document.querySelector('input[type="checkbox"]');
+            if (cb) { cb.click(); return true; }
+            const role = document.querySelector('[role="checkbox"]');
+            if (role) { role.click(); return true; }
+            const labels = Array.from(document.querySelectorAll('label, span, p, div'));
+            const concordo = labels.find(el => el.textContent?.trim() === 'Concordo');
+            if (concordo) { concordo.click(); return true; }
+            return false;
+        });
+        globalState_1.globalState.addLog(jsClicked ? 'info' : 'warn',
+            jsClicked ? '✔️ checkbox clicado via JS evaluate' : '⚠️ Não encontrou checkbox — tentando forward mesmo assim',
+            cycle);
+    }
+    await sleep(600 + EXTRA_DELAY);
+    await clickForward(p, cycle);
+    await waitForNextScreen(p, cycle, [
+        '[data-testid="flow-type-city-selector-v2-input"]',
+        '[data-testid="city-selector-input"]',
+        '[data-testid*="city"]',
+        'input[placeholder*="cidade" i]',
+        'input[placeholder*="city" i]',
+        '[data-testid="step-bottom-navigation"]',
+        '[data-testid="hub"]',
+        '[data-testid*="profilePhoto"]',
+        SPINNER_SEL,
+    ], 20000);
+}
+const CITY_INPUT_SELS = [
+    '[data-testid="flow-type-city-selector-v2-input"]',
+    '[data-testid="city-selector-input"]',
+    '[data-testid*="city"]',
+    'input[placeholder*="cidade" i]',
+    'input[placeholder*="city" i]',
+    'input[placeholder*="ville" i]',
+    'input[aria-label*="cidade" i]',
+    'input[aria-label*="city" i]',
+];
+const CITY_OPTION_SELS = [
+    '[data-testid="flow-type-city-selector-v2-option"]',
+    '[data-testid*="city-selector"][data-testid*="option"]',
+    '[data-testid*="city-option"]',
+    '[data-testid*="dropdown"] [role="option"]',
+    '[data-testid*="dropdown"] li',
+    '[role="listbox"] [role="option"]',
+    '[role="listbox"] li',
+    '[aria-expanded="true"] + * [role="option"]',
+    'div[id*="listbox"] > *',
+    '[role="option"]',
+    '[role="listitem"]',
+    '[data-testid*="suggestion"]',
+    '[data-testid*="option"]',
+    'li[data-value]',
+    'ul[role="listbox"] li',
+    'ul li',
+];
+async function stepCity(p, inviteCode, cycle, cityName = 'São Paulo') {
+    globalState_1.globalState.addLog('info', '🏢 [7] Cidade...', cycle);
+    const found = await waitOrReload(p, cycle, CITY_INPUT_SELS, 8000, 30000);
+    if (!found) {
+        const testIds = await p.evaluate(() =>
+            Array.from(document.querySelectorAll('[data-testid]'))
+                .map(el => el.dataset['testid'])
+                .filter(Boolean).slice(0, 20)
+        ).catch(() => []);
+        globalState_1.globalState.addLog('warn', `⏩ Cidade não encontrada após reload. testids: ${JSON.stringify(testIds)}`, cycle);
+        return;
+    }
+    await dismissCookieBanner(p, cycle);
+    let cityInput = null;
+    for (const sel of CITY_INPUT_SELS) {
+        if (await hasElement(p, sel, 3000)) { cityInput = sel; break; }
+    }
+    if (!cityInput) {
+        globalState_1.globalState.addLog('warn', '⏩ Input de cidade não encontrado após detecção — pulando', cycle);
+        return;
+    }
+    globalState_1.globalState.addLog('info', `✔️ Campo cidade encontrado: ${cityInput}`, cycle);
+    const el = p.locator(cityInput).first();
+    await el.scrollIntoViewIfNeeded();
+    await sleep(300 + EXTRA_DELAY);
+    await el.click({ clickCount: 3 });
+    await p.keyboard.press('Delete');
+    await sleep(150 + EXTRA_DELAY);
+    await p.evaluate(({ sel, val }) => {
+        const node = document.querySelector(sel);
+        if (!node) return;
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+        if (setter) setter.call(node, val);
+        node.dispatchEvent(new Event('focus', { bubbles: true }));
+        node.dispatchEvent(new Event('input', { bubbles: true }));
+        node.dispatchEvent(new Event('change', { bubbles: true }));
+        const lastChar = val.slice(-1);
+        node.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: lastChar, code: `Key${lastChar.toUpperCase()}` }));
+        node.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: lastChar, code: `Key${lastChar.toUpperCase()}` }));
+    }, { sel: cityInput, val: cityName });
+    await el.pressSequentially(cityName, { delay: 60 + Math.random() * 40 });
+    globalState_1.globalState.addLog('info', `✔️ fill cidade: ${cityName}`, cycle);
+    let optionClicked = false;
+    const dropdownDeadline = Date.now() + 5000;
+    while (Date.now() < dropdownDeadline && !optionClicked) {
+        for (const sel of CITY_OPTION_SELS) {
+            const opt = p.locator(sel).first();
+            if (await opt.isVisible({ timeout: 300 }).catch(() => false)) {
+                await opt.scrollIntoViewIfNeeded().catch(() => {});
+                await opt.click({ force: true });
+                globalState_1.globalState.addLog('info', `✔️ cidade selecionada (1ª opção) via: ${sel}`, cycle);
+                optionClicked = true;
+                break;
+            }
+        }
+        if (!optionClicked) await sleep(500);
+    }
+    if (!optionClicked) {
+        const jsClicked = await p.evaluate(() => {
+            const candidates = [
+                ...Array.from(document.querySelectorAll('[role="option"]')),
+                ...Array.from(document.querySelectorAll('[role="listitem"]')),
+                ...Array.from(document.querySelectorAll('li')),
+            ];
+            const visible = candidates.find(el => el.offsetParent !== null && (el.textContent?.trim().length ?? 0) > 0);
+            if (visible) { visible.click(); return visible.textContent?.trim().slice(0, 40) ?? 'ok'; }
+            return null;
+        });
+        if (jsClicked) {
+            globalState_1.globalState.addLog('info', `✔️ cidade selecionada via JS fallback: "${jsClicked}"`, cycle);
+            optionClicked = true;
+        } else {
+            globalState_1.globalState.addLog('warn', '⚠️ Dropdown de cidade não apareceu — prosseguindo sem selecionar opção', cycle);
+        }
+    }
+    await sleep(500 + EXTRA_DELAY);
+    if (inviteCode) {
+        const CODE_CANDIDATES = [
+            '[data-testid="signup-step::invite-code-input"]',
+            '[data-testid*="invite"]', '[data-testid*="referral"]',
+            'input[placeholder*="código" i]', 'input[placeholder*="code" i]',
+        ];
+        for (const sel of CODE_CANDIDATES) {
+            if (await hasElement(p, sel, 1000)) {
+                const codeEl = p.locator(sel).first();
+                await codeEl.click({ clickCount: 3 });
+                await codeEl.pressSequentially(inviteCode, { delay: 60 });
+                globalState_1.globalState.addLog('info', `✔️ invite code preenchido via: ${sel}`, cycle);
+                break;
+            }
+        }
+        await sleep(300 + EXTRA_DELAY);
+    }
+    const submitBtn = p.locator('[data-testid="submit-button"]').first();
+    const submitVisible = await submitBtn.isVisible({ timeout: 3000 }).catch(() => false);
+    if (submitVisible) {
+        let enabled = false;
+        const enabledDeadline = Date.now() + 3000;
+        while (Date.now() < enabledDeadline) {
+            enabled = await submitBtn.isEnabled({ timeout: 200 }).catch(() => false);
+            if (enabled) break;
+            await sleep(300);
+        }
+        if (enabled) {
+            await submitBtn.click();
+            globalState_1.globalState.addLog('info', '✔️ click: submit-button (cidade) — habilitado', cycle);
+        } else {
+            await submitBtn.click({ force: true });
+            globalState_1.globalState.addLog('warn', '⚠️ submit-button ainda desabilitado — clicado com force:true', cycle);
+        }
+    } else {
+        await clickForward(p, cycle);
+    }
+    await waitForNextScreen(p, cycle, [
+        '[data-testid="step flowTypes"]',
+        '[data-testid="step-button-primary"]',
+        '[data-testid="step-bottom-navigation"]',
+        '[data-testid="hub"]',
+        '[data-testid*="profilePhoto"]',
+        '[data-testid*="stepItem"]',
+        SPINNER_SEL,
+    ]);
+}
+async function stepFlowType(p, cycle) {
+    globalState_1.globalState.addLog('info', '🚗 [7b] Tipo de fluxo...', cycle);
+    await waitForSpinner(p, cycle, 10000);
+    const FLOW_TYPE_SEL = '[data-testid="step flowTypes"], [data-testid="flow-selector"]';
+    const visible = await hasElement(p, FLOW_TYPE_SEL, 8000);
+    if (!visible) {
+        globalState_1.globalState.addLog('info', '⏩ Tela de tipo de fluxo não encontrada — pulando', cycle);
+        return;
+    }
+    await dismissCookieBanner(p, cycle);
+    const P2P_CANDIDATES = [
+        '[data-testid="P2P:default"]',
+        'button:has-text("Viagens de carro")',
+        'div:has-text("Viagens de carro")',
+    ];
+    let p2pClicked = false;
+    for (const sel of P2P_CANDIDATES) {
+        const el = p.locator(sel).first();
+        if (await el.isVisible({ timeout: 2000 }).catch(() => false)) {
+            await el.scrollIntoViewIfNeeded();
+            await sleep(300 + EXTRA_DELAY);
+            await el.click({ force: true });
+            globalState_1.globalState.addLog('info', `✔️ card P2P clicado via: ${sel}`, cycle);
+            p2pClicked = true;
+            const selectedConfirmed = await p.waitForFunction((selector) => {
+                const node = document.querySelector(selector);
+                if (!node) return false;
+                if (node.getAttribute('aria-checked') === 'true') return true;
+                if (node.getAttribute('aria-selected') === 'true') return true;
+                if (node.getAttribute('aria-pressed') === 'true') return true;
+                if (node.hasAttribute('data-selected')) return true;
+                const cls = node.className || '';
+                return /\bselected\b|\bactive\b|\bchecked\b/i.test(cls);
+            }, sel, { timeout: 3000 }).then(() => true).catch(() => false);
+            if (selectedConfirmed) {
+                globalState_1.globalState.addLog('info', '✔️ card P2P confirmado como selecionado', cycle);
+            } else {
+                globalState_1.globalState.addLog('warn', '⚠️ card P2P: estado selecionado não confirmado — re-clicando', cycle);
+                await el.click({ force: true }).catch(() => {});
+                await sleep(400 + EXTRA_DELAY);
+            }
+            break;
+        }
+    }
+    if (!p2pClicked) {
+        globalState_1.globalState.addLog('warn', '⚠️ Card P2P não encontrado — tentando continuar mesmo assim', cycle);
+    }
+    await sleep(400 + EXTRA_DELAY);
+    const CONTINUE_CANDIDATES = [
+        '[data-testid="step-button-primary"]',
+        'button:has-text("Continuar")',
+    ];
+    for (const sel of CONTINUE_CANDIDATES) {
+        const btn = p.locator(sel).first();
+        if (await btn.isVisible({ timeout: 3000 }).catch(() => false)) {
+            await btn.scrollIntoViewIfNeeded();
+            await sleep(200 + EXTRA_DELAY);
+            await btn.click();
+            globalState_1.globalState.addLog('info', `✔️ click: Continuar (flowType) via: ${sel}`, cycle);
+            break;
+        }
+    }
+    await waitForNextScreen(p, cycle, [
+        '[data-testid="vehicle-with-solutions"]',
+        '[data-testid="step vehicleWithSolutions"]',
+        '[data-testid="step-submit-button"]',
+        '[data-testid="step-bottom-navigation"]',
+        '[data-testid="hub"]',
+        '[data-testid*="profilePhoto"]',
+        SPINNER_SEL,
+    ]);
+}
+async function stepVehicleType(p, cycle) {
+    globalState_1.globalState.addLog('info', '🚘 [7c] Tipo de veículo...', cycle);
+    await waitForSpinner(p, cycle, 10000);
+    const VEHICLE_SEL = '[data-testid="vehicle-with-solutions"], [data-testid="step vehicleWithSolutions"]';
+    const visible = await hasElement(p, VEHICLE_SEL, 8000);
+    if (!visible) {
+        globalState_1.globalState.addLog('info', '⏩ Tela de veículo não encontrada — pulando', cycle);
+        return;
+    }
+    await dismissCookieBanner(p, cycle);
+    const NEED_VEHICLE_CANDIDATES = [
+        'label:has-text("Preciso de um veículo")',
+        '[role="radio"]:has-text("Preciso de um veículo")',
+        'div[role="radio"]:has-text("Preciso de um veículo")',
+        'span:has-text("Preciso de um veículo")',
+        'div:has-text("Preciso de um veículo")',
+    ];
+    let radioClicked = false;
+    for (const sel of NEED_VEHICLE_CANDIDATES) {
+        const el = p.locator(sel).first();
+        if (await el.isVisible({ timeout: 2000 }).catch(() => false)) {
+            await el.scrollIntoViewIfNeeded();
+            await sleep(300 + EXTRA_DELAY);
+            await el.click({ force: true });
+            globalState_1.globalState.addLog('info', `✔️ "Preciso de um veículo" selecionado via: ${sel}`, cycle);
+            radioClicked = true;
+            break;
+        }
+    }
+    if (!radioClicked) {
+        const jsClicked = await p.evaluate(() => {
+            const radios = Array.from(document.querySelectorAll('[role="radio"]'));
+            const target = radios.find(r => r.offsetParent !== null && r.textContent?.includes('Preciso de um veículo'));
+            if (target) { target.click(); return 'by-text'; }
+            const visible = radios.filter(r => r.offsetParent !== null);
+            if (visible.length >= 2) { visible[1].click(); return 'by-index'; }
+            return null;
+        });
+        if (jsClicked) {
+            globalState_1.globalState.addLog('info', `✔️ "Preciso de um veículo" via JS fallback (${jsClicked})`, cycle);
+            radioClicked = true;
+        } else {
+            globalState_1.globalState.addLog('warn', '⚠️ Opção "Preciso de um veículo" não encontrada — continuando mesmo assim', cycle);
+        }
+    }
+    await sleep(400 + EXTRA_DELAY);
+    const SUBMIT_CANDIDATES = [
+        '[data-testid="step-submit-button"]',
+        'button:has-text("Continuar")',
+    ];
+    for (const sel of SUBMIT_CANDIDATES) {
+        const btn = p.locator(sel).first();
+        if (await btn.isVisible({ timeout: 3000 }).catch(() => false)) {
+            await btn.scrollIntoViewIfNeeded();
+            await sleep(200 + EXTRA_DELAY);
+            await btn.click();
+            globalState_1.globalState.addLog('info', `✔️ click: Continuar (vehicleType) via: ${sel}`, cycle);
+            break;
+        }
+    }
+    await waitForNextScreen(p, cycle, [
+        '[data-testid="step-bottom-navigation"]',
+        '[data-testid="hub"]',
+        '[data-testid*="profilePhoto"]',
+        '[data-testid*="stepItem"]',
+        SPINNER_SEL,
+    ]);
+}
+async function stepWhatsApp(p, cycle) {
+    globalState_1.globalState.addLog('info', '📲 [8] WhatsApp opt-in...', cycle);
+    await waitForSpinner(p, cycle, 10000);
+    const visible = await hasElement(p, '[data-testid="step-bottom-navigation"]', 8000);
+    if (!visible) {
+        globalState_1.globalState.addLog('info', '⏩ Tela WhatsApp não encontrada — pulando', cycle);
+        return;
+    }
+    const naoAtivar = p.locator('button:has-text("NÃO ATIVAR"), button:has-text("Nao ativar"), button:has-text("NOT NOW")');
+    if (await naoAtivar.first().isVisible({ timeout: 1500 }).catch(() => false)) {
+        await naoAtivar.first().click();
+        globalState_1.globalState.addLog('info', '✔️ click: NÃO ATIVAR (WhatsApp)', cycle);
+    }
+    await waitForNextScreen(p, cycle, [
+        '[data-testid="hub"]',
+        '[data-testid*="profilePhoto"]',
+        '[data-testid*="stepItem"]',
+        SPINNER_SEL,
+    ]);
+}
+const PHOTO_ITEM_SELS = [
+    '[data-testid="stepItem profilePhoto"]',
+    '[data-testid*="profilePhoto"]',
+    '[data-testid*="profile-photo"]',
+    '[data-testid*="profile_photo"]',
+    'div:has-text("Foto do perfil")',
+    'div:has-text("Photo de profil")',
+    'span:has-text("Foto do perfil")',
+    'li:has-text("Foto do perfil")',
+    'button:has-text("Foto do perfil")',
+];
+const PHOTO_SCREEN_SELS = [
+    '[data-testid="step profilePhoto"]',
+    '[data-testid="docUploadButton"]',
+    'button:has-text("Tirar foto")',
+    'button:has-text("Prendre une photo")',
+    'button:has-text("Capturar foto")',
+    'button:has-text("Foto")',
+    '[data-testid*="camera"]',
+    '[data-testid*="upload"]',
+];
+async function stepHubPhotoClick(p, cycle) {
+    globalState_1.globalState.addLog('info', '🏠 [9] Hub — aguardando...', cycle);
+    const HUB_CANDIDATES = [
+        '[data-testid="hub"]',
+        '[data-testid="stepItem profilePhoto"]',
+        '[data-testid*="profilePhoto"]',
+        '[data-testid*="profile-photo"]',
+        '[data-testid*="profile_photo"]',
+        '[data-testid*="stepItem"]',
+        'text=Foto do perfil',
+        'text=Photo de profil',
+    ];
+    let hubFound = false;
+    const start = Date.now();
+    while (Date.now() - start < 45000) {
+        if (isStopped()) throw new Error('Parado pelo usuário');
+        await waitForSpinner(p, cycle, 5000);
+        for (const sel of HUB_CANDIDATES) {
+            if (await hasElement(p, sel, 500)) {
+                hubFound = true;
+                globalState_1.globalState.addLog('info', `✔️ Hub encontrado via: ${sel}`, cycle);
+                break;
+            }
+        }
+        if (hubFound) break;
+        await sleep(800 + EXTRA_DELAY);
+    }
+    if (!hubFound) {
+        const testIds = await p.evaluate(() =>
+            Array.from(document.querySelectorAll('[data-testid]'))
+                .map(el => el.dataset['testid'])
+                .filter(Boolean).slice(0, 20)
+        ).catch(() => []);
+        globalState_1.globalState.addLog('info', `⏩ Hub não encontrado. testids: ${JSON.stringify(testIds)}`, cycle);
+        return;
+    }
+    await sleep(800 + EXTRA_DELAY);
+    await dismissCookieBanner(p, cycle);
+    let photoItemClicked = false;
+    for (const sel of PHOTO_ITEM_SELS) {
+        const el = p.locator(sel).first();
+        if (await el.isVisible({ timeout: 2000 }).catch(() => false)) {
+            try {
+                await el.scrollIntoViewIfNeeded();
+                await sleep(300 + EXTRA_DELAY);
+                await el.click({ timeout: 5000 });
+            } catch {
+                await el.click({ force: true, timeout: 5000 }).catch(async () => {
+                    await p.evaluate((sel2) => {
+                        const node = document.querySelector(sel2);
+                        if (node) node.click();
+                    }, sel);
+                });
+            }
+            globalState_1.globalState.addLog('info', `✔️ click: item Foto do perfil via: ${sel}`, cycle);
+            photoItemClicked = true;
+            break;
+        }
+    }
+    if (!photoItemClicked) {
+        const jsClicked = await p.evaluate(() => {
+            const all = Array.from(document.querySelectorAll('*'));
+            const el = all.find(e =>
+                e.offsetParent !== null &&
+                (e.textContent?.trim() === 'Foto do perfil' || e.textContent?.trim() === 'Photo de profil')
+            );
+            if (el) { el.click(); return true; }
+            return false;
+        });
+        globalState_1.globalState.addLog(jsClicked ? 'info' : 'warn',
+            jsClicked ? '✔️ click: Foto do perfil via JS text search' : '⚠️ Item "Foto do perfil" não encontrado no hub',
+            cycle);
+        if (!jsClicked) return;
+        photoItemClicked = true;
+    }
+    if (!photoItemClicked) return;
+    await waitForNextScreen(p, cycle, PHOTO_SCREEN_SELS, 15000);
+}
+async function stepProfilePhoto(p, cycle) {
+    globalState_1.globalState.addLog('info', '📸 [10] Tirar foto do perfil...', cycle);
+    await waitForSpinner(p, cycle, 10000);
+    const diagInfo = await p.evaluate(() => {
+        const testIds = Array.from(document.querySelectorAll('[data-testid]'))
+            .map(el => el.dataset['testid'])
+            .filter(Boolean);
+        const buttons = Array.from(document.querySelectorAll('button'))
+            .filter(b => b.offsetParent !== null)
+            .map(b => b.textContent?.trim())
+            .filter(Boolean);
+        return { testIds: testIds.slice(0, 30), buttons: buttons.slice(0, 20) };
+    }).catch(() => ({ testIds: [], buttons: [] }));
+    globalState_1.globalState.addLog('info', `🔍 [foto] testids: ${JSON.stringify(diagInfo.testIds)}`, cycle);
+    globalState_1.globalState.addLog('info', `🔍 [foto] botões: ${JSON.stringify(diagInfo.buttons)}`, cycle);
+    const visible = await hasElement(p, PHOTO_SCREEN_SELS.join(', '), 8000);
+    if (!visible) {
+        globalState_1.globalState.addLog('info', '⏩ Tela de foto não encontrada — pulando', cycle);
+        return;
+    }
+    await dismissCookieBanner(p, cycle);
+    const TAKE_PHOTO_SELS = [
+        '[data-testid="docUploadButton"]',
+        'button:has-text("Tirar foto")',
+        'button:has-text("Prendre une photo")',
+        'button:has-text("Capturar foto")',
+        'button:has-text("Foto")',
+        '[data-testid*="camera"]',
+    ];
+    for (const sel of TAKE_PHOTO_SELS) {
+        const btn = p.locator(sel).first();
+        if (await btn.isVisible({ timeout: 2000 }).catch(() => false)) {
+            await btn.scrollIntoViewIfNeeded();
+            await sleep(300 + EXTRA_DELAY);
+            try {
+                await btn.click({ timeout: 5000 });
+            } catch {
+                await btn.click({ force: true, timeout: 5000 }).catch(async () => {
+                    await p.evaluate((sel2) => {
+                        const node = document.querySelector(sel2);
+                        if (node) node.click();
+                    }, sel);
+                });
+            }
+            globalState_1.globalState.addLog('info', `✔️ click: Tirar foto via: ${sel}`, cycle);
+            break;
+        }
+    }
+    globalState_1.globalState.addLog('info', '⏳ [KYC] Aguardando abertura do KYC provider (popup/nova aba)...', cycle);
+    const KYC_WAIT_MS = 90000;
+    const kycStart = Date.now();
+    while (Date.now() - kycStart < KYC_WAIT_MS) {
+        if (isStopped()) break;
+        const signals = globalState_1.globalState.getKycSignals(cycle);
+        if (signals.length > 0) {
+            globalState_1.globalState.addLog('info', `✅ [KYC] ${signals.length} sinal(is) detectado(s) — encerrando espera`, cycle);
+            break;
+        }
+        await new Promise((r) => setTimeout(r, 500));
+    }
+    const finalSignals = globalState_1.globalState.getKycSignals(cycle);
+    if (finalSignals.length === 0) {
+        globalState_1.globalState.addLog('warn', '⚠️ [KYC] Nenhum provedor detectado neste ciclo', cycle);
+    } else {
+        const providers = [...new Set(finalSignals.map(s => s.provider))];
+        globalState_1.globalState.addLog('kyc', `🏁 [KYC] Ciclo ${cycle} — provedores: ${providers.join(', ')}`, cycle);
+    }
+}
+async function dismissModals(p, cycle) {
+    const DISMISS = [
+        'button:has-text("Accept")', 'button:has-text("Accepter")',
+        'button:has-text("OK")', 'button:has-text("Got it")',
+        '[data-testid*="dismiss"]', '[aria-label*="close" i]',
+        '#privacy-cookie-banners-root button:has-text("Aceitar")',
+        '#privacy-cookie-banners-root button:has-text("Aceitar tudo")',
+        '#privacy-cookie-banners-root button:has-text("Accept")',
+        '#privacy-cookie-banners-root button:has-text("Accept all")',
+        '#privacy-cookie-banners-root button',
+    ];
+    for (const sel of DISMISS) {
+        if (await hasElement(p, sel, 400)) {
+            await p.locator(sel).first().click({ force: true }).catch(() => {});
+            globalState_1.globalState.addLog('info', `🚪 modal: ${sel}`, cycle);
+            await sleep(400 + EXTRA_DELAY);
+        }
+    }
+}
+// ─── BROWSER ──────────────────────────────────────────────────────────────────
+let browserInstance = null;
+let lastProxyConfig = null;
+let lastHeadless = null;
+const BRAVE_CANDIDATES = [
+    process.env.BRAVE_PATH,
+    'C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe',
+    'C:\\Program Files (x86)\\BraveSoftware\\Brave-Browser\\Application\\brave.exe',
+    `${process.env.LOCALAPPDATA}\\BraveSoftware\\Brave-Browser\\Application\\brave.exe`,
+    '/usr/bin/brave-browser',
+    '/usr/bin/brave',
+    '/snap/bin/brave',
+    '/usr/bin/chromium-browser',
+    '/usr/bin/chromium',
+    '/snap/bin/chromium',
+].filter(Boolean);
+class MockPlaywrightFlow {
+    static async init(headless = true) {
+        // FIX: ciclos começam em 1 — getProxyForCycle(0) causava índice -1 e crash
+        const proxy0 = globalState_1.globalState.getProxyForCycle(1);
+        const proxyKey = proxy0 ? proxy0.server : '';
+        if (browserInstance && (lastProxyConfig !== proxyKey || lastHeadless !== headless)) {
+            globalState_1.globalState.addLog('info', '🔄 Configuração mudou — reiniciando browser...');
+            await browserInstance.close().catch(() => {});
+            browserInstance = null;
+        }
+        if (browserInstance) return;
+        const { existsSync } = await import('fs');
+        let executablePath;
+        for (const c of BRAVE_CANDIDATES) {
+            if (existsSync(c)) { executablePath = c; break; }
+        }
+        if (executablePath) {
+            globalState_1.globalState.addLog('info', `🦁 Usando Brave: ${executablePath}`);
+        } else {
+            globalState_1.globalState.addLog('warn', '⚠️ Brave não encontrado — usando Playwright Chromium');
+        }
+        globalState_1.globalState.addLog('info', `🚀 Iniciando browser (headless=${headless})...`);
+        const launchArgs = [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-blink-features=AutomationControlled',
+            '--disable-dev-shm-usage',
+            '--no-first-run',
+            '--no-default-browser-check',
+            `--window-size=${MOBILE_W},${MOBILE_H}`,
+            '--window-position=0,0',
+            `--user-agent=${MOBILE_UA}`,
+        ];
+        if (proxyKey) launchArgs.push(`--proxy-server=${proxyKey}`);
+        browserInstance = await playwright_1.chromium.launch({
+            headless,
+            ...(executablePath ? { executablePath } : {}),
+            args: launchArgs,
+        });
+        lastProxyConfig = proxyKey;
+        lastHeadless = headless;
+        globalState_1.globalState.addLog('info', '✅ Browser iniciado');
+    }
+    static async cleanup() {
+        if (browserInstance) {
+            await browserInstance.close().catch(() => {});
+            browserInstance = null;
         }
     }
     static async execute(cadastroUrl, config, cycle) {
-        if (!browser)
-            throw new Error('Browser não inicializado — chame init() primeiro');
-        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error(`⏱️ Ciclo #${cycle} excedeu o timeout de ${CYCLE_TIMEOUT_MS / 60000} min`)), CYCLE_TIMEOUT_MS));
-        try {
-            await Promise.race([timeoutPromise, MockPlaywrightFlow._executarCiclo(cadastroUrl, config, cycle)]);
-        }
-        catch (error) {
-            // FIX: fecha APENAS o contexto deste ciclo — não afeta outros ciclos/abas
-            await fecharContextoCiclo(cycle, String(error));
-            throw error;
-        }
+        if (!browserInstance) throw new Error('Browser não iniciado');
+        const cyclePromise = MockPlaywrightFlow._run(cadastroUrl, config, cycle);
+        const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error(`⏰ CYCLE_TIMEOUT ${cycle}`)), CYCLE_TIMEOUT_MS)
+        );
+        await Promise.race([cyclePromise, timeoutPromise]).catch(e => {
+            globalState_1.globalState.addLog('error', `❌ Ciclo ${cycle} abortado: ${e instanceof Error ? e.message : e}`, cycle);
+            throw e;
+        });
     }
-    static async _executarCiclo(cadastroUrl, config, cycle) {
-        globalState_1.globalState.addLog('info', `🆕 Ciclo #${cycle}: abrindo nova aba (sessão isolada, mobile iPhone 14)`, cycle);
-        const { context, page: p } = await criarContextoIsolado(cycle);
-        const client = (0, client_1.createEmailClient)(config.emailProvider, config.tempMailApiKey);
+    static async _run(cadastroUrl, config, cycle) {
+        const proxyConfig = globalState_1.globalState.getProxyForCycle(cycle);
+        const ctxOpts = {
+            userAgent: MOBILE_UA,
+            viewport: { width: MOBILE_W, height: MOBILE_H },
+            deviceScaleFactor: MOBILE_DPR,
+            isMobile: true,
+            hasTouch: true,
+            locale: 'pt-BR',
+            timezoneId: 'America/Sao_Paulo',
+            permissions: ['geolocation'],
+            geolocation: { latitude: -23.5505, longitude: -46.6333 },
+            extraHTTPHeaders: MOBILE_HEADERS,
+        };
+        if (proxyConfig) {
+            ctxOpts.proxy = {
+                server: proxyConfig.server,
+                username: proxyConfig.username,
+                password: proxyConfig.password,
+            };
+            globalState_1.globalState.addLog('info', `🌐 Proxy: ${proxyConfig.server}`, cycle);
+        } else {
+            globalState_1.globalState.addLog('info', '🌐 Sem proxy (VPN)', cycle);
+        }
+        const context = await browserInstance.newContext(ctxOpts);
+        installKycInterceptor(context, cycle);
+        await context.addInitScript(MOBILE_INIT_SCRIPT);
+        const p = await context.newPage();
+        p.setDefaultTimeout(20000);
+        p.setDefaultNavigationTimeout(30000);
+        attachPageListeners(p, cycle, 'main');
+        let email = '';
+        let telefone = '';
+        let telefoneFmt = '';
+        let nome = '';
+        let sobrenome = '';
         try {
-            await p.goto(cadastroUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
-            await p.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => { });
-            await humanPause(randInt(sp(800), sp(1600)));
-            globalState_1.globalState.addLog('info', '🌐 Página de cadastro aberta', cycle);
-            const emailAccount = await client.createRandomEmail();
-            const payload = (0, dataGenerators_1.gerarPayloadCompleto)(emailAccount, config.inviteCode);
-            globalState_1.globalState.addLog('info', `👤 ${payload.nome} ${payload.sobrenome} | ${payload.email}`, cycle);
-            globalState_1.globalState.setPayload(cycle, {
-                nome: payload.nome,
-                sobrenome: payload.sobrenome,
-                email: payload.email,
-                telefone: payload.telefone,
-                senha: payload.senha,
-                localizacao: payload.localizacao,
-                codigoIndicacao: payload.codigoIndicacao,
+            const emailClient = (0, client_1.createEmailClient)(config.emailProvider, config.tempMailApiKey);
+            const created = await emailClient.createRandomEmail();
+            email = created.email;
+            globalState_1.globalState.addLog('info', `📧 Email: ${email}`, cycle);
+            globalState_1.globalState.addLog('info', `🌐 Navegando para ${cadastroUrl}...`, cycle);
+            await p.goto(cadastroUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+            globalState_1.globalState.addLog('info', '✔️ Página carregada', cycle);
+            await dismissModals(p, cycle);
+            await dismissCookieBanner(p, cycle);
+            await stepEmail(p, email, cycle);
+            await stepOTP(p, emailClient, email, config.otpTimeout, cycle);
+            const phoneData = await stepPhone(p, cycle);
+            telefone = phoneData.digits;
+            telefoneFmt = phoneData.display;
+            await stepPassword(p, cycle);
+            const nameData = await stepPersonalInfo(p, cycle);
+            nome = nameData.nome;
+            sobrenome = nameData.sobrenome;
+            await stepTerms(p, cycle);
+            await stepCity(p, config.inviteCode, cycle, config.cityName);
+            await stepFlowType(p, cycle);
+            await stepVehicleType(p, cycle);
+            await stepWhatsApp(p, cycle);
+            await stepHubPhotoClick(p, cycle);
+            await stepProfilePhoto(p, cycle);
+            if (config.extraDelay > 0) {
+                globalState_1.globalState.addLog('info', `⏳ Extra delay: ${config.extraDelay}ms`, cycle);
+                await sleep(config.extraDelay);
+            }
+            const kycSignals = globalState_1.globalState.getKycSignals(cycle);
+            const topSignal = kycSignals.length > 0 ? kycSignals[0] : null;
+            const kycLevel = topSignal
+                ? (globalState_1.globalState.getKycByCycleEntry?.(cycle)?.[topSignal.provider]?.level ?? undefined)
+                : undefined;
+            const cookies = await context.cookies().catch(() => []);
+            accountStore.save({
+                email,
+                telefone,
+                nome,
+                sobrenome,
+                cycle,
+                provider: config.emailProvider,
+                senha: PASSWORD,
+                codigoIndicacao: config.inviteCode,
+                kycProvider: topSignal?.provider ?? undefined,
+                kycLevel,
+                localizacao: config.cityName ?? 'São Paulo',
+                cookies,
             });
-            // 1. EMAIL
-            globalState_1.globalState.addLog('info', '📧 Preenchendo email (force mode)...', cycle);
-            await humanTypeForce(p, '#PHONE_NUMBER_or_EMAIL_ADDRESS', payload.email);
-            await humanPause(randInt(config.extraDelay, config.extraDelay + 400));
-            await humanClick(p, '#forward-button');
-            globalState_1.globalState.addLog('info', '📧 Email preenchido → Continuar', cycle);
-            // 2. OTP
-            globalState_1.globalState.addLog('info', `🔑 Aguardando OTP (timeout: ${config.otpTimeout / 1000}s)...`, cycle);
-            const otp = await client.waitForOTP(payload.email, config.otpTimeout, cycle);
-            globalState_1.globalState.addLog('info', `🔑 OTP recebido: ${otp}`, cycle);
-            await humanPause(randInt(sp(800), sp(1400)));
-            const digits = otp.replace(/\D/g, '').split('');
-            for (let i = 0; i < digits.length; i++) {
-                await humanType(p, `#EMAIL_OTP_CODE-${i}`, digits[i]);
-                await humanPause(randInt(sp(50), sp(120)));
-            }
-            await humanPause(randInt(config.extraDelay, config.extraDelay + 300));
-            await humanClick(p, '#forward-button');
-            globalState_1.globalState.addLog('info', '✅ OTP preenchido → Avançar', cycle);
-            // 3. TELEFONE
-            await humanPause(randInt(sp(400), sp(900)));
-            await humanType(p, '#PHONE_NUMBER', payload.telefone);
-            await humanPause(randInt(config.extraDelay, config.extraDelay + 300));
-            await humanClick(p, '#forward-button');
-            globalState_1.globalState.addLog('info', `📱 Telefone: ${payload.telefone}`, cycle);
-            // 4. SENHA
-            await humanPause(randInt(sp(400), sp(900)));
-            await humanType(p, '#PASSWORD', payload.senha);
-            await humanPause(randInt(config.extraDelay, config.extraDelay + 300));
-            await humanClick(p, '#forward-button');
-            globalState_1.globalState.addLog('info', '🔒 Senha preenchida', cycle);
-            // 5. NOME
-            await humanPause(randInt(sp(400), sp(900)));
-            await humanType(p, '#FIRST_NAME', payload.nome);
-            await humanPause(randInt(sp(200), sp(400)));
-            await humanType(p, '#LAST_NAME', payload.sobrenome);
-            await humanPause(randInt(config.extraDelay, config.extraDelay + 300));
-            await humanClick(p, '#forward-button');
-            globalState_1.globalState.addLog('info', `👤 Nome: ${payload.nome} ${payload.sobrenome}`, cycle);
-            // 6. TERMOS
-            await aceitarTermos(p);
-            await humanPause(randInt(config.extraDelay, config.extraDelay + 400));
-            await humanClick(p, '#forward-button');
-            // Pós-cadastro
-            await p.waitForURL('**/bonjour.uber.com/**', { timeout: 40000 });
-            await humanPause(randInt(sp(700), sp(1400)));
-            globalState_1.globalState.addLog('info', '🔄 Redirecionado para bonjour', cycle);
-            await dispensarCookies(p);
-            await selecionarCidade(p, payload.localizacao, cycle);
-            await dispensarCookies(p);
-            await humanTypeForce(p, '[data-testid="signup-step::invite-code-input"]', payload.codigoIndicacao);
-            await humanPause(randInt(config.extraDelay, config.extraDelay + 400));
-            await dispensarCookies(p);
-            await humanClick(p, '[data-testid="submit-button"]');
-            globalState_1.globalState.addLog('info', `📍 Cidade: ${payload.localizacao} | Convite: ${payload.codigoIndicacao}`, cycle);
-            await dispensarWhatsApp(p, cycle);
-            await clicarFotoPerfil(p, cycle, context);
-            const aindaAberta = contextosPorCiclo.has(cycle);
-            if (aindaAberta) {
-                globalState_1.globalState.addLog('success', `🎉 Ciclo #${cycle} COMPLETO! Aba mantida aberta.`, cycle);
-            }
-            else {
-                globalState_1.globalState.addLog('info', `✅ Ciclo #${cycle} concluído!`, cycle);
-            }
+            globalState_1.globalState.addLog('success', `✅ Ciclo ${cycle} concluído — conta: ${email}`, cycle);
+        } finally {
+            await context.close().catch(() => {});
         }
-        catch (error) {
-            globalState_1.globalState.clearPayload(cycle);
-            await artifacts_1.ArtifactsManager.saveScreenshot(p, cycle, 'error').catch(() => { });
-            await artifacts_1.ArtifactsManager.saveHTML(p, cycle, 'error').catch(() => { });
-            throw error;
-        }
-    }
-    static async cleanup() {
-        for (const [cycle, ctx] of contextosPorCiclo.entries()) {
-            await ctx.close().catch(() => { });
-            globalState_1.globalState.addLog('info', `🗑️ Aba do ciclo #${cycle} fechada`);
-        }
-        contextosPorCiclo.clear();
-        await browser?.close().catch(() => { });
-        browser = null;
-        currentLaunchProxy = null;
-        globalState_1.globalState.addLog('info', '🧹 Browser fechado');
     }
 }
 exports.MockPlaywrightFlow = MockPlaywrightFlow;
-//# sourceMappingURL=mockFlow.js.map
