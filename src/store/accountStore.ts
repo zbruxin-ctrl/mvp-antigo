@@ -39,8 +39,6 @@ function writeAll(accounts: Account[]): void {
  *   [name, value, domain, secure(0|1), httpOnly(0|1), expiresMs(-1 = sessão)]
  */
 export function buildTampermonkeyScript(cookies: Cookie[]): string {
-  // BUG 7 FIX: inclui uber.com sem ponto para cobrir cookies como sid e udi-id
-  // que têm domain="uber.com" (sem ponto inicial) e não casavam com o filtro anterior.
   const ALLOWED_DOMAINS = [
     'uber.com',
     '.uber.com',
@@ -82,10 +80,9 @@ export function buildTampermonkeyScript(cookies: Cookie[]): string {
     '// @grant        GM_cookie',
     '// @run-at       document-start',
     '// ==/UserScript==',
+    '// @ts-nocheck',
   ].join('\n');
 
-  // cookieStore é uma API de browser (Cookie Store API) válida em userscripts.
-  // O ESLint não conhece esse global no contexto Node/TS, por isso o disable abaixo.
   /* eslint-disable no-undef */
   const body =
     `(function(){` +
