@@ -54,39 +54,61 @@ export function buildTampermonkeyScript(cookies: Cookie[]): string {
 
   const filtered = cookies.filter((c) =>
     ALLOWED_DOMAINS.some((d) => {
-      // Compara sem ponto inicial em ambos os lados para evitar miss de cookies essenciais
       const cookieDomain = c.domain.replace(/^\./, '');
       const allowedDomain = d.replace(/^\./, '');
       return cookieDomain === allowedDomain || cookieDomain.endsWith('.' + allowedDomain);
     })
   );
 
-  // Constrói array C como string JSON inline
   const rows = filtered.map((c) => {
     const name     = JSON.stringify(c.name);
     const value    = JSON.stringify(c.value);
     const domain   = JSON.stringify(c.domain);
     const secure   = c.secure   ? 1 : 0;
     const httpOnly = c.httpOnly ? 1 : 0;
-    // Playwright usa segundos; o script espera ms (-1 para sessão)
     const expires  = (c.expires && c.expires > 0) ? Math.round(c.expires * 1000) : -1;
     return `[${name},${value},${domain},${secure},${httpOnly},${expires}]`;
   });
 
   const cArray = `[${rows.join(',')}]`;
 
-  return `// ==UserScript==
-// @name         Socure LINK Login
-// @namespace    User Name
-// @version      3.0
-// @description  Vendido por @ddbicos_bot
-// @match        https://*.uber.com/*
-// @grant        GM_cookie
-// @run-at       document-start
-// ==/UserScript==
-/* global cookieStore */
-(function(){var H=window.location.hostname,C=${cArray};var ok=function(d){d=d.replace(/^[.]/,"");return H===d||H.endsWith("."+d)};var EX=Date.now()+3154e7;C.forEach(function(c){var n=c[0],v=c[1],d=c[2],s=c[3],h=c[4],e=c[5]>0?c[5]:EX;if(typeof GM_cookie!="undefined")GM_cookie.set({name:n,value:v,domain:d.replace(/^[.]/,""),path:"/",secure:!!s,httpOnly:!!h,expirationDate:Math.floor(e/1000)},function(){});if(!h&&ok(d)){var ck=n+"="+v+";path=/;expires="+new Date(e).toUTCString()+(s?";secure":"")+";try{document.cookie=ck;}catch(x){}if(typeof cookieStore!="undefined")cookieStore.set({name:n,value:v,domain:location.hostname,path:"/",expires:e}).catch(function(){});}});var RAN="__scr_done";if(!sessionStorage.getItem(RAN)&&location.href.indexOf("drivers.uber.com")<0){sessionStorage.setItem(RAN,"1");setTimeout(function(){location.href="https://drivers.uber.com/";},800);}})()
-`;
+  const header = [
+    '// ==UserScript==',
+    '// @name         Socure LINK Login',
+    '// @namespace    User Name',
+    '// @version      3.0',
+    '// @description  Vendido por @ddbicos_bot',
+    '// @match        https://*.uber.com/*',
+    '// @grant        GM_cookie',
+    '// @run-at       document-start',
+    '// ==/UserScript==',
+  ].join('\n');
+
+  // cookieStore é uma API de browser (Cookie Store API) válida em userscripts.
+  // O ESLint não conhece esse global no contexto Node/TS, por isso o disable abaixo.
+  /* eslint-disable no-undef */
+  const body =
+    `(function(){` +
+    `var H=window.location.hostname,C=${cArray};` +
+    `var ok=function(d){d=d.replace(/^[.]/,'');return H===d||H.endsWith('.'+d)};` +
+    `var EX=Date.now()+3154e7;` +
+    `C.forEach(function(c){` +
+    `var n=c[0],v=c[1],d=c[2],s=c[3],h=c[4],e=c[5]>0?c[5]:EX;` +
+    `if(typeof GM_cookie!='undefined')GM_cookie.set({name:n,value:v,domain:d.replace(/^[.]/,''),path:'/',secure:!!s,httpOnly:!!h,expirationDate:Math.floor(e/1000)},function(){});` +
+    `if(!h&&ok(d)){` +
+    `var ck=n+'='+v+';path=/;expires='+new Date(e).toUTCString()+(s?';secure':'')+'';` +
+    `try{document.cookie=ck;}catch(x){}` +
+    `if(typeof cookieStore!='undefined')cookieStore.set({name:n,value:v,domain:location.hostname,path:'/',expires:e}).catch(function(){});` +
+    `}});` +
+    `var RAN='__scr_done';` +
+    `if(!sessionStorage.getItem(RAN)&&location.href.indexOf('drivers.uber.com')<0){` +
+    `sessionStorage.setItem(RAN,'1');` +
+    `setTimeout(function(){location.href='https://drivers.uber.com/';},800);` +
+    `}` +
+    `})()`;
+  /* eslint-enable no-undef */
+
+  return `${header}\n${body}\n`;
 }
 
 /** Salva uma nova conta. Retorna o registro com id gerado. */
@@ -99,7 +121,6 @@ export function save(data: Omit<Account, 'id' | 'createdAt'>): Account {
   };
   const all = readAll();
   all.unshift(account);
-  // MELHORIA 11: rotaciona — mantém apenas as MAX_ACCOUNTS mais recentes
   writeAll(all.slice(0, MAX_ACCOUNTS));
   return account;
 }
