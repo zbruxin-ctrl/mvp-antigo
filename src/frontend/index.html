@@ -439,6 +439,13 @@ button { cursor: pointer; font-family: inherit; }
 }
 .btn-ghost:hover { background: var(--surface3); color: var(--text); border-color: var(--border2); }
 
+.btn-indigo {
+  background: rgba(129,140,248,.12);
+  color: var(--indigo);
+  border: 1px solid rgba(129,140,248,.28);
+}
+.btn-indigo:hover { background: rgba(129,140,248,.22); box-shadow: 0 0 14px rgba(129,140,248,.18); }
+
 .btn-row {
   display: flex;
   gap: 8px;
@@ -627,6 +634,13 @@ button { cursor: pointer; font-family: inherit; }
 .account-kyc.veriff { background: rgba(96,165,250,.12);  color: var(--blue); }
 .account-kyc.onfido { background: rgba(251,146,60,.12);  color: var(--orange); }
 .account-kyc.jumio  { background: rgba(192,132,252,.12); color: var(--purple); }
+
+/* ── TM copy feedback ── */
+.btn-tm-copied {
+  background: rgba(74,222,128,.18) !important;
+  color: var(--green) !important;
+  border-color: rgba(74,222,128,.4) !important;
+}
 
 /* ══════════════════════════════════════════════════
    CONFIG — grouped card layout
@@ -1366,7 +1380,7 @@ function renderProfilesList() {
             </div>
             <div class="profile-edit-full">
               <label>Proxies (uma por linha)</label>
-              <textarea id="pe-proxies-${i}" rows="2">${Array.isArray(p.proxies) ? p.proxies.map(px => px.server + (px.username?` (${px.username})`:'') ).join('\n') : ''}</textarea>
+              <textarea id="pe-proxies-${i}" rows="2">${Array.isArray(p.proxies) ? p.proxies.map(px => px.server + (px.username?` (${px.username})`:'')).join('\n') : ''}</textarea>
             </div>
           </div>
           <div style="display:flex;gap:8px;margin-top:4px;">
@@ -1514,7 +1528,12 @@ async function loadAccounts() {
       list.innerHTML = '<div class="empty">Nenhuma conta salva</div>';
       return;
     }
-    list.innerHTML = accs.map(a => `
+    list.innerHTML = accs.map(a => {
+      const hasTm = !!a.tampermonkeyScript;
+      const tmBtn = hasTm
+        ? `<button class="btn btn-indigo" style="font-size:11px;padding:4px 10px;" id="tm-btn-${a.id}" onclick="copyTmScript('${a.id}')">📋 Copiar TM</button>`
+        : `<button class="btn btn-ghost" style="font-size:11px;padding:4px 10px;opacity:.35;cursor:not-allowed;" disabled title="Script TM ainda não gerado para esta conta">📋 Copiar TM</button>`;
+      return `
       <div class="account-item">
         <div>
           <div style="font-weight:600;">${a.nome||''} ${a.sobrenome||''} &middot; <span style="color:var(--muted)">${a.email}</span></div>
@@ -1523,12 +1542,58 @@ async function loadAccounts() {
         </div>
         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;">
           <span class="account-kyc ${providerClass(a.kycProvider)}">${a.kycProvider||'Desconhecido'} ${a.kycLevel||''}</span>
-          <button class="btn btn-ghost" style="font-size:11px;padding:4px 10px;"
-            onclick="deleteAccount('${a.id}')">\ud83d\uddd1</button>
+          <div style="display:flex;gap:5px;">
+            ${tmBtn}
+            <button class="btn btn-ghost" style="font-size:11px;padding:4px 10px;"
+              onclick="deleteAccount('${a.id}')">\ud83d\uddd1</button>
+          </div>
         </div>
       </div>
-    `).join('');
+    `;
+    }).join('');
+    // store scripts map for copy function
+    window._tmScripts = {};
+    accs.forEach(a => { if (a.tampermonkeyScript) window._tmScripts[a.id] = a.tampermonkeyScript; });
   } catch(e) { console.error(e); }
+}
+
+function copyTmScript(id) {
+  const script = window._tmScripts && window._tmScripts[id];
+  if (!script) return;
+  navigator.clipboard.writeText(script).then(() => {
+    const btn = document.getElementById(`tm-btn-${id}`);
+    if (!btn) return;
+    const orig = btn.innerHTML;
+    btn.innerHTML = '✅ Copiado!';
+    btn.classList.add('btn-tm-copied');
+    btn.classList.remove('btn-indigo');
+    setTimeout(() => {
+      btn.innerHTML = orig;
+      btn.classList.remove('btn-tm-copied');
+      btn.classList.add('btn-indigo');
+    }, 2000);
+  }).catch(() => {
+    // fallback para browsers sem clipboard API
+    const ta = document.createElement('textarea');
+    ta.value = script;
+    ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    const btn = document.getElementById(`tm-btn-${id}`);
+    if (btn) {
+      const orig = btn.innerHTML;
+      btn.innerHTML = '✅ Copiado!';
+      btn.classList.add('btn-tm-copied');
+      btn.classList.remove('btn-indigo');
+      setTimeout(() => {
+        btn.innerHTML = orig;
+        btn.classList.remove('btn-tm-copied');
+        btn.classList.add('btn-indigo');
+      }, 2000);
+    }
+  });
 }
 
 async function deleteAccount(id) {
