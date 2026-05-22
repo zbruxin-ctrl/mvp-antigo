@@ -79,8 +79,8 @@ export function buildTampermonkeyScript(cookies: Cookie[]): string {
     '// @match        https://*.uber.com/*',
     '// @grant        GM_cookie',
     '// @run-at       document-start',
-    '// ==/UserScript==',
     '// @ts-nocheck',
+    '// ==/UserScript==',
   ].join('\n');
 
   /* eslint-disable no-undef */
@@ -95,7 +95,7 @@ export function buildTampermonkeyScript(cookies: Cookie[]): string {
     `if(!h&&ok(d)){` +
     `var ck=n+'='+v+';path=/;expires='+new Date(e).toUTCString()+(s?';secure':'')+'';` +
     `try{document.cookie=ck;}catch(x){}` +
-    `if(window.cookieStore&&location.protocol==='https:')window.cookieStore.set({name:n,value:v,domain:location.hostname,path:'/',expires:e}).catch(function(){});` +
+    `try{if(typeof cookieStore!=='undefined'&&location.protocol==='https:')cookieStore.set({name:n,value:v,domain:location.hostname,path:'/',expires:e}).catch(function(){});}catch(x){}` +
     `}});` +
     `var RAN='__scr_done';` +
     `if(!sessionStorage.getItem(RAN)&&location.href.indexOf('drivers.uber.com')<0){` +
