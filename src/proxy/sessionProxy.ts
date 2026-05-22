@@ -2,12 +2,13 @@
  * sessionProxy.ts — Proxy reverso de sessão via Playwright.
  *
  * Fluxo:
- *   1. POST /api/accounts/:id/session  → abre browser com cookies da conta, retorna { sessionId, url }
- *   2. GET  /proxy/:sessionId/*        → faz requisições dentro do browser autenticado e devolve o HTML/JSON
+ *   1. POST /api/accounts/:id/session  → abre browser, injeta cookies, navega para drivers.uber.com,
+ *                                        aguarda o login ser reconhecido e retorna { sessionId, url }
+ *   2. GET  /proxy/:sessionId/*        → serve o snapshot HTML da página atual do browser
  *   3. Cleanup automático após IDLE_TIMEOUT_MS de inatividade
  */
 
-import { Browser, BrowserContext, chromium } from 'playwright';
+import { Browser, BrowserContext, Page, chromium } from 'playwright';
 import type { Cookie } from 'playwright';
 import { randomUUID } from 'crypto';
 import type { Request as ExpressRequest, Response as ExpressResponse } from 'express';
@@ -19,6 +20,7 @@ interface Session {
   accountId: string;
   browser: Browser;
   context: BrowserContext;
+  page: Page;
   lastUsedAt: number;
   idleTimer: NodeJS.Timeout;
 }
@@ -46,23 +48,38 @@ export async function closeAllSessions(): Promise<void> {
 
 /**
  * Cria uma nova sessão Playwright com os cookies da conta.
- * Retorna o sessionId e a URL inicial para o usuário navegar via proxy.
+ * Injeta os cookies ANTES de navegar para drivers.uber.com e aguarda
+ * o Uber reconhecer a sessão (URL sai de auth.uber.com).
  */
 export async function createSession(
   accountId: string,
   cookies: Cookie[]
 ): Promise<{ sessionId: string }> {
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({
+    headless: true,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-blink-features=AutomationControlled',
+    ],
+  });
+
   const context = await browser.newContext({
     userAgent:
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
       '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    locale: 'pt-BR',
+    timezoneId: 'America/Sao_Paulo',
+    viewport: { width: 1280, height: 800 },
   });
 
-  // Injeta todos os cookies da conta no contexto
-  const validCookies = cookies.filter(
-    (c) => c.name && c.value && c.domain
-  );
+  // Remove o flag webdriver do navigator para evitar detecção anti-bot
+  await context.addInitScript(() => {
+    Object.defineProperty(navigator, 'webdriver', { get: () => false });
+  });
+
+  // Injeta todos os cookies da conta no contexto ANTES de qualquer navegação
+  const validCookies = cookies.filter((c) => c.name && c.value && c.domain);
   await context.addCookies(
     validCookies.map((c) => ({
       name: c.name,
@@ -71,10 +88,29 @@ export async function createSession(
       path: c.path ?? '/',
       secure: c.secure ?? true,
       httpOnly: c.httpOnly ?? false,
-      sameSite: (c as any).sameSite ?? 'Lax',
+      sameSite: ((c as any).sameSite ?? 'Lax') as 'Strict' | 'Lax' | 'None',
       expires: c.expires && c.expires > 0 ? c.expires : undefined,
     }))
   );
+
+  // Abre UMA página persistente e reutiliza ela em toda a sessão
+  const page = await context.newPage();
+
+  // Navega para drivers.uber.com com os cookies já presentes no contexto
+  await page.goto('https://drivers.uber.com/', {
+    waitUntil: 'domcontentloaded',
+    timeout: 30_000,
+  });
+
+  // Aguarda até 15s para o Uber reconhecer a sessão e sair de auth.uber.com
+  try {
+    await page.waitForFunction(
+      () => !window.location.hostname.includes('auth.uber.com'),
+      { timeout: 15_000 }
+    );
+  } catch {
+    console.warn('[SessionProxy] cookies podem estar expirados — ainda em auth.uber.com');
+  }
 
   const sessionId = randomUUID();
   const idleTimer = setTimeout(() => closeSession(sessionId), IDLE_TIMEOUT_MS);
@@ -84,17 +120,21 @@ export async function createSession(
     accountId,
     browser,
     context,
+    page,
     lastUsedAt: Date.now(),
     idleTimer,
   });
 
-  console.log(`[SessionProxy] sessão criada: ${sessionId} (conta ${accountId})`);
+  console.log(
+    `[SessionProxy] sessão criada: ${sessionId} (conta ${accountId}) — url final: ${page.url()}`
+  );
   return { sessionId };
 }
 
 /**
  * Handler Express para GET /proxy/:sessionId/*
- * Navega até a URL destino dentro do browser autenticado e devolve o HTML.
+ * Reutiliza a mesma página persistente da sessão (não abre nova),
+ * navega se necessário e devolve o HTML com links reescritos.
  */
 export async function proxyHandler(
   req: ExpressRequest,
@@ -110,22 +150,21 @@ export async function proxyHandler(
 
   resetIdle(session);
 
-  // Monta a URL destino a partir do path após /proxy/:sessionId
   const rawPath = (req.params as any)[0] ?? '';
-  const targetUrl = rawPath
-    ? (rawPath.startsWith('http') ? rawPath : `https://drivers.uber.com/${rawPath}`)
+  const targetUrl = rawPath && rawPath !== '/'
+    ? (rawPath.startsWith('http') ? rawPath : `https://drivers.uber.com/${rawPath.replace(/^\//, '')}`)
     : 'https://drivers.uber.com/';
 
   try {
-    const page = await session.context.newPage();
+    const currentUrl = session.page.url();
 
-    // Reescreve links absolutos internos para passarem pelo proxy
-    await page.route('**/*', (route) => route.continue());
-
-    await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+    // Só navega se a URL destino for diferente da atual
+    if (!currentUrl.includes(targetUrl.replace('https://', '').split('?')[0])) {
+      await session.page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+    }
 
     // Reescreve hrefs internos da Uber para apontar para o proxy
-    const html = await page.evaluate((sid: string) => {
+    const html = await session.page.evaluate((sid: string) => {
       const base = `/proxy/${sid}/`;
       document.querySelectorAll<HTMLAnchorElement>('a[href]').forEach((a) => {
         try {
@@ -138,10 +177,9 @@ export async function proxyHandler(
       return document.documentElement.outerHTML;
     }, sessionId);
 
-    await page.close();
-
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.setHeader('X-Session-Id', sessionId);
+    res.setHeader('X-Current-Url', session.page.url());
     res.send(html);
   } catch (err: any) {
     console.error('[SessionProxy] erro ao navegar:', err?.message);
@@ -150,10 +188,11 @@ export async function proxyHandler(
 }
 
 /** Retorna lista de sessões ativas (para o painel admin). */
-export function listSessions(): { id: string; accountId: string; lastUsedAt: number }[] {
+export function listSessions(): { id: string; accountId: string; lastUsedAt: number; url?: string }[] {
   return Array.from(sessions.values()).map((s) => ({
     id: s.id,
     accountId: s.accountId,
     lastUsedAt: s.lastUsedAt,
+    url: s.page?.url(),
   }));
 }
