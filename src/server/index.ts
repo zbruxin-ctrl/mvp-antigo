@@ -259,6 +259,24 @@ app.get('/api/accounts',     requireAuth, (_req, res) => {
   res.json({ accounts: accountStore.list() });
 });
 
+// ── GET /api/accounts/:id/script ─────────────────────────────
+// Serve o userscript Tampermonkey da conta como arquivo .user.js para download/instalação.
+// Regenera o script a partir dos cookies atuais antes de servir.
+app.get('/api/accounts/:id/script', requireAuth, (req: Request, res: Response) => {
+  const account = accountStore.regenScript(req.params.id);
+  if (!account) {
+    res.status(404).json({ ok: false, error: 'Conta não encontrada' });
+    return;
+  }
+
+  const script = account.tampermonkeyScript ?? '';
+  const safeName = (account.email ?? account.id).replace(/[^a-z0-9@._-]/gi, '_');
+
+  res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${safeName}.user.js"`);
+  res.send(script);
+});
+
 // ── Session Proxy routes ─────────────────────────────────
 
 /**
@@ -449,13 +467,13 @@ app.get('*', (_req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`\n\ud83d\ude80 Servidor rodando em http://localhost:${PORT}`);
-  console.log(`\ud83d\udd11 Senha do painel: connect@10\n`);
-  console.log(`\ud83d\udcc1 Frontend dir: ${FRONTEND_DIR}`);
+  console.log(`\n🚀 Servidor rodando em http://localhost:${PORT}`);
+  console.log(`🔑 Senha do painel: connect@10\n`);
+  console.log(`📁 Frontend dir: ${FRONTEND_DIR}`);
 });
 
 async function gracefulShutdown(signal: string) {
-  console.log(`\n\ud83d\uded1 Recebido ${signal} — encerrando graciosamente...`);
+  console.log(`\n🛑 Recebido ${signal} — encerrando graciosamente...`);
   await sessionProxy.closeAllSessions();
   await MockPlaywrightFlow.cleanup();
   process.exit(0);
