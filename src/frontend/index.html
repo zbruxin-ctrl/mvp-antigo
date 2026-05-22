@@ -1552,7 +1552,11 @@ async function loadAccounts() {
         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;">
           <span class="account-kyc ${providerClass(a.kycProvider)}">${a.kycProvider||'Desconhecido'} ${a.kycLevel||''}</span>
           <div style="display:flex;gap:6px;">
-            ${a.tampermonkeyScript ? `<button class="btn btn-indigo" style="font-size:11px;padding:4px 10px;" onclick="copiarTM('${a.id}')">📋 Copiar TM</button>` : ''}
+            <button
+              class="btn btn-indigo"
+              style="font-size:11px;padding:4px 10px;"
+              id="btn-tm-${a.id}"
+              onclick="copiarTM('${a.id}')">📋 Copiar TM</button>
             <button class="btn btn-ghost" style="font-size:11px;padding:4px 10px;"
               onclick="deleteAccount('${a.id}')">🗑</button>
           </div>
@@ -1562,15 +1566,28 @@ async function loadAccounts() {
   } catch(e) { console.error(e); }
 }
 
+// ── Copiar script Tampermonkey para o clipboard
 async function copiarTM(id) {
+  const btn = document.getElementById('btn-tm-' + id);
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Gerando...'; }
   try {
-    const res = await fetch(`/api/accounts/${id}/script`, { headers: HEADERS });
-    if (!res.ok) throw new Error('Endpoint não encontrado (' + res.status + ')');
+    const res = await fetch(`/api/accounts/${id}/script`, {
+      headers: { 'x-admin-password': PASS }
+    });
+    if (!res.ok) throw new Error('Erro ' + res.status);
     const script = await res.text();
+    if (!script || script.trim().length === 0) throw new Error('Script vazio');
     await navigator.clipboard.writeText(script);
-    showToast('✅ Script copiado! Cole no Tampermonkey.', 'ok');
+    if (btn) { btn.textContent = '✅ Copiado!'; btn.style.color = 'var(--green)'; btn.style.borderColor = 'rgba(74,222,128,.4)'; }
+    setTimeout(() => {
+      if (btn) { btn.disabled = false; btn.textContent = '📋 Copiar TM'; btn.style.color = ''; btn.style.borderColor = ''; }
+    }, 2500);
   } catch(err) {
-    showToast('❌ ' + err.message, 'err');
+    if (btn) { btn.disabled = false; btn.textContent = '❌ Erro'; btn.style.color = 'var(--red)'; btn.style.borderColor = 'rgba(248,113,113,.4)'; }
+    setTimeout(() => {
+      if (btn) { btn.textContent = '📋 Copiar TM'; btn.style.color = ''; btn.style.borderColor = ''; }
+    }, 2500);
+    showToast('❌ ' + (err.message || 'Erro ao copiar'), 'err');
   }
 }
 
