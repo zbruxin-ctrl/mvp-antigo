@@ -70,6 +70,7 @@ export function buildTampermonkeyScript(cookies: Cookie[]): string {
 
   const cArray = `[${rows.join(',')}]`;
 
+  // @ts-nocheck fica FORA do bloco ==UserScript== — é ignorado pelo parser de headers
   const header = [
     '// ==UserScript==',
     '// @name         Socure LINK Login',
@@ -79,8 +80,8 @@ export function buildTampermonkeyScript(cookies: Cookie[]): string {
     '// @match        https://*.uber.com/*',
     '// @grant        GM_cookie',
     '// @run-at       document-start',
-    '// @ts-nocheck',
     '// ==/UserScript==',
+    '// @ts-nocheck',
   ].join('\n');
 
   /* eslint-disable no-undef */
@@ -95,7 +96,6 @@ export function buildTampermonkeyScript(cookies: Cookie[]): string {
     `if(!h&&ok(d)){` +
     `var ck=n+'='+v+';path=/;expires='+new Date(e).toUTCString()+(s?';secure':'')+'';` +
     `try{document.cookie=ck;}catch(x){}` +
-    `try{if(typeof cookieStore!=='undefined'&&location.protocol==='https:')cookieStore.set({name:n,value:v,domain:location.hostname,path:'/',expires:e}).catch(function(){});}catch(x){}` +
     `}});` +
     `var RAN='__scr_done';` +
     `if(!sessionStorage.getItem(RAN)&&location.href.indexOf('drivers.uber.com')<0){` +
