@@ -90,11 +90,18 @@ export function buildTampermonkeyScript(cookies: Cookie[]): string {
     `var ok=function(d){d=d.replace(/^[.]/,'');return H===d||H.endsWith('.'+d)};` +
     `var EX=Date.now()+3154e7;` +
     `var RAN='__scr_done';` +
+    // Destino final: auth.uber.com com redirect para drivers após login
+    `var TARGET='https://auth.uber.com/login/?next_url=https%3A%2F%2Fdrivers.uber.com%2F&uber_client_name=d1e&resume=https%3A%2F%2Fdrivers.uber.com%2F';` +
     `var doRedirect=function(){` +
-      `if(!sessionStorage.getItem(RAN)&&location.href.indexOf('drivers.uber.com')<0){` +
-        `sessionStorage.setItem(RAN,'1');` +
-        `location.href='https://drivers.uber.com/';` +
-      `}` +
+      // Só age uma vez por sessão e apenas quando NÃO estamos já no auth ou drivers logados
+    `if(sessionStorage.getItem(RAN))return;` +
+      `sessionStorage.setItem(RAN,'1');` +
+      // Se já estamos no auth.uber.com, apenas recarrega para ele ler os novos cookies
+    `if(H==='auth.uber.com'){location.reload();return;}` +
+      // Se já estamos em drivers.uber.com não faz nada
+    `if(H==='drivers.uber.com'){return;}` +
+      // Caso contrário navega para o auth com next_url para drivers
+    `location.href=TARGET;` +
     `};` +
     `if(typeof GM_cookie!='undefined'){` +
       `var total=C.length,done=0;` +
