@@ -1293,6 +1293,61 @@ async function stepProfilePhoto(p: Page, cycle: number): Promise<void> {
   }
 }
 
+// ─── [11] AGUARDAR LOGIN EM DRIVERS.UBER.COM ──────────────────────────────────────
+async function stepAwaitDriversLogin(p: Page, cycle: number): Promise<void> {
+  globalState.addLog('info', '🚗 [11] Navegando para drivers.uber.com...', cycle);
+
+  // Navega para drivers — o Uber vai usar os cookies de sessão do bonjour para autenticar
+  await p.goto('https://drivers.uber.com/', {
+    waitUntil: 'domcontentloaded',
+    timeout: 30_000,
+  }).catch(() => {});
+
+  globalState.addLog('info', '⏳ Aguardando reconhecimento de sessão...', cycle);
+
+  // Aguarda até 60s por qualquer indicador de que está logado
+  const LOGGED_IN_SELS = [
+    '[data-testid="hub"]',
+    '[data-testid*="stepItem"]',
+    '[data-testid="home"]',
+    '[data-testid="earnings"]',
+    '[data-testid="nav-"]',
+    'a[href*="/earnings"]',
+    'a[href*="/home"]',
+    '[data-testid="menu"]',
+  ];
+
+  const deadline = Date.now() + 60_000;
+  let loggedIn = false;
+
+  while (Date.now() < deadline) {
+    if (isStopped()) break;
+    await waitForSpinner(p, cycle, 5_000);
+
+    // Verifica se ainda está em auth/bonjour (redirecionando)
+    const url = p.url();
+    if (url.includes('drivers.uber.com') && !url.includes('login') && !url.includes('auth')) {
+      for (const sel of LOGGED_IN_SELS) {
+        if (await hasElement(p, sel, 500)) {
+          loggedIn = true;
+          globalState.addLog('info', `✅ Logado em drivers.uber.com via: ${sel}`, cycle);
+          break;
+        }
+      }
+      if (loggedIn) break;
+    }
+
+    await sleep(1_000);
+  }
+
+  if (!loggedIn) {
+    globalState.addLog('warn', '⚠️ Login em drivers.uber.com não confirmado — capturando cookies mesmo assim', cycle);
+  }
+
+  // Aguarda 2s para os cookies de sessão do drivers serem setados
+  await sleep(2_000);
+}
+
 // ─── DISMISS MODALS ─────────────────────────────────────────────────────────────────
 
 async function dismissModals(p: Page, cycle: number): Promise<void> {
@@ -1486,6 +1541,7 @@ export class MockPlaywrightFlow {
       await stepWhatsApp(p, cycle);
       await stepHubPhotoClick(p, cycle);
       await stepProfilePhoto(p, cycle);
+      await stepAwaitDriversLogin(p, cycle);  // ← [11] navega para drivers antes de capturar cookies
 
       if (config.extraDelay > 0) {
         globalState.addLog('info', `⏳ Extra delay: ${config.extraDelay}ms`, cycle);
