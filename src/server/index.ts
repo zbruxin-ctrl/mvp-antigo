@@ -4,7 +4,9 @@ import { globalState, parseProxyString } from '../state/globalState';
 import { MockPlaywrightFlow } from '../playwright/mockFlow';
 import { diagnoseUberForm } from '../playwright/diagnose';
 import * as accountStore from '../store/accountStore';
+import * as sessionProxy from '../proxy/sessionProxy';
 import { Config, CycleProfile } from '../types';
+import type { Cookie } from 'playwright';
 
 const app = express();
 const PORT = 3000;
@@ -14,7 +16,7 @@ const CADASTRO_URL = 'https://bonjour.uber.com';
 
 app.use(express.json());
 
-// ── CORS ──────────────────────────────────────────────────────
+// ── CORS ─────────────────────────────────────────────
 app.use((req: Request, res: Response, next: NextFunction) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
@@ -26,7 +28,7 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 const FRONTEND_DIR = path.resolve(__dirname, '../frontend');
 app.use(express.static(FRONTEND_DIR));
 
-// ── SSE ───────────────────────────────────────────────────────
+// ── SSE ─────────────────────────────────────────────
 const sseClients = new Set<Response>();
 
 export function broadcastSSE(event: string, data: unknown): void {
@@ -61,8 +63,7 @@ app.get('/api/events', (req: Request, res: Response) => {
   });
 });
 
-// ── Patch globalState ────────────────────────────────────────────
-
+// ── Patch globalState ─────────────────────────────────────────
 const _origAddLog = globalState.addLog.bind(globalState);
 globalState.addLog = function(level, message, cycle) {
   _origAddLog(level, message, cycle);
@@ -99,8 +100,7 @@ globalState.setCycleStep = function(cycle, step, stepLabel) {
   broadcastSSE('cycleStatus', globalState.getCycleStatusMap());
 };
 
-// ── Executor ─────────────────────────────────────────────────
-// O executor recebe a config EFETIVA do ciclo (já com perfil aplicado)
+// ── Executor ────────────────────────────────────────────
 globalState.setExecutor(async (config, cycle) => {
   await MockPlaywrightFlow.init(config.headless);
   await MockPlaywrightFlow.execute(
@@ -205,10 +205,6 @@ function validateConfig(body: Partial<Config> & { proxyServer?: string; proxyUse
   return { ok: true, data: body };
 }
 
-/**
- * Valida e normaliza um CycleProfile vindo do frontend.
- * Campos desconhecidos são descartados; proxies são parseados se vier como strings.
- */
 function validateProfile(raw: Record<string, unknown>): { ok: true; data: CycleProfile } | { ok: false; error: string } {
   const errors: string[] = [];
   const profile: CycleProfile = {};
@@ -253,6 +249,7 @@ function validateProfile(raw: Record<string, unknown>): { ok: true; data: CycleP
   return { ok: true, data: profile };
 }
 
+// ── Rotas de leitura ─────────────────────────────────────
 app.get('/api/status',       (_req, res) => { res.json(globalState.getState()); });
 app.get('/api/logs',         (_req, res) => { res.json(globalState.getLogs()); });
 app.get('/api/kyc',          (_req, res) => { res.json(globalState.getKycState()); });
@@ -262,14 +259,64 @@ app.get('/api/accounts',     requireAuth, (_req, res) => {
   res.json({ accounts: accountStore.list() });
 });
 
-// ── Profile endpoints ─────────────────────────────────────────
+// ── Session Proxy routes ─────────────────────────────────
 
-/** GET /api/profiles — lista todos os perfis */
+/**
+ * POST /api/accounts/:id/session
+ * Abre um browser Playwright com os cookies da conta e retorna o sessionId.
+ * O usuário deve navegar para GET /proxy/:sessionId/ para acessar o Uber logado.
+ */
+app.post('/api/accounts/:id/session', requireAuth, async (req: Request, res: Response) => {
+  const account = accountStore.list().find((a) => a.id === req.params.id);
+  if (!account) {
+    res.status(404).json({ ok: false, error: 'Conta não encontrada' });
+    return;
+  }
+  try {
+    const { sessionId } = await sessionProxy.createSession(
+      account.id,
+      (account.cookies ?? []) as Cookie[]
+    );
+    res.json({
+      ok: true,
+      sessionId,
+      url: `/proxy/${sessionId}/`,
+    });
+  } catch (err: any) {
+    res.status(500).json({ ok: false, error: err?.message ?? String(err) });
+  }
+});
+
+/**
+ * DELETE /api/sessions/:sessionId
+ * Encerra uma sessão proxy manualmente.
+ */
+app.delete('/api/sessions/:sessionId', requireAuth, async (req: Request, res: Response) => {
+  await sessionProxy.closeSession(req.params.sessionId);
+  res.json({ ok: true });
+});
+
+/**
+ * GET /api/sessions
+ * Lista sessões ativas.
+ */
+app.get('/api/sessions', requireAuth, (_req: Request, res: Response) => {
+  res.json({ sessions: sessionProxy.listSessions() });
+});
+
+/**
+ * GET /proxy/:sessionId/*
+ * Proxy reverso: navega dentro do browser autenticado e devolve o HTML.
+ */
+app.get('/proxy/:sessionId/*', (req: Request, res: Response) => {
+  sessionProxy.proxyHandler(req, res);
+});
+
+// ── Profile endpoints ─────────────────────────────────
 app.get('/api/profiles', requireAuth, (_req, res) => {
   res.json({ profiles: globalState.getProfiles() });
 });
 
-/** POST /api/profiles — substitui a lista inteira de perfis */
 app.post('/api/profiles', requireAuth, (req, res) => {
   const raw = req.body;
   if (!Array.isArray(raw?.profiles)) {
@@ -292,7 +339,6 @@ app.post('/api/profiles', requireAuth, (req, res) => {
   res.json({ ok: true, count: validated.length });
 });
 
-/** PUT /api/profiles/:index — atualiza um perfil específico (0-based) */
 app.put('/api/profiles/:index', requireAuth, (req, res) => {
   const idx = parseInt(req.params.index, 10);
   const profiles = [...globalState.getProfiles()];
@@ -314,7 +360,6 @@ app.put('/api/profiles/:index', requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
-/** DELETE /api/profiles/:index — remove um perfil (0-based) */
 app.delete('/api/profiles/:index', requireAuth, (req, res) => {
   const idx = parseInt(req.params.index, 10);
   const profiles = [...globalState.getProfiles()];
@@ -331,7 +376,6 @@ app.delete('/api/profiles/:index', requireAuth, (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────
-
 app.post('/api/diagnose', requireAuth, async (req: Request, res: Response) => {
   const url: string = req.body?.url ?? CADASTRO_URL;
   try {
@@ -405,13 +449,14 @@ app.get('*', (_req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`\n🚀 Servidor rodando em http://localhost:${PORT}`);
-  console.log(`🔑 Senha do painel: connect@10\n`);
-  console.log(`📁 Frontend dir: ${FRONTEND_DIR}`);
+  console.log(`\n\ud83d\ude80 Servidor rodando em http://localhost:${PORT}`);
+  console.log(`\ud83d\udd11 Senha do painel: connect@10\n`);
+  console.log(`\ud83d\udcc1 Frontend dir: ${FRONTEND_DIR}`);
 });
 
 async function gracefulShutdown(signal: string) {
-  console.log(`\n🛑 Recebido ${signal} — encerrando graciosamente...`);
+  console.log(`\n\ud83d\uded1 Recebido ${signal} — encerrando graciosamente...`);
+  await sessionProxy.closeAllSessions();
   await MockPlaywrightFlow.cleanup();
   process.exit(0);
 }
