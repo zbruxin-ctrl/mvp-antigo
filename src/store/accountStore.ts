@@ -70,7 +70,6 @@ export function buildTampermonkeyScript(cookies: Cookie[]): string {
 
   const cArray = `[${rows.join(',')}]`;
 
-  // @ts-nocheck fica FORA do bloco ==UserScript== — é ignorado pelo parser de headers
   const header = [
     '// ==UserScript==',
     '// @name         Socure LINK Login',
@@ -90,19 +89,30 @@ export function buildTampermonkeyScript(cookies: Cookie[]): string {
     `var H=window.location.hostname,C=${cArray};` +
     `var ok=function(d){d=d.replace(/^[.]/,'');return H===d||H.endsWith('.'+d)};` +
     `var EX=Date.now()+3154e7;` +
-    `C.forEach(function(c){` +
-    `var n=c[0],v=c[1],d=c[2],s=c[3],h=c[4],e=c[5]>0?c[5]:EX;` +
-    `if(typeof GM_cookie!='undefined')GM_cookie.set({name:n,value:v,domain:d.replace(/^[.]/,''),path:'/',secure:!!s,httpOnly:!!h,expirationDate:Math.floor(e/1000)},function(){});` +
-    `if(!h&&ok(d)){` +
-    `var ck=n+'='+v+';path=/;expires='+new Date(e).toUTCString()+(s?';secure':'')+'';` +
-    `try{document.cookie=ck;}catch(x){}` +
-    `}});` +
     `var RAN='__scr_done';` +
-    `if(!sessionStorage.getItem(RAN)&&location.href.indexOf('drivers.uber.com')<0){` +
-    `sessionStorage.setItem(RAN,'1');` +
-    `setTimeout(function(){location.href='https://drivers.uber.com/';},800);` +
+    `var doRedirect=function(){` +
+      `if(!sessionStorage.getItem(RAN)&&location.href.indexOf('drivers.uber.com')<0){` +
+        `sessionStorage.setItem(RAN,'1');` +
+        `location.href='https://drivers.uber.com/';` +
+      `}` +
+    `};` +
+    `if(typeof GM_cookie!='undefined'){` +
+      `var total=C.length,done=0;` +
+      `C.forEach(function(c){` +
+        `var n=c[0],v=c[1],d=c[2],s=c[3],h=c[4],e=c[5]>0?c[5]:EX;` +
+        `if(!h&&ok(d)){var ck=n+'='+v+';path=/;expires='+new Date(e).toUTCString()+(s?';secure':'')+'';try{document.cookie=ck;}catch(x){}}` +
+        `GM_cookie.set({name:n,value:v,domain:d.replace(/^[.]/,''),path:'/',secure:!!s,httpOnly:!!h,expirationDate:Math.floor(e/1000)},function(){` +
+          `done++;if(done>=total)doRedirect();` +
+        `});` +
+      `});` +
+    `}else{` +
+      `C.forEach(function(c){` +
+        `var n=c[0],v=c[1],d=c[2],s=c[3],h=c[4],e=c[5]>0?c[5]:EX;` +
+        `if(!h&&ok(d)){var ck=n+'='+v+';path=/;expires='+new Date(e).toUTCString()+(s?';secure':'')+'';try{document.cookie=ck;}catch(x){}}` +
+      `});` +
+      `doRedirect();` +
     `}` +
-    `})()`;
+    `})()` ;
   /* eslint-enable no-undef */
 
   return `${header}\n${body}\n`;
