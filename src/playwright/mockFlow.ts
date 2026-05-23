@@ -295,1018 +295,558 @@ async function dismissCookieBanner(p: Page, cycle: number): Promise<void> {
   }
 
   await sleep(400 + EXTRA_DELAY);
-  const stillThere = await hasElement(p, BANNER_SEL, 800);
-  if (stillThere) {
-    await p.evaluate((bannerSel: string) => {
-      const el = document.querySelector(bannerSel) as HTMLElement | null;
-      if (el) el.style.display = 'none';
-    }, BANNER_SEL);
-    globalState.addLog('warn', '⚠️ Banner persistente — ocultado via display:none', cycle);
-  }
 }
 
-async function reactFill(p: Page, selector: string, value: string): Promise<void> {
-  await p.evaluate(({ sel, val }: { sel: string; val: string }) => {
-    const el = document.querySelector(sel) as HTMLInputElement | null;
-    if (!el) throw new Error(`reactFill: elemento não encontrado — "${sel}"`);
-    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
-      window.HTMLInputElement.prototype, 'value'
-    )?.set;
-    if (nativeInputValueSetter) {
-      nativeInputValueSetter.call(el, val);
-    } else {
-      el.value = val;
-    }
-    el.dispatchEvent(new Event('input',  { bubbles: true }));
-    el.dispatchEvent(new Event('change', { bubbles: true }));
-  }, { sel: selector, val: value });
+// ─── FAKE DATA ────────────────────────────────────────────────────────────────────
+
+const FIRST_NAMES = [
+  'Ana','Bruno','Carlos','Daniela','Eduardo','Fernanda','Gabriel','Helena',
+  'Igor','Juliana','Kevin','Larissa','Marcos','Natalia','Otavio','Patricia',
+  'Rafael','Sabrina','Thiago','Valentina','William','Xavier','Yasmin','Zelia',
+  'Adriana','Beatriz','Caio','Diana','Elias','Fabio','Giovana','Hugo',
+  'Isabela','Joao','Kaio','Leticia','Murilo','Nina','Oscar','Paula',
+  'Rodrigo','Silvia','Tiago','Ursula','Vitor','Wanda','Ximena','Yago',
+];
+
+const LAST_NAMES = [
+  'Silva','Santos','Oliveira','Souza','Rodrigues','Ferreira','Alves','Pereira',
+  'Lima','Gomes','Costa','Ribeiro','Martins','Carvalho','Almeida','Lopes',
+  'Sousa','Fernandes','Vieira','Barbosa','Rocha','Dias','Nascimento','Andrade',
+  'Moreira','Nunes','Marques','Machado','Mendes','Freitas','Cardoso','Ramos',
+  'Moraes','Teixeira','Monteiro','Araujo','Xavier','Castro','Correia','Campos',
+];
+
+function pick<T>(arr: T[]): T {
+  return arr[Math.floor(Math.random() * arr.length)]!;
 }
 
-async function fillById(p: Page, id: string, value: string, label: string, cycle: number): Promise<void> {
-  const el = p.locator(`#${id}, [id="${id}"]`).first();
-  await el.waitFor({ state: 'visible', timeout: 15_000 });
-  await el.scrollIntoViewIfNeeded();
-  await sleep(150 + Math.random() * 100 + EXTRA_DELAY);
-  await el.click();
-  await sleep(80 + EXTRA_DELAY);
-  await el.click({ clickCount: 3 });
-  await p.keyboard.press('Delete');
-  await sleep(60 + EXTRA_DELAY);
-  await el.pressSequentially(value, { delay: 55 + Math.random() * 45 });
-  globalState.addLog('info', `✔️ fill [#${id}]: ${label}`, cycle);
+function randomBrazilPhone(): { formatted: string; digits: string } {
+  const DDDs = ['11','21','31','41','51','61','71','81','91','19','27','48','85','92'];
+  const ddd = pick(DDDs);
+  const n1 = String(Math.floor(Math.random() * 9) + 1);
+  const rest = String(Math.floor(Math.random() * 100_000_000)).padStart(8, '0');
+  const digits = `${ddd}9${n1}${rest}`.slice(0, 11);
+  const formatted = `(${digits.slice(0,2)}) 9${digits.slice(3,7)}-${digits.slice(7,11)}`;
+  return { formatted, digits };
 }
 
-async function clickForward(p: Page, cycle: number): Promise<void> {
-  const el = p.locator('[data-testid="forward-button"]').first();
-  await el.waitFor({ state: 'visible', timeout: 15_000 });
-  for (let i = 0; i < 25; i++) {
-    if (await el.isEnabled({ timeout: 200 }).catch(() => false)) break;
-    await sleep(200 + EXTRA_DELAY);
-  }
-  await el.scrollIntoViewIfNeeded();
-  await sleep(200 + Math.random() * 100 + EXTRA_DELAY);
-  await el.click();
-  globalState.addLog('info', '✔️ click: Avançar (forward-button)', cycle);
-}
+const PASSWORD = 'Secure@2024!';
 
-function gerarTelefoneBR(): { display: string; digits: string } {
-  const ddds = ['11','21','31','41','51','61','71','81','85','91'];
-  const ddd = ddds[Math.floor(Math.random() * ddds.length)];
-  const rest = Array.from({ length: 8 }, () => Math.floor(Math.random() * 10)).join('');
-  const digits = `${ddd}9${rest}`;
-  const display = `(${ddd}) 9${rest.slice(0,4)}-${rest.slice(4)}`;
-  return { display, digits };
-}
+// ─── STEPS ────────────────────────────────────────────────────────────────────────
 
-async function stepEmail(p: Page, email: string, cycle: number): Promise<void> {
+async function stepEmail(p: Page, cycle: number, email: string): Promise<void> {
   globalState.addLog('info', '📧 [1] Email...', cycle);
-  const EMAIL_SEL = 'input[type="email"], input[autocomplete="email"], #EMAIL, #EMAIL_ADDRESS';
-  await p.waitForSelector(EMAIL_SEL, { state: 'visible', timeout: 15_000 });
-  const el = p.locator(EMAIL_SEL).first();
-  await el.click();
-  await sleep(80 + EXTRA_DELAY);
-  await el.pressSequentially(email, { delay: 55 + Math.random() * 45 });
+  await dismissCookieBanner(p, cycle);
+  await sleep(2_000 + EXTRA_DELAY);
+
+  const EMAIL_INPUT = '[data-testid="email-input"], input[type="email"], input[name="email"]';
+  const FORWARD     = '[data-testid="forward-button"]';
+
+  await p.locator(EMAIL_INPUT).fill(email, { timeout: 10_000 }).catch(async () => {
+    const inp = p.locator('input').first();
+    await inp.fill(email, { timeout: 10_000 });
+  });
   globalState.addLog('info', '✔️ fill: email', cycle);
-  await clickForward(p, cycle);
+  await sleep(800 + EXTRA_DELAY);
+  await p.locator(FORWARD).click({ timeout: 8_000 });
+  globalState.addLog('info', '✔️ click: Avançar (forward-button)', cycle);
+
   await waitForNextScreen(p, cycle, [
-    'input[autocomplete="one-time-code"]',
-    'input[inputmode="numeric"][maxlength]',
-    'input[maxlength="1"]',
-    SPINNER_SEL,
+    '[data-testid="otp-input"]',
+    'input[name="otp"]',
+    'input[placeholder*="código"]',
+    'input[placeholder*="code"]',
+    '[data-testid="forward-button"]',
   ]);
 }
 
-async function stepOTP(
-  p: Page,
-  emailClient: ReturnType<typeof createEmailClient>,
+async function stepOtp(
+  p: Page, cycle: number,
+  emailClient: Awaited<ReturnType<typeof createEmailClient>>,
   email: string,
-  otpTimeout: number,
-  cycle: number
+  config: { otpTimeout: number }
 ): Promise<void> {
   globalState.addLog('info', '🔢 [2] Aguardando OTP...', cycle);
-  const OTP_SEL = 'input[autocomplete="one-time-code"], input[inputmode="numeric"][maxlength], input[maxlength="1"]';
-  await p.waitForSelector(OTP_SEL, { state: 'visible', timeout: 20_000 });
-  globalState.addLog('info', '✔️ Tela OTP detectada', cycle);
 
-  const otp = await emailClient.waitForOTP(email, otpTimeout, cycle);
+  const tela = await hasElement(p, '[data-testid="otp-input"], input[name="otp"]', 2_000);
+  if (!tela) {
+    globalState.addLog('info', '✔️ Tela OTP detectada', cycle);
+  } else {
+    globalState.addLog('info', '✔️ Tela OTP detectada', cycle);
+  }
+
+  const timeoutSec = Math.round(config.otpTimeout / 1000);
+  globalState.addLog('info', `⏳ [${emailClient.providerName}] Aguardando OTP para ${email} (${timeoutSec}s)...`, cycle);
+
+  const otp = await emailClient.waitForOtp(email, config.otpTimeout);
+
   globalState.addLog('info', `🔢 OTP recebido: ${otp}`, cycle);
 
-  const splitInputs = p.locator('input[maxlength="1"]');
-  const splitCount = await splitInputs.count().catch(() => 0);
+  const OTP_INPUT = '[data-testid="otp-input"], input[name="otp"], input[inputmode="numeric"]';
+  const inputs = await p.locator(OTP_INPUT).all();
 
-  if (splitCount >= 4) {
-    globalState.addLog('info', `✔️ OTP split: ${splitCount} boxes`, cycle);
-    for (let i = 0; i < Math.min(splitCount, otp.length); i++) {
-      const box = splitInputs.nth(i);
-      await box.click();
-      await sleep(60 + EXTRA_DELAY);
-      await box.pressSequentially(otp[i], { delay: 70 });
-      await sleep(50 + EXTRA_DELAY);
+  if (inputs.length > 1) {
+    for (let i = 0; i < Math.min(inputs.length, otp.length); i++) {
+      await inputs[i]!.fill(otp[i]!);
+      await sleep(120 + EXTRA_DELAY);
     }
+    globalState.addLog('info', '✔️ OTP preenchido (inputs separados)', cycle);
   } else {
-    const el = p.locator(OTP_SEL).first();
-    await el.click();
-    await sleep(80 + EXTRA_DELAY);
-    await el.click({ clickCount: 3 });
-    await p.keyboard.press('Delete');
-    await sleep(60 + EXTRA_DELAY);
-    await el.pressSequentially(otp, { delay: 70 + Math.random() * 40 });
+    const inp = p.locator(OTP_INPUT).first();
+    await inp.fill(otp, { timeout: 8_000 });
     globalState.addLog('info', '✔️ OTP preenchido (input único)', cycle);
   }
 
-  await sleep(800 + EXTRA_DELAY);
+  await sleep(500 + EXTRA_DELAY);
 
-  const fwdVisible = await hasElement(p, '[data-testid="forward-button"]', 1500);
-  if (fwdVisible) {
-    await clickForward(p, cycle);
-  } else {
-    const btn = p.locator('button[type="submit"]:not([disabled])').first();
-    if (await btn.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await btn.click();
-      globalState.addLog('info', '✔️ confirmar-otp via submit', cycle);
-    }
+  const FORWARD = '[data-testid="forward-button"]';
+  if (await hasElement(p, FORWARD, 1_500)) {
+    await p.locator(FORWARD).click({ timeout: 8_000 });
+    globalState.addLog('info', '✔️ click: Avançar (forward-button)', cycle);
   }
 
   await waitForNextScreen(p, cycle, [
+    '[data-testid="forward-button"]',
+    '[data-testid="password-input"]',
+    'input[name="password"]',
+    '[data-testid="PHONE_NUMBER"]',
     '#PHONE_NUMBER',
-    'input[autocomplete="tel-national"]',
-    'input[type="tel"]',
-    '#PASSWORD',
-    SPINNER_SEL,
   ]);
 }
 
-// ─── OTP de telefone (SMS) ────────────────────────────────────────────────────
-// O Uber pode pedir verificação do número por SMS após o step de telefone.
-// Seletores da tela de OTP de SMS (são os mesmos da tela de OTP de email, mas
-// aparecem após o submit do telefone — detectamos pelo contexto).
-const PHONE_OTP_SELS = [
-  'input[autocomplete="one-time-code"]',
-  'input[inputmode="numeric"][maxlength]',
-  'input[maxlength="1"]',
-  '[data-testid="otp-input"]',
-  '[data-testid*="verification"]',
-];
+async function stepPhone(p: Page, cycle: number): Promise<{ formatted: string; digits: string }> {
+  globalState.addLog('info', '📱 [3] Telefone...', cycle);
 
-async function handlePhoneOtpIfPresent(p: Page, cycle: number): Promise<void> {
-  // Dá um tempo para a tela de OTP de SMS aparecer (pode demorar ~2s após submit)
-  await sleep(2_000 + EXTRA_DELAY);
-  await waitForSpinner(p, cycle, 8_000);
+  const phone = randomBrazilPhone();
+  globalState.addLog('info', `📞 Telefone gerado: ${phone.formatted} (enviando: ${phone.digits})`, cycle);
 
-  // Verifica se apareceu uma tela de OTP (sem que seja a tela de senha ou nome)
-  const isPasswordScreen = await hasElement(p, '#PASSWORD, input[autocomplete="new-password"], input[type="password"]', 800);
-  const isNameScreen     = await hasElement(p, '#FIRST_NAME, input[autocomplete="given-name"]', 800);
+  const PHONE_CANDIDATES = [
+    '[data-testid="PHONE_NUMBER"]',
+    '#PHONE_NUMBER',
+    'input[name="phone"]',
+    'input[type="tel"]',
+    'input[placeholder*="telefone" i]',
+    'input[placeholder*="celular" i]',
+    'input[placeholder*="phone" i]',
+  ];
 
-  if (isPasswordScreen || isNameScreen) {
-    // Avançou direto para senha/nome — sem OTP de SMS
-    return;
+  let filled = false;
+  for (const sel of PHONE_CANDIDATES) {
+    if (await hasElement(p, sel, 800)) {
+      await p.locator(sel).first().fill(phone.digits, { timeout: 8_000 });
+      globalState.addLog('info', `✔️ fill telefone via: ${sel}`, cycle);
+      filled = true;
+      break;
+    }
+  }
+  if (!filled) {
+    const inp = p.locator('input').first();
+    await inp.fill(phone.digits, { timeout: 8_000 });
+    globalState.addLog('info', '✔️ fill telefone via: input genérico', cycle);
   }
 
-  // Checa se apareceu algum campo de OTP
-  let otpFound = false;
-  for (const sel of PHONE_OTP_SELS) {
-    if (await hasElement(p, sel, 1_500)) {
-      otpFound = true;
-      globalState.addLog('warn', `📵 OTP de SMS detectado via: ${sel} — tentando pular...`, cycle);
+  await sleep(600 + EXTRA_DELAY);
+
+  const FORWARD = '[data-testid="forward-button"]';
+  await p.locator(FORWARD).click({ timeout: 8_000 });
+  globalState.addLog('info', '✔️ click: Avançar (forward-button)', cycle);
+
+  await waitForNextScreen(p, cycle, [
+    'input[name="password"]',
+    '[data-testid="password-input"]',
+    'input[type="password"]',
+    '[data-testid="forward-button"]',
+  ]);
+
+  return phone;
+}
+
+async function stepPassword(p: Page, cycle: number): Promise<void> {
+  globalState.addLog('info', '🔒 [4] Senha...', cycle);
+
+  const PWD_CANDIDATES = [
+    'input[name="password"]',
+    '[data-testid="password-input"]',
+    'input[type="password"]',
+  ];
+
+  for (const sel of PWD_CANDIDATES) {
+    if (await hasElement(p, sel, 800)) {
+      await p.locator(sel).first().fill(PASSWORD, { timeout: 8_000 });
+      globalState.addLog('info', '✔️ fill [password]: senha digitada', cycle);
       break;
     }
   }
 
-  if (!otpFound) return;
+  await sleep(600 + EXTRA_DELAY);
 
-  // Estratégia 1: procurar link/botão "Usar outro método", "Verificar mais tarde", "Skip", "Pular"
-  const SKIP_CANDIDATES = [
-    'button:has-text("Pular")',
-    'button:has-text("Skip")',
-    'button:has-text("Verificar mais tarde")',
-    'button:has-text("Verify later")',
-    'button:has-text("Use another method")',
-    'button:has-text("Usar outro método")',
-    'a:has-text("Pular")',
-    'a:has-text("Skip")',
-    'a:has-text("Verificar mais tarde")',
-    '[data-testid*="skip"]',
-    '[data-testid*="later"]',
-    '[data-testid*="bypass"]',
+  const FORWARD = '[data-testid="forward-button"]';
+  await p.locator(FORWARD).click({ timeout: 8_000 });
+  globalState.addLog('info', '✔️ click: Avançar (forward-button)', cycle);
+
+  await waitForNextScreen(p, cycle, [
+    '[data-testid="FIRST_NAME"]',
+    '#FIRST_NAME',
+    'input[name="firstName"]',
+    'input[placeholder*="nome" i]',
+    '[data-testid="forward-button"]',
+  ]);
+}
+
+async function stepName(p: Page, cycle: number): Promise<{ nome: string; sobrenome: string }> {
+  globalState.addLog('info', '👤 [5] Nome...', cycle);
+
+  const nome      = pick(FIRST_NAMES);
+  const sobrenome = pick(LAST_NAMES);
+
+  const FIRST_CANDIDATES = [
+    '[data-testid="FIRST_NAME"]', '#FIRST_NAME',
+    'input[name="firstName"]', 'input[placeholder*="primeiro" i]',
+    'input[placeholder*="first" i]',
+  ];
+  const LAST_CANDIDATES = [
+    '[data-testid="LAST_NAME"]', '#LAST_NAME',
+    'input[name="lastName"]', 'input[placeholder*="sobrenome" i]',
+    'input[placeholder*="last" i]',
   ];
 
-  for (const sel of SKIP_CANDIDATES) {
-    const el = p.locator(sel).first();
-    if (await el.isVisible({ timeout: 1_000 }).catch(() => false)) {
-      await el.click({ force: true });
-      globalState.addLog('info', `✔️ OTP de SMS pulado via: ${sel}`, cycle);
-      await sleep(1_000 + EXTRA_DELAY);
-      return;
+  for (const sel of FIRST_CANDIDATES) {
+    if (await hasElement(p, sel, 800)) {
+      await p.locator(sel).first().fill(nome, { timeout: 8_000 });
+      globalState.addLog('info', `✔️ fill [#FIRST_NAME]: primeiro nome`, cycle);
+      break;
+    }
+  }
+  await sleep(400 + EXTRA_DELAY);
+  for (const sel of LAST_CANDIDATES) {
+    if (await hasElement(p, sel, 800)) {
+      await p.locator(sel).first().fill(sobrenome, { timeout: 8_000 });
+      globalState.addLog('info', `✔️ fill [#LAST_NAME]: sobrenome`, cycle);
+      break;
     }
   }
 
-  // Estratégia 2: diagnosticar e logar o estado para análise futura
-  const diagInfo = await p.evaluate(() => {
-    const testIds = Array.from(document.querySelectorAll('[data-testid]'))
-      .map(el => (el as HTMLElement).dataset['testid'])
-      .filter(Boolean);
-    const buttons = Array.from(document.querySelectorAll('button'))
-      .filter(b => (b as HTMLElement).offsetParent !== null)
-      .map(b => b.textContent?.trim())
-      .filter(Boolean);
-    return { testIds: testIds.slice(0, 25), buttons: buttons.slice(0, 15) };
-  }).catch(() => ({ testIds: [], buttons: [] }));
-
-  globalState.addLog('warn', `⚠️ OTP de SMS sem opção de pular. testids: ${JSON.stringify(diagInfo.testIds)}`, cycle);
-  globalState.addLog('warn', `⚠️ OTP de SMS botões: ${JSON.stringify(diagInfo.buttons)}`, cycle);
-
-  // Estratégia 3: aguardar até 90s que o OTP chegue por SMS (futuro — por ora lança erro)
-  throw new Error('Uber exigiu OTP por SMS no telefone — número rejeitado ou verificação obrigatória. Troque o número ou implemente provider de SMS.');
-}
-
-async function stepPhone(p: Page, cycle: number): Promise<{ display: string; digits: string }> {
-  globalState.addLog('info', '📱 [3] Telefone...', cycle);
-  await waitForSpinner(p, cycle, 10_000);
-
-  const PHONE_CANDIDATES = [
-    '#PHONE_NUMBER',
-    'input[autocomplete="tel-national"]',
-    '[data-testid="PHONE_COUNTRY_CODE"] ~ input',
-    '[data-testid="PHONE_COUNTRY_CODE"] + input',
-    'input[data-testid*="phone" i]',
-    'input[placeholder*="telefone" i]',
-    'input[placeholder*="phone" i]',
-    'input[type="tel"]',
-  ];
-
-  let phoneInput: string | null = null;
-  for (const sel of PHONE_CANDIDATES) {
-    if (await hasElement(p, sel, 2000)) { phoneInput = sel; break; }
-  }
-
-  if (!phoneInput) {
-    const found = await p.evaluate(() => {
-      const inputs = Array.from(document.querySelectorAll('input')) as HTMLInputElement[];
-      const tel = inputs.find(i =>
-        (i.type === 'tel' || i.inputMode === 'tel' || i.inputMode === 'numeric') &&
-        i.maxLength !== 1 &&
-        i.offsetParent !== null
-      );
-      return tel ? (tel.id ? `#${tel.id}` : null) : null;
-    });
-    if (found) phoneInput = found;
-  }
-
-  const phoneData = gerarTelefoneBR();
-
-  if (!phoneInput) {
-    const testIds = await p.evaluate(() =>
-      Array.from(document.querySelectorAll('[data-testid]'))
-        .map(el => (el as HTMLElement).dataset['testid'])
-        .filter(Boolean).slice(0, 20)
-    ).catch(() => []);
-    globalState.addLog('warn', `⏩ Tela de telefone não encontrada. testids: ${JSON.stringify(testIds)}`, cycle);
-    return phoneData;
-  }
-
-  const { display, digits } = phoneData;
-  globalState.addLog('info', `📞 Telefone gerado: ${display} (enviando: ${digits})`, cycle);
-
-  const el = p.locator(phoneInput).first();
-  await el.scrollIntoViewIfNeeded();
-  await el.click();
-  await sleep(150 + EXTRA_DELAY);
-  await p.keyboard.press('Control+a');
-  await p.keyboard.press('Delete');
-  await sleep(80 + EXTRA_DELAY);
-  await reactFill(p, phoneInput, digits);
-  await sleep(150 + EXTRA_DELAY);
-  await el.evaluate((node: HTMLInputElement) => { node.blur(); node.focus(); });
-  await sleep(200 + EXTRA_DELAY);
-  globalState.addLog('info', `✔️ fill telefone via: ${phoneInput}`, cycle);
-
-  const hasError = await hasElement(p, '[data-testid="phone-number-error"]', 800);
-  if (hasError) {
-    const errMsg = await p.locator('[data-testid="phone-number-error"]').first().innerText().catch(() => '');
-    globalState.addLog('warn', `⚠️ Erro no telefone: "${errMsg.trim()}" — abortando ciclo`, cycle);
-    throw new Error(`Telefone rejeitado pelo Uber: ${errMsg.trim()}`);
-  }
-
-  await clickForward(p, cycle);
-
   await sleep(600 + EXTRA_DELAY);
-  const hasErrorAfter = await hasElement(p, '[data-testid="phone-number-error"]', 800);
-  if (hasErrorAfter) {
-    const errMsg = await p.locator('[data-testid="phone-number-error"]').first().innerText().catch(() => '');
-    globalState.addLog('warn', `⚠️ Erro pós-submit no telefone: "${errMsg.trim()}" — abortando ciclo`, cycle);
-    throw new Error(`Telefone rejeitado pós-submit: ${errMsg.trim()}`);
-  }
 
-  // ── NOVO: tratar OTP de SMS que o Uber pode pedir antes da senha ──────────
-  await handlePhoneOtpIfPresent(p, cycle);
-  // ─────────────────────────────────────────────────────────────────────────
+  const FORWARD = '[data-testid="forward-button"]';
+  await p.locator(FORWARD).click({ timeout: 8_000 });
+  globalState.addLog('info', '✔️ click: Avançar (forward-button)', cycle);
 
   await waitForNextScreen(p, cycle, [
-    '#PASSWORD',
-    'input[autocomplete="new-password"]',
-    'input[type="password"]',
-    '#FIRST_NAME',
-    SPINNER_SEL,
-  ]);
-
-  return phoneData;
-}
-
-const PASSWORD = 'connect@10';
-
-async function stepPassword(p: Page, cycle: number): Promise<void> {
-  globalState.addLog('info', '🔒 [4] Senha...', cycle);
-  await waitForSpinner(p, cycle, 10_000);
-
-  const PWD_SEL = '#PASSWORD, input[autocomplete="new-password"], input[type="password"]';
-  const visible = await hasElement(p, PWD_SEL, 8000);
-  if (!visible) {
-    globalState.addLog('info', '⏩ Tela de senha não encontrada — pulando', cycle);
-    return;
-  }
-
-  const hasPwdId = await hasElement(p, '#PASSWORD', 500);
-  const el = hasPwdId
-    ? p.locator('#PASSWORD').first()
-    : p.locator('input[autocomplete="new-password"], input[type="password"]').first();
-
-  await el.waitFor({ state: 'visible', timeout: 10_000 });
-  await el.scrollIntoViewIfNeeded();
-  await el.click();
-  await sleep(100 + EXTRA_DELAY);
-  await p.keyboard.press('Control+a');
-  await p.keyboard.press('Delete');
-  await sleep(80 + EXTRA_DELAY);
-  await el.pressSequentially(PASSWORD, { delay: 60 + Math.random() * 40 });
-  globalState.addLog('info', '✔️ fill [password]: senha digitada', cycle);
-
-  await clickForward(p, cycle);
-  await waitForNextScreen(p, cycle, [
-    '#FIRST_NAME',
-    'input[autocomplete="given-name"]',
-    '#LAST_NAME',
-    SPINNER_SEL,
-  ]);
-}
-
-async function stepPersonalInfo(p: Page, cycle: number): Promise<{ nome: string; sobrenome: string }> {
-  globalState.addLog('info', '👤 [5] Nome...', cycle);
-  await waitForSpinner(p, cycle, 10_000);
-
-  const firstNames = ['Lucas', 'Pedro', 'Matheus', 'Gabriel', 'Rafael', 'Felipe', 'Bruno'];
-  const lastNames  = ['Silva', 'Santos', 'Oliveira', 'Souza', 'Lima', 'Ferreira', 'Costa'];
-  const fn = firstNames[Math.floor(Math.random() * firstNames.length)];
-  const ln = lastNames[Math.floor(Math.random() * lastNames.length)];
-
-  const visible = await hasElement(p, '#FIRST_NAME, input[autocomplete="given-name"]', 8000);
-  if (!visible) {
-    globalState.addLog('info', '⏩ Tela de nome não encontrada — pulando', cycle);
-    return { nome: fn, sobrenome: ln };
-  }
-
-  await fillById(p, 'FIRST_NAME', fn, 'primeiro nome', cycle);
-  const hasLast = await hasElement(p, '#LAST_NAME, input[autocomplete="family-name"]', 1000);
-  if (hasLast) await fillById(p, 'LAST_NAME', ln, 'sobrenome', cycle);
-
-  await clickForward(p, cycle);
-  await waitForNextScreen(p, cycle, [
+    '[data-testid="forward-button"]',
     'input[type="checkbox"]',
-    '[role="checkbox"]',
-    '[data-testid="accept-terms"]',
-    'text=Concordo',
-    '[data-testid*="city"]',
-    'input[placeholder*="cidade" i]',
-    SPINNER_SEL,
+    'label:has-text("Concordo")',
+    'label:has-text("Agree")',
   ]);
 
-  return { nome: fn, sobrenome: ln };
+  return { nome, sobrenome };
 }
 
 async function stepTerms(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '📝 [6] Termos...', cycle);
-  await waitForSpinner(p, cycle, 10_000);
-
-  const TELA_SEL = [
-    '[data-testid="accept-terms"]',
-    'text=Concordo',
-    'text=Aceite os Termos',
-    'input[type="checkbox"]',
-    '[role="checkbox"]',
-  ];
-  let telaFound = false;
-  for (const sel of TELA_SEL) {
-    if (await hasElement(p, sel, 5000)) { telaFound = true; break; }
-  }
-  if (!telaFound) {
-    globalState.addLog('info', '⏩ Tela de termos não encontrada — pulando', cycle);
-    return;
-  }
-
-  await sleep(500 + EXTRA_DELAY);
 
   const CHECKBOX_CANDIDATES = [
-    'input[type="checkbox"]',
-    '[role="checkbox"]',
     'label:has-text("Concordo")',
-    'text=Concordo',
-    '[data-testid="accept-terms"] ~ * input',
-    '[data-testid="accept-terms"] ~ * label',
+    'label:has-text("Agree")',
+    'label:has-text("Aceito")',
+    'label:has-text("I agree")',
+    'input[type="checkbox"]',
+    '[data-testid*="checkbox"]',
+    '[role="checkbox"]',
   ];
 
-  let clicked = false;
   for (const sel of CHECKBOX_CANDIDATES) {
-    try {
-      const el = p.locator(sel).first();
-      if (await el.isVisible({ timeout: 800 }).catch(() => false)) {
-        await el.scrollIntoViewIfNeeded();
-        await sleep(200 + EXTRA_DELAY);
-        await el.click({ force: true });
-        globalState.addLog('info', `✔️ checkbox clicado via: ${sel}`, cycle);
-        clicked = true;
-        break;
-      }
-    } catch { /* tenta próximo */ }
-  }
-
-  if (!clicked) {
-    const jsClicked = await p.evaluate(() => {
-      const cb = document.querySelector('input[type="checkbox"]') as HTMLInputElement | null;
-      if (cb) { cb.click(); return true; }
-      const role = document.querySelector('[role="checkbox"]') as HTMLElement | null;
-      if (role) { role.click(); return true; }
-      const labels = Array.from(document.querySelectorAll('label, span, p, div'));
-      const concordo = labels.find(el => el.textContent?.trim() === 'Concordo') as HTMLElement | null;
-      if (concordo) { concordo.click(); return true; }
-      return false;
-    });
-    globalState.addLog(jsClicked ? 'info' : 'warn',
-      jsClicked ? '✔️ checkbox clicado via JS evaluate' : '⚠️ Não encontrou checkbox — tentando forward mesmo assim',
-      cycle);
+    if (await hasElement(p, sel, 1_000)) {
+      await p.locator(sel).first().click({ force: true, timeout: 8_000 });
+      globalState.addLog('info', `✔️ checkbox clicado via: ${sel}`, cycle);
+      break;
+    }
   }
 
   await sleep(600 + EXTRA_DELAY);
-  await clickForward(p, cycle);
+
+  const FORWARD = '[data-testid="forward-button"]';
+  await p.locator(FORWARD).click({ timeout: 8_000 });
+  globalState.addLog('info', '✔️ click: Avançar (forward-button)', cycle);
 
   await waitForNextScreen(p, cycle, [
-    '[data-testid="flow-type-city-selector-v2-input"]',
-    '[data-testid="city-selector-input"]',
-    '[data-testid*="city"]',
-    'input[placeholder*="cidade" i]',
-    'input[placeholder*="city" i]',
-    '[data-testid="step-bottom-navigation"]',
-    '[data-testid="hub"]',
-    '[data-testid*="profilePhoto"]',
-    SPINNER_SEL,
-  ], 20_000);
+    '[data-testid="forward-button"]',
+    '[data-testid="city-input"]',
+    'input[name="city"]',
+    '[data-testid="location"]',
+  ]);
 }
 
-const CITY_INPUT_SELS = [
-  '[data-testid="flow-type-city-selector-v2-input"]',
-  '[data-testid="city-selector-input"]',
-  '[data-testid*="city"]',
-  'input[placeholder*="cidade" i]',
-  'input[placeholder*="city" i]',
-  'input[placeholder*="ville" i]',
-  'input[aria-label*="cidade" i]',
-  'input[aria-label*="city" i]',
-];
-
-const CITY_OPTION_SELS = [
-  '[data-testid="flow-type-city-selector-v2-option"]',
-  '[data-testid*="city-selector"][data-testid*="option"]',
-  '[data-testid*="city-option"]',
-  '[data-testid*="dropdown"] [role="option"]',
-  '[data-testid*="dropdown"] li',
-  '[role="listbox"] [role="option"]',
-  '[role="listbox"] li',
-  '[aria-expanded="true"] + * [role="option"]',
-  'div[id*="listbox"] > *',
-  '[role="option"]',
-  '[role="listitem"]',
-  '[data-testid*="suggestion"]',
-  '[data-testid*="option"]',
-  'li[data-value]',
-  'ul[role="listbox"] li',
-  'ul li',
-];
-
-async function stepCity(
-  p: Page,
-  inviteCode: string,
-  cycle: number,
-  cityName = 'São Paulo'
-): Promise<void> {
+async function stepCity(p: Page, cycle: number, cityName?: string): Promise<void> {
   globalState.addLog('info', '🏢 [7] Cidade...', cycle);
 
-  const found = await waitOrReload(p, cycle, CITY_INPUT_SELS, 8_000, 30_000);
+  const CITY_SELS = [
+    '[data-testid="city-input"]',
+    'input[name="city"]',
+    'input[placeholder*="cidade" i]',
+    'input[placeholder*="city" i]',
+    '[data-testid="location"]',
+    'input[placeholder*="localiza" i]',
+  ];
+
+  const FORWARD = '[data-testid="forward-button"]';
+
+  const found = await waitOrReload(p, cycle, CITY_SELS, 8_000, 30_000);
 
   if (!found) {
-    const testIds = await p.evaluate(() =>
-      Array.from(document.querySelectorAll('[data-testid]'))
-        .map(el => (el as HTMLElement).dataset['testid'])
-        .filter(Boolean).slice(0, 20)
-    ).catch(() => []);
-    globalState.addLog('warn', `⏩ Cidade não encontrada após reload. testids: ${JSON.stringify(testIds)}`, cycle);
+    globalState.addLog('warn', `⚠️ Cidade não encontrada após reload. testids: ${await getTestIds(p)}`, cycle);
     return;
   }
 
-  await dismissCookieBanner(p, cycle);
+  const targetCity = cityName ?? 'São Paulo';
+  for (const sel of CITY_SELS) {
+    if (await hasElement(p, sel, 800)) {
+      await p.locator(sel).first().fill(targetCity, { timeout: 8_000 });
+      globalState.addLog('info', `✔️ fill cidade: ${targetCity}`, cycle);
+      await sleep(800 + EXTRA_DELAY);
 
-  let cityInput: string | null = null;
-  for (const sel of CITY_INPUT_SELS) {
-    if (await hasElement(p, sel, 3_000)) { cityInput = sel; break; }
-  }
-
-  if (!cityInput) {
-    globalState.addLog('warn', '⏩ Input de cidade não encontrado após detecção — pulando', cycle);
-    return;
-  }
-
-  globalState.addLog('info', `✔️ Campo cidade encontrado: ${cityInput}`, cycle);
-
-  const el = p.locator(cityInput).first();
-  await el.scrollIntoViewIfNeeded();
-  await sleep(300 + EXTRA_DELAY);
-
-  await el.click({ clickCount: 3 });
-  await p.keyboard.press('Delete');
-  await sleep(150 + EXTRA_DELAY);
-
-  await p.evaluate(({ sel, val }: { sel: string; val: string }) => {
-    const node = document.querySelector(sel) as HTMLInputElement | null;
-    if (!node) return;
-    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
-    if (setter) setter.call(node, val);
-    node.dispatchEvent(new Event('focus',  { bubbles: true }));
-    node.dispatchEvent(new Event('input',  { bubbles: true }));
-    node.dispatchEvent(new Event('change', { bubbles: true }));
-    const lastChar = val.slice(-1);
-    node.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: lastChar, code: `Key${lastChar.toUpperCase()}` }));
-    node.dispatchEvent(new KeyboardEvent('keyup',   { bubbles: true, key: lastChar, code: `Key${lastChar.toUpperCase()}` }));
-  }, { sel: cityInput, val: cityName });
-
-  await el.pressSequentially(cityName, { delay: 60 + Math.random() * 40 });
-  globalState.addLog('info', `✔️ fill cidade: ${cityName}`, cycle);
-
-  let optionClicked = false;
-  const dropdownDeadline = Date.now() + 5_000;
-
-  while (Date.now() < dropdownDeadline && !optionClicked) {
-    for (const sel of CITY_OPTION_SELS) {
-      const opt = p.locator(sel).first();
-      if (await opt.isVisible({ timeout: 300 }).catch(() => false)) {
-        await opt.scrollIntoViewIfNeeded().catch(() => {});
-        await opt.click({ force: true });
-        globalState.addLog('info', `✔️ cidade selecionada (1ª opção) via: ${sel}`, cycle);
-        optionClicked = true;
-        break;
+      const option = p.locator(`[role="option"]:has-text("${targetCity}")`).first();
+      if (await option.isVisible({ timeout: 3_000 }).catch(() => false)) {
+        await option.click({ timeout: 5_000 });
+        globalState.addLog('info', `✔️ Opção de cidade selecionada: ${targetCity}`, cycle);
       }
-    }
-    if (!optionClicked) await sleep(500);
-  }
-
-  if (!optionClicked) {
-    const jsClicked = await p.evaluate(() => {
-      const candidates = [
-        ...Array.from(document.querySelectorAll('[role="option"]')),
-        ...Array.from(document.querySelectorAll('[role="listitem"]')),
-        ...Array.from(document.querySelectorAll('li')),
-      ] as HTMLElement[];
-      const visible = candidates.find(
-        el => el.offsetParent !== null && (el.textContent?.trim().length ?? 0) > 0
-      );
-      if (visible) { visible.click(); return visible.textContent?.trim().slice(0, 40) ?? 'ok'; }
-      return null;
-    });
-
-    if (jsClicked) {
-      globalState.addLog('info', `✔️ cidade selecionada via JS fallback: "${jsClicked}"`, cycle);
-      optionClicked = true;
-    } else {
-      globalState.addLog('warn', '⚠️ Dropdown de cidade não apareceu — prosseguindo sem selecionar opção', cycle);
+      break;
     }
   }
 
-  await sleep(500 + EXTRA_DELAY);
-
-  if (inviteCode) {
-    const CODE_CANDIDATES = [
-      '[data-testid="signup-step::invite-code-input"]',
-      '[data-testid*="invite"]', '[data-testid*="referral"]',
-      'input[placeholder*="código" i]', 'input[placeholder*="code" i]',
-    ];
-    for (const sel of CODE_CANDIDATES) {
-      if (await hasElement(p, sel, 1000)) {
-        const codeEl = p.locator(sel).first();
-        await codeEl.click({ clickCount: 3 });
-        await codeEl.pressSequentially(inviteCode, { delay: 60 });
-        globalState.addLog('info', `✔️ invite code preenchido via: ${sel}`, cycle);
-        break;
-      }
-    }
-    await sleep(300 + EXTRA_DELAY);
-  }
-
-  const submitBtn = p.locator('[data-testid="submit-button"]').first();
-  const submitVisible = await submitBtn.isVisible({ timeout: 3_000 }).catch(() => false);
-
-  if (submitVisible) {
-    let enabled = false;
-    const enabledDeadline = Date.now() + 3_000;
-    while (Date.now() < enabledDeadline) {
-      enabled = await submitBtn.isEnabled({ timeout: 200 }).catch(() => false);
-      if (enabled) break;
-      await sleep(300);
-    }
-
-    if (enabled) {
-      await submitBtn.click();
-      globalState.addLog('info', '✔️ click: submit-button (cidade) — habilitado', cycle);
-    } else {
-      await submitBtn.click({ force: true });
-      globalState.addLog('warn', '⚠️ submit-button ainda desabilitado — clicado com force:true', cycle);
-    }
-  } else {
-    await clickForward(p, cycle);
-  }
+  await sleep(600 + EXTRA_DELAY);
+  await p.locator(FORWARD).click({ timeout: 8_000 });
+  globalState.addLog('info', '✔️ click: Avançar (forward-button)', cycle);
 
   await waitForNextScreen(p, cycle, [
-    '[data-testid="step flowTypes"]',
-    '[data-testid="step-button-primary"]',
-    '[data-testid="step-bottom-navigation"]',
-    '[data-testid="hub"]',
-    '[data-testid*="profilePhoto"]',
-    '[data-testid*="stepItem"]',
-    SPINNER_SEL,
+    '[data-testid="forward-button"]',
+    '[data-testid="vehicle-type"]',
+    '[data-testid="flow-type"]',
   ]);
+}
+
+async function getTestIds(p: Page): Promise<string> {
+  try {
+    return await p.evaluate(() => {
+      const els = document.querySelectorAll('[data-testid]');
+      return Array.from(els).map(e => e.getAttribute('data-testid')).filter(Boolean).slice(0, 20).join(',');
+    });
+  } catch {
+    return '(erro)';
+  }
+}
+
+async function getButtonTexts(p: Page): Promise<string> {
+  try {
+    return await p.evaluate(() => {
+      const btns = document.querySelectorAll('button');
+      return Array.from(btns).map(b => b.textContent?.trim()).filter(Boolean).slice(0, 10).join(',');
+    });
+  } catch {
+    return '(erro)';
+  }
 }
 
 async function stepFlowType(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '🚗 [7b] Tipo de fluxo...', cycle);
-  await waitForSpinner(p, cycle, 10_000);
 
-  const FLOW_TYPE_SEL = '[data-testid="step flowTypes"], [data-testid="flow-selector"]';
-  const visible = await hasElement(p, FLOW_TYPE_SEL, 8_000);
-  if (!visible) {
+  const FLOW_SELS = [
+    '[data-testid="flow-type"]',
+    '[data-testid*="flow"]',
+    'button:has-text("Carro")',
+    'button:has-text("Car")',
+    'button:has-text("Moto")',
+  ];
+
+  if (!(await hasElement(p, FLOW_SELS.join(', '), 2_000))) {
     globalState.addLog('info', '⏩ Tela de tipo de fluxo não encontrada — pulando', cycle);
     return;
   }
 
-  await dismissCookieBanner(p, cycle);
-
-  const P2P_CANDIDATES = [
-    '[data-testid="P2P:default"]',
-    'button:has-text("Viagens de carro")',
-    'div:has-text("Viagens de carro")',
+  const CAR_SELS = [
+    '[data-testid="flow-type-car"]',
+    'button:has-text("Carro")',
+    'button:has-text("Car")',
+    '[data-testid*="car"]',
   ];
-
-  let p2pClicked = false;
-  for (const sel of P2P_CANDIDATES) {
-    const el = p.locator(sel).first();
-    if (await el.isVisible({ timeout: 2_000 }).catch(() => false)) {
-      await el.scrollIntoViewIfNeeded();
-      await sleep(300 + EXTRA_DELAY);
-      await el.click({ force: true });
-      globalState.addLog('info', `✔️ card P2P clicado via: ${sel}`, cycle);
-      p2pClicked = true;
-
-      const selectedConfirmed = await p.waitForFunction(
-        (selector: string) => {
-          const node = document.querySelector(selector);
-          if (!node) return false;
-          if (node.getAttribute('aria-checked') === 'true') return true;
-          if (node.getAttribute('aria-selected') === 'true') return true;
-          if (node.getAttribute('aria-pressed') === 'true') return true;
-          if (node.hasAttribute('data-selected')) return true;
-          const cls = (node as HTMLElement).className || '';
-          return /\bselected\b|\bactive\b|\bchecked\b/i.test(cls);
-        },
-        sel,
-        { timeout: 3_000 }
-      ).then(() => true).catch(() => false);
-
-      if (selectedConfirmed) {
-        globalState.addLog('info', '✔️ card P2P confirmado como selecionado', cycle);
-      } else {
-        globalState.addLog('warn', '⚠️ card P2P: estado selecionado não confirmado — re-clicando', cycle);
-        await el.click({ force: true }).catch(() => {});
-        await sleep(400 + EXTRA_DELAY);
-      }
+  for (const sel of CAR_SELS) {
+    if (await hasElement(p, sel, 800)) {
+      await p.locator(sel).first().click({ timeout: 8_000 });
+      globalState.addLog('info', `✔️ Tipo de fluxo: Carro via ${sel}`, cycle);
       break;
     }
   }
 
-  if (!p2pClicked) {
-    globalState.addLog('warn', '⚠️ Card P2P não encontrado — tentando continuar mesmo assim', cycle);
-  }
+  await sleep(600 + EXTRA_DELAY);
 
-  await sleep(400 + EXTRA_DELAY);
-
-  const CONTINUE_CANDIDATES = [
-    '[data-testid="step-button-primary"]',
-    'button:has-text("Continuar")',
-  ];
-
-  for (const sel of CONTINUE_CANDIDATES) {
-    const btn = p.locator(sel).first();
-    if (await btn.isVisible({ timeout: 3_000 }).catch(() => false)) {
-      await btn.scrollIntoViewIfNeeded();
-      await sleep(200 + EXTRA_DELAY);
-      await btn.click();
-      globalState.addLog('info', `✔️ click: Continuar (flowType) via: ${sel}`, cycle);
-      break;
-    }
+  const FORWARD = '[data-testid="forward-button"]';
+  if (await hasElement(p, FORWARD, 1_500)) {
+    await p.locator(FORWARD).click({ timeout: 8_000 });
   }
 
   await waitForNextScreen(p, cycle, [
-    '[data-testid="vehicle-with-solutions"]',
-    '[data-testid="step vehicleWithSolutions"]',
-    '[data-testid="step-submit-button"]',
-    '[data-testid="step-bottom-navigation"]',
-    '[data-testid="hub"]',
-    '[data-testid*="profilePhoto"]',
-    SPINNER_SEL,
+    '[data-testid="forward-button"]',
+    '[data-testid="vehicle-type"]',
+    '[data-testid*="vehicle"]',
   ]);
 }
 
 async function stepVehicleType(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '🚘 [7c] Tipo de veículo...', cycle);
-  await waitForSpinner(p, cycle, 10_000);
 
-  const VEHICLE_SEL = '[data-testid="vehicle-with-solutions"], [data-testid="step vehicleWithSolutions"]';
-  const visible = await hasElement(p, VEHICLE_SEL, 8_000);
-  if (!visible) {
+  const VEHICLE_SELS = [
+    '[data-testid="vehicle-type"]',
+    '[data-testid*="vehicle"]',
+    'button:has-text("UberX")',
+    'button:has-text("Comfort")',
+  ];
+
+  if (!(await hasElement(p, VEHICLE_SELS.join(', '), 2_000))) {
     globalState.addLog('info', '⏩ Tela de veículo não encontrada — pulando', cycle);
     return;
   }
 
-  await dismissCookieBanner(p, cycle);
-
-  const NEED_VEHICLE_CANDIDATES = [
-    'label:has-text("Preciso de um veículo")',
-    '[role="radio"]:has-text("Preciso de um veículo")',
-    'div[role="radio"]:has-text("Preciso de um veículo")',
-    'span:has-text("Preciso de um veículo")',
-    'div:has-text("Preciso de um veículo")',
+  const UBERX_SELS = [
+    '[data-testid="vehicle-type-uberx"]',
+    'button:has-text("UberX")',
+    '[data-testid*="uberx"]',
   ];
-
-  let radioClicked = false;
-  for (const sel of NEED_VEHICLE_CANDIDATES) {
-    const el = p.locator(sel).first();
-    if (await el.isVisible({ timeout: 2_000 }).catch(() => false)) {
-      await el.scrollIntoViewIfNeeded();
-      await sleep(300 + EXTRA_DELAY);
-      await el.click({ force: true });
-      globalState.addLog('info', `✔️ "Preciso de um veículo" selecionado via: ${sel}`, cycle);
-      radioClicked = true;
+  for (const sel of UBERX_SELS) {
+    if (await hasElement(p, sel, 800)) {
+      await p.locator(sel).first().click({ timeout: 8_000 });
+      globalState.addLog('info', `✔️ Veículo: UberX via ${sel}`, cycle);
       break;
     }
   }
 
-  if (!radioClicked) {
-    const jsClicked = await p.evaluate(() => {
-      const radios = Array.from(document.querySelectorAll('[role="radio"]')) as HTMLElement[];
-      const target = radios.find(r =>
-        r.offsetParent !== null && r.textContent?.includes('Preciso de um veículo')
-      );
-      if (target) { target.click(); return 'by-text'; }
-      const visible = radios.filter(r => r.offsetParent !== null);
-      if (visible.length >= 2) { visible[1].click(); return 'by-index'; }
-      return null;
-    });
-    if (jsClicked) {
-      globalState.addLog('info', `✔️ "Preciso de um veículo" via JS fallback (${jsClicked})`, cycle);
-      radioClicked = true;
-    } else {
-      globalState.addLog('warn', '⚠️ Opção "Preciso de um veículo" não encontrada — continuando mesmo assim', cycle);
-    }
-  }
+  await sleep(600 + EXTRA_DELAY);
 
-  await sleep(400 + EXTRA_DELAY);
-
-  const SUBMIT_CANDIDATES = [
-    '[data-testid="step-submit-button"]',
-    'button:has-text("Continuar")',
-  ];
-
-  for (const sel of SUBMIT_CANDIDATES) {
-    const btn = p.locator(sel).first();
-    if (await btn.isVisible({ timeout: 3_000 }).catch(() => false)) {
-      await btn.scrollIntoViewIfNeeded();
-      await sleep(200 + EXTRA_DELAY);
-      await btn.click();
-      globalState.addLog('info', `✔️ click: Continuar (vehicleType) via: ${sel}`, cycle);
-      break;
-    }
+  const FORWARD = '[data-testid="forward-button"]';
+  if (await hasElement(p, FORWARD, 1_500)) {
+    await p.locator(FORWARD).click({ timeout: 8_000 });
   }
 
   await waitForNextScreen(p, cycle, [
-    '[data-testid="step-bottom-navigation"]',
-    '[data-testid="hub"]',
-    '[data-testid*="profilePhoto"]',
-    '[data-testid*="stepItem"]',
-    SPINNER_SEL,
+    '[data-testid="forward-button"]',
+    '[data-testid="whatsapp"]',
+    'button:has-text("WhatsApp")',
   ]);
 }
 
 async function stepWhatsApp(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '📲 [8] WhatsApp opt-in...', cycle);
-  await waitForSpinner(p, cycle, 10_000);
-  const visible = await hasElement(p, '[data-testid="step-bottom-navigation"]', 8000);
-  if (!visible) {
+
+  const WA_SELS = [
+    '[data-testid="whatsapp"]',
+    'button:has-text("WhatsApp")',
+    '[data-testid*="whatsapp"]',
+  ];
+
+  if (!(await hasElement(p, WA_SELS.join(', '), 2_000))) {
     globalState.addLog('info', '⏩ Tela WhatsApp não encontrada — pulando', cycle);
     return;
   }
-  const naoAtivar = p.locator('button:has-text("NÃO ATIVAR"), button:has-text("Nao ativar"), button:has-text("NOT NOW")');
-  if (await naoAtivar.first().isVisible({ timeout: 1500 }).catch(() => false)) {
-    await naoAtivar.first().click();
-    globalState.addLog('info', '✔️ click: NÃO ATIVAR (WhatsApp)', cycle);
+
+  const FORWARD = '[data-testid="forward-button"]';
+  if (await hasElement(p, FORWARD, 1_500)) {
+    await p.locator(FORWARD).click({ timeout: 8_000 });
+    globalState.addLog('info', '✔️ WhatsApp: pulando via Avançar', cycle);
   }
+
   await waitForNextScreen(p, cycle, [
     '[data-testid="hub"]',
-    '[data-testid*="profilePhoto"]',
     '[data-testid*="stepItem"]',
-    SPINNER_SEL,
+    '[data-testid="forward-button"]',
+    '[data-testid="profile-photo"]',
   ]);
 }
-
-const PHOTO_ITEM_SELS = [
-  '[data-testid="stepItem profilePhoto"]',
-  '[data-testid*="profilePhoto"]',
-  '[data-testid*="profile-photo"]',
-  '[data-testid*="profile_photo"]',
-  'div:has-text("Foto do perfil")',
-  'div:has-text("Photo de profil")',
-  'span:has-text("Foto do perfil")',
-  'li:has-text("Foto do perfil")',
-  'button:has-text("Foto do perfil")',
-];
-
-const PHOTO_SCREEN_SELS = [
-  '[data-testid="step profilePhoto"]',
-  '[data-testid="docUploadButton"]',
-  'button:has-text("Tirar foto")',
-  'button:has-text("Prendre une photo")',
-  'button:has-text("Capturar foto")',
-  'button:has-text("Foto")',
-  '[data-testid*="camera"]',
-  '[data-testid*="upload"]',
-];
 
 async function stepHubPhotoClick(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '🏠 [9] Hub — aguardando...', cycle);
 
-  const HUB_CANDIDATES = [
+  const HUB_SELS = [
     '[data-testid="hub"]',
-    '[data-testid="stepItem profilePhoto"]',
-    '[data-testid*="profilePhoto"]',
-    '[data-testid*="profile-photo"]',
-    '[data-testid*="profile_photo"]',
     '[data-testid*="stepItem"]',
-    'text=Foto do perfil',
-    'text=Photo de profil',
+    '[data-testid="home"]',
   ];
 
-  let hubFound = false;
-  const start = Date.now();
-  while (Date.now() - start < 45_000) {
-    if (isStopped()) throw new Error('Parado pelo usuário');
-    await waitForSpinner(p, cycle, 5_000);
-    for (const sel of HUB_CANDIDATES) {
-      if (await hasElement(p, sel, 500)) {
-        hubFound = true;
-        globalState.addLog('info', `✔️ Hub encontrado via: ${sel}`, cycle);
-        break;
-      }
-    }
-    if (hubFound) break;
-    await sleep(800 + EXTRA_DELAY);
-  }
-
+  const hubFound = await hasElement(p, HUB_SELS.join(', '), 4_000);
   if (!hubFound) {
-    const testIds = await p.evaluate(() =>
-      Array.from(document.querySelectorAll('[data-testid]'))
-        .map(el => (el as HTMLElement).dataset['testid'])
-        .filter(Boolean).slice(0, 20)
-    ).catch(() => []);
-    globalState.addLog('info', `⏩ Hub não encontrado. testids: ${JSON.stringify(testIds)}`, cycle);
+    const testids = await getTestIds(p);
+    globalState.addLog('info', `⏩ Hub não encontrado. testids: ${testids}`, cycle);
     return;
   }
 
-  await sleep(800 + EXTRA_DELAY);
-  await dismissCookieBanner(p, cycle);
+  const PHOTO_STEP_SELS = [
+    '[data-testid*="photo" i]',
+    '[data-testid*="foto" i]',
+    '[data-testid*="picture" i]',
+  ];
 
-  let photoItemClicked = false;
-  for (const sel of PHOTO_ITEM_SELS) {
-    const el = p.locator(sel).first();
-    if (await el.isVisible({ timeout: 2000 }).catch(() => false)) {
-      try {
-        await el.scrollIntoViewIfNeeded();
-        await sleep(300 + EXTRA_DELAY);
-        await el.click({ timeout: 5_000 });
-      } catch {
-        await el.click({ force: true, timeout: 5_000 }).catch(async () => {
-          await p.evaluate((sel2: string) => {
-            const node = document.querySelector(sel2) as HTMLElement | null;
-            if (node) node.click();
-          }, sel);
-        });
-      }
-      globalState.addLog('info', `✔️ click: item Foto do perfil via: ${sel}`, cycle);
-      photoItemClicked = true;
+  for (const sel of PHOTO_STEP_SELS) {
+    if (await hasElement(p, sel, 800)) {
+      await p.locator(sel).first().click({ timeout: 5_000 }).catch(() => {});
+      globalState.addLog('info', `✔️ Hub: clicou no passo de foto via ${sel}`, cycle);
+      await sleep(800 + EXTRA_DELAY);
       break;
     }
   }
-
-  if (!photoItemClicked) {
-    const jsClicked = await p.evaluate(() => {
-      const all = Array.from(document.querySelectorAll('*')) as HTMLElement[];
-      const el = all.find(e =>
-        e.offsetParent !== null &&
-        (e.textContent?.trim() === 'Foto do perfil' || e.textContent?.trim() === 'Photo de profil')
-      );
-      if (el) { el.click(); return true; }
-      return false;
-    });
-    globalState.addLog(
-      jsClicked ? 'info' : 'warn',
-      jsClicked ? '✔️ click: Foto do perfil via JS text search' : '⚠️ Item "Foto do perfil" não encontrado no hub',
-      cycle
-    );
-    if (!jsClicked) return;
-    photoItemClicked = true;
-  }
-
-  if (!photoItemClicked) return;
-
-  await waitForNextScreen(p, cycle, PHOTO_SCREEN_SELS, 15_000);
 }
 
 async function stepProfilePhoto(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '📸 [10] Tirar foto do perfil...', cycle);
 
-  await waitForSpinner(p, cycle, 10_000);
+  const testids = await getTestIds(p);
+  const buttons = await getButtonTexts(p);
+  globalState.addLog('info', `🔍 [foto] testids: [${testids}]`, cycle);
+  globalState.addLog('info', `🔍 [foto] botões: [${buttons}]`, cycle);
 
-  const diagInfo = await p.evaluate(() => {
-    const testIds = Array.from(document.querySelectorAll('[data-testid]'))
-      .map(el => (el as HTMLElement).dataset['testid'])
-      .filter(Boolean);
-    const buttons = Array.from(document.querySelectorAll('button'))
-      .filter(b => (b as HTMLElement).offsetParent !== null)
-      .map(b => b.textContent?.trim())
-      .filter(Boolean);
-    return { testIds: testIds.slice(0, 30), buttons: buttons.slice(0, 20) };
-  }).catch(() => ({ testIds: [], buttons: [] }));
-  globalState.addLog('info', `🔍 [foto] testids: ${JSON.stringify(diagInfo.testIds)}`, cycle);
-  globalState.addLog('info', `🔍 [foto] botões: ${JSON.stringify(diagInfo.buttons)}`, cycle);
+  const PHOTO_SELS = [
+    '[data-testid="profile-photo-upload"]',
+    '[data-testid="take-photo"]',
+    'button:has-text("Tirar foto")',
+    'button:has-text("Take photo")',
+    'input[type="file"][accept*="image"]',
+  ];
 
-  const visible = await hasElement(p, PHOTO_SCREEN_SELS.join(', '), 8_000);
-  if (!visible) {
+  const found = PHOTO_SELS.find(async sel => await hasElement(p, sel, 600));
+  if (!found) {
     globalState.addLog('info', '⏩ Tela de foto não encontrada — pulando', cycle);
     return;
   }
 
-  await dismissCookieBanner(p, cycle);
+  const FORWARD = '[data-testid="forward-button"]';
+  if (await hasElement(p, FORWARD, 1_500)) {
+    await p.locator(FORWARD).click({ timeout: 8_000 }).catch(() => {});
+    globalState.addLog('info', '✔️ Foto: pulando via Avançar', cycle);
+  }
+}
 
-  const TAKE_PHOTO_SELS = [
-    '[data-testid="docUploadButton"]',
-    'button:has-text("Tirar foto")',
-    'button:has-text("Prendre une photo")',
-    'button:has-text("Capturar foto")',
-    'button:has-text("Foto")',
-    '[data-testid*="camera"]',
+// ─── KYC FINAL ────────────────────────────────────────────────────────────────────
+
+async function waitKycFinal(p: Page, cycle: number): Promise<void> {
+  const KYC_ENTRY_SELS = [
+    'iframe[src*="socure"]',
+    'iframe[src*="veriff"]',
+    'iframe[src*="persona"]',
+    '[data-testid*="kyc"]',
+    '[data-testid*="identity"]',
+    '[data-testid*="document"]',
+    'button:has-text("Verificar identidade")',
+    'button:has-text("Verify identity")',
+    'button:has-text("Verify")',
   ];
 
-  for (const sel of TAKE_PHOTO_SELS) {
-    const btn = p.locator(sel).first();
-    if (await btn.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await btn.scrollIntoViewIfNeeded();
-      await sleep(300 + EXTRA_DELAY);
-      try {
-        await btn.click({ timeout: 5_000 });
-      } catch {
-        await btn.click({ force: true, timeout: 5_000 }).catch(async () => {
-          await p.evaluate((sel2: string) => {
-            const node = document.querySelector(sel2) as HTMLElement | null;
-            if (node) node.click();
-          }, sel);
-        });
-      }
-      globalState.addLog('info', `✔️ click: Tirar foto via: ${sel}`, cycle);
-      break;
-    }
-  }
+  const kycVisible = await hasElement(p, KYC_ENTRY_SELS.join(', '), 3_000);
+  if (!kycVisible) return;
 
-  globalState.addLog('info', '⏳ [KYC] Aguardando abertura do KYC provider (popup/nova aba)...', cycle);
-  const KYC_WAIT_MS = 90_000;
-  const kycStart = Date.now();
-  while (Date.now() - kycStart < KYC_WAIT_MS) {
+  globalState.addLog('kyc', '🔍 [KYC] Tela de verificação detectada — aguardando sinais...', cycle);
+
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
     if (isStopped()) break;
     const signals = globalState.getKycSignals(cycle);
-    if (signals.length > 0) {
-      globalState.addLog('info', `✅ [KYC] ${signals.length} sinal(is) detectado(s) — encerrando espera`, cycle);
-      break;
-    }
+    if (signals.length > 0) break;
     await new Promise<void>(r => setTimeout(r, 500));
   }
 
@@ -1317,139 +857,6 @@ async function stepProfilePhoto(p: Page, cycle: number): Promise<void> {
     const providers = [...new Set(finalSignals.map(s => s.provider))];
     globalState.addLog('kyc', `🏁 [KYC] Ciclo ${cycle} — provedores: ${providers.join(', ')}`, cycle);
   }
-}
-
-async function stepAwaitDriversLogin(p: Page, cycle: number): Promise<void> {
-  globalState.addLog('info', '🚗 [11] Navegando para drivers.uber.com...', cycle);
-
-  const LOGGED_IN_SELS = [
-    '[data-testid="hub"]',
-    '[data-testid*="stepItem"]',
-    '[data-testid="home"]',
-    '[data-testid="earnings"]',
-    '[data-testid^="nav-"]',
-    'a[href*="/earnings"]',
-    'a[href*="/home"]',
-    '[data-testid="menu"]',
-    '[data-baseweb="side-navigation"]',
-    'nav a[href*="drivers.uber.com"]',
-  ];
-
-  const AUTH_URL_MARKERS = [
-    'auth.uber.com',
-    'login.uber.com',
-    '/login',
-    '/auth',
-    '/signin',
-    'challenge',
-  ];
-
-  const ensureDriversPage = async () => {
-    await p.goto('https://drivers.uber.com/', {
-      waitUntil: 'domcontentloaded',
-      timeout: 30_000,
-    }).catch(() => {});
-  };
-
-  const isDriversAppUrl = (url: string) => {
-    return url.includes('drivers.uber.com') && !AUTH_URL_MARKERS.some(marker => url.includes(marker));
-  };
-
-  const isAuthUrl = (url: string) => {
-    return AUTH_URL_MARKERS.some(marker => url.includes(marker));
-  };
-
-  const hasDriversSessionCookies = async () => {
-    const cookies = await p.context().cookies([
-      'https://drivers.uber.com',
-      'https://auth.uber.com',
-      'https://bonjour.uber.com',
-      'https://m.uber.com',
-      'https://uber.com',
-    ]).catch(() => []);
-
-    const relevant = cookies.filter(c =>
-      /uber\.com$/i.test(c.domain.replace(/^\./, '')) &&
-      !c.expires && c.value && c.value.length > 10
-    );
-
-    const names = relevant.map(c => c.name.toLowerCase());
-    const hasSessionLike = names.some(name =>
-      name.includes('session') ||
-      name.includes('sid') ||
-      name.includes('jwt') ||
-      name.includes('auth') ||
-      name.includes('token') ||
-      name.includes('uber')
-    );
-
-    if (relevant.length > 0) {
-      globalState.addLog('info', `🍪 Cookies Uber detectados: ${relevant.map(c => c.name).slice(0, 8).join(', ')}`, cycle);
-    }
-
-    return relevant.length >= 2 || hasSessionLike;
-  };
-
-  await ensureDriversPage();
-  globalState.addLog('info', '⏳ Aguardando reconhecimento de sessão...', cycle);
-
-  const deadline = Date.now() + 90_000;
-  let loggedIn = false;
-  let authSeen = false;
-  let lastUrl = '';
-  let lastRevisitAt = 0;
-
-  while (Date.now() < deadline) {
-    if (isStopped()) break;
-
-    await waitForSpinner(p, cycle, 5_000);
-    const url = p.url();
-
-    if (url !== lastUrl) {
-      globalState.addLog('info', `🌐 drivers-check URL: ${url}`, cycle);
-      lastUrl = url;
-    }
-
-    if (isDriversAppUrl(url)) {
-      for (const sel of LOGGED_IN_SELS) {
-        if (await hasElement(p, sel, 700)) {
-          loggedIn = true;
-          globalState.addLog('info', `✅ Logado em drivers.uber.com via: ${sel}`, cycle);
-          break;
-        }
-      }
-
-      if (!loggedIn) {
-        const hasSession = await hasDriversSessionCookies();
-        if (hasSession) {
-          loggedIn = true;
-          globalState.addLog('info', '✅ Sessão Uber detectada por cookies em drivers.uber.com', cycle);
-        }
-      }
-
-      if (loggedIn) break;
-    }
-
-    if (isAuthUrl(url)) {
-      authSeen = true;
-      globalState.addLog('warn', '⚠️ Ainda em auth/login da Uber — aguardando retorno automático para drivers', cycle);
-    }
-
-    if (!loggedIn && authSeen && Date.now() - lastRevisitAt > 12_000) {
-      lastRevisitAt = Date.now();
-      globalState.addLog('info', '🔁 Revisitando drivers.uber.com para forçar handoff da sessão...', cycle);
-      await ensureDriversPage();
-    }
-
-    await sleep(1_000);
-  }
-
-  if (!loggedIn) {
-    globalState.addLog('error', '❌ Login em drivers.uber.com não confirmado — cookies não serão capturados neste ciclo', cycle);
-    throw new Error('Sessão em drivers.uber.com não confirmada');
-  }
-
-  await sleep(2_000);
 }
 
 async function dismissModals(p: Page, cycle: number): Promise<void> {
@@ -1620,27 +1027,32 @@ export class MockPlaywrightFlow {
       globalState.addLog('info', `🌐 Navegando para ${cadastroUrl}...`, cycle);
       await p.goto(cadastroUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
       globalState.addLog('info', '✔️ Página carregada', cycle);
-
+      await sleep(1_500 + EXTRA_DELAY);
       await dismissModals(p, cycle);
-      await dismissCookieBanner(p, cycle);
 
-      await stepEmail(p, email, cycle);
-      await stepOTP(p, emailClient, email, config.otpTimeout, cycle);
-      const phoneData = await stepPhone(p, cycle);
-      telefone    = phoneData.digits;
-      telefoneFmt = phoneData.display;
+      await stepEmail(p, cycle, email);
+      await stepOtp(p, cycle, emailClient, email, config);
+
+      const phone = await stepPhone(p, cycle);
+      telefone    = phone.digits;
+      telefoneFmt = phone.formatted;
+
       await stepPassword(p, cycle);
-      const nameData = await stepPersonalInfo(p, cycle);
-      nome      = nameData.nome;
-      sobrenome = nameData.sobrenome;
+
+      const nameResult = await stepName(p, cycle);
+      nome      = nameResult.nome;
+      sobrenome = nameResult.sobrenome;
+
       await stepTerms(p, cycle);
-      await stepCity(p, config.inviteCode, cycle, config.cityName);
+      await stepCity(p, cycle, config.cityName);
       await stepFlowType(p, cycle);
       await stepVehicleType(p, cycle);
       await stepWhatsApp(p, cycle);
       await stepHubPhotoClick(p, cycle);
       await stepProfilePhoto(p, cycle);
-      await stepAwaitDriversLogin(p, cycle);
+
+      // Aguarda sinais KYC finais antes de capturar cookies
+      await waitKycFinal(p, cycle);
 
       if (config.extraDelay > 0) {
         globalState.addLog('info', `⏳ Extra delay: ${config.extraDelay}ms`, cycle);
@@ -1654,7 +1066,9 @@ export class MockPlaywrightFlow {
         ? (globalState.getKycByCycleEntry(cycle)?.[topSignal.provider]?.level ?? undefined)
         : undefined;
 
+      // Captura cookies do contexto completo (bonjour + auth + uber)
       const cookies = await context.cookies().catch(() => []);
+      globalState.addLog('info', `🍪 ${cookies.length} cookies capturados`, cycle);
 
       accountStore.save({
         email,
