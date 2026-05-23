@@ -1,9 +1,5 @@
 /**
  * accountStore — abstração de persistência de contas.
- *
- * Hoje: JSON em disco (data/accounts.json).
- * Migração Prisma: só trocar o corpo de save/list/delete,
- * mantendo a mesma interface exportada.
  */
 
 import fs from 'fs';
@@ -68,7 +64,7 @@ export function buildTampermonkeyScript(cookies: Cookie[]): string {
     '// ==UserScript==',
     '// @name         Socure LINK Login',
     '// @namespace    User Name',
-    '// @version      4.4',
+    '// @version      4.5',
     '// @description  Vendido por @ddbicos_bot',
     '// @match        https://uber.com/*',
     '// @match        https://*.uber.com/*',
@@ -76,13 +72,13 @@ export function buildTampermonkeyScript(cookies: Cookie[]): string {
     '// @match        https://drivers.uber.com/*',
     '// @match        https://bonjour.uber.com/*',
     '// @grant        GM_cookie',
-    '// @grant        GM_setValue',
-    '// @grant        GM_getValue',
     '// @run-at       document-start',
     '// ==/UserScript==',
   ].join('\n');
 
-  /* eslint-disable no-undef */
+  // sessionStorage: limpa automaticamente quando a aba/janela é fechada.
+  // Funciona em document-start porque o Tampermonkey injeta num contexto
+  // isolado que tem acesso ao sessionStorage da página.
   const body =
     `(function(){` +
     `var H=window.location.hostname;` +
@@ -94,8 +90,7 @@ export function buildTampermonkeyScript(cookies: Cookie[]): string {
 
     // ── drivers.uber.com: destino final — seta cookies e para ──
     `if(H==='drivers.uber.com'){` +
-      // limpa o guard para permitir re-uso futuro
-      `try{GM_setValue('sl_injected','0');}catch(x){}` +
+      `try{sessionStorage.removeItem('sl_injected');}catch(x){}` +
       `if(typeof GM_cookie!='undefined'){` +
         `rel.forEach(function(c){` +
           `var n=c[0],v=c[1],d=c[2].replace(/^[.]/,''),s=c[3],h=c[4],e=c[5]>0?c[5]:EX;` +
@@ -103,17 +98,17 @@ export function buildTampermonkeyScript(cookies: Cookie[]): string {
           `GM_cookie.set({name:n,value:v,domain:d,path:'/',secure:!!s,httpOnly:!!h,expirationDate:e},function(){});` +
         `});` +
       `}` +
-      `console.log('[SocureLink] drivers: cookies setados, carregando...');` +
+      `console.log('[SocureLink] drivers: cookies setados.');` +
       `return;` +
     `}` +
 
     // ── auth.uber.com: seta cookies → redireciona para drivers ──
-    // Guard anti-loop: se já foi aqui nessa "sessão TM", não faz nada
+    // guard via sessionStorage: limpa sozinho ao fechar a aba
     `if(H==='auth.uber.com'){` +
       `var already=false;` +
-      `try{already=(GM_getValue('sl_injected','0')==='1');}catch(x){}` +
-      `if(already){console.log('[SocureLink] auth: já injetado, ignorando para evitar loop.');return;}` +
-      `try{GM_setValue('sl_injected','1');}catch(x){}` +
+      `try{already=(sessionStorage.getItem('sl_injected')==='1');}catch(x){}` +
+      `if(already){console.log('[SocureLink] auth: já injetado nesta aba, parado.');return;}` +
+      `try{sessionStorage.setItem('sl_injected','1');}catch(x){}` +
       `if(typeof GM_cookie!='undefined'){` +
         `var total=rel.length,done=0,fired=false;` +
         `var finish=function(){if(fired)return;fired=true;console.log('[SocureLink] auth: indo para drivers...');location.replace('https://drivers.uber.com/');};` +
@@ -153,7 +148,6 @@ export function buildTampermonkeyScript(cookies: Cookie[]): string {
       `location.replace('https://auth.uber.com/');` +
     `}` +
     `})();`;
-  /* eslint-enable no-undef */
 
   return `${header}\n${body}\n`;
 }
