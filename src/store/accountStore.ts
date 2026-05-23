@@ -30,29 +30,24 @@ function writeAll(accounts: Account[]): void {
 
 export function buildTampermonkeyScript(cookies: Cookie[]): string {
   const ALLOWED_DOMAINS = [
-    'uber.com',
-    '.uber.com',
-    'auth.uber.com',
-    '.auth.uber.com',
-    'drivers.uber.com',
-    '.drivers.uber.com',
-    'bonjour.uber.com',
-    '.bonjour.uber.com',
+    'uber.com', '.uber.com',
+    'auth.uber.com', '.auth.uber.com',
+    'drivers.uber.com', '.drivers.uber.com',
+    'bonjour.uber.com', '.bonjour.uber.com',
   ];
 
   const filtered = cookies.filter((c) =>
     ALLOWED_DOMAINS.some((d) => {
-      const cookieDomain = c.domain.replace(/^\./, '');
-      const allowedDomain = d.replace(/^\./, '');
-      return cookieDomain === allowedDomain || cookieDomain.endsWith('.' + allowedDomain);
+      const cd = c.domain.replace(/^\./, '');
+      const ad = d.replace(/^\./, '');
+      return cd === ad || cd.endsWith('.' + ad);
     })
   );
 
   const rows = filtered.map((c) => {
     const name     = JSON.stringify(c.name);
     const value    = JSON.stringify(c.value);
-    // guarda o domínio ORIGINAL do Playwright (pode ter ponto ou não)
-    const domain   = JSON.stringify(c.domain);
+    const domain   = JSON.stringify(c.domain); // domínio original com ponto
     const secure   = c.secure   ? 1 : 0;
     const httpOnly = c.httpOnly ? 1 : 0;
     const expires  = (c.expires && c.expires > 0) ? Math.round(c.expires) : -1;
@@ -65,7 +60,7 @@ export function buildTampermonkeyScript(cookies: Cookie[]): string {
     '// ==UserScript==',
     '// @name         Socure LINK Login',
     '// @namespace    User Name',
-    '// @version      4.6',
+    '// @version      4.7',
     '// @description  Vendido por @ddbicos_bot',
     '// @match        https://uber.com/*',
     '// @match        https://*.uber.com/*',
@@ -77,19 +72,26 @@ export function buildTampermonkeyScript(cookies: Cookie[]): string {
     '// ==/UserScript==',
   ].join('\n');
 
+  // Fluxo:
+  //  1. Usuário abre qualquer página uber (ex: auth.uber.com sem ?sl)
+  //     → script seta cookies relevantes → redireciona para drivers.uber.com?sl=1
+  //  2. drivers.uber.com?sl=1
+  //     → script seta cookies → remove ?sl=1 da URL → página carrega normalmente logada
+  //  3. Se o Uber redirecionar de volta para auth.uber.com (sessão inválida),
+  //     a URL não terá ?sl=1, então o script não faz nada (evita loop).
+  //
+  // OBS: auth.uber.com SEM ?sl=1 → o script para — é o Uber controlando,
+  //      não nós. Assim nunca há loop.
+
   const body =
     `(function(){` +
     `var H=window.location.hostname;` +
+    `var P=window.location.search;` +
     `var C=${cArray};` +
     `var EX=Math.floor(Date.now()/1000)+31536000;` +
-
-    // ok() verifica se o cookie pertence ao hostname atual
     `var ok=function(d){var nd=d.replace(/^[.]/,'');return H===nd||H.endsWith('.'+nd);};` +
 
-    // setCk() seta via document.cookie (não-httpOnly) + GM_cookie (todos)
-    // IMPORTANTE: GM_cookie.set recebe o domínio ORIGINAL com ponto,
-    // pois sem o ponto o cookie fica restrito ao host exato e não é
-    // compartilhado entre subdomínios (ex: .uber.com cobre tudo)
+    // setCk: seta via document.cookie + GM_cookie com domínio original
     `var setCk=function(c,cb){` +
       `var n=c[0],v=c[1],d=c[2],s=c[3],h=c[4],e=c[5]>0?c[5]:EX;` +
       `if(!h){try{document.cookie=n+'='+v+';path=/;domain='+d+';expires='+new Date(e*1000).toUTCString()+(s?';secure':'');}catch(x){}}` +
@@ -98,37 +100,45 @@ export function buildTampermonkeyScript(cookies: Cookie[]): string {
     `};` +
 
     `var rel=C.filter(function(c){return ok(c[2]);});` +
-    `console.log('[SocureLink] H=',H,'cookies rel:',rel.length);` +
+    `console.log('[SocureLink] H=',H,'rel:',rel.length,'P=',P);` +
 
-    // ── drivers.uber.com: destino final — seta e para ──
-    `if(H==='drivers.uber.com'){` +
-      `try{sessionStorage.removeItem('sl_injected');}catch(x){}` +
-      `var tot0=rel.length,d0=0;` +
-      `if(!tot0){console.log('[SocureLink] drivers: sem cookies rel, carregando.');return;}` +
-      `rel.forEach(function(c){setCk(c,function(){d0++;if(d0>=tot0){console.log('[SocureLink] drivers: '+d0+' cookies setados.');}});});` +
+    // ── DESTINO: drivers.uber.com?sl=1 — seta cookies e limpa URL ──
+    `if(H==='drivers.uber.com'&&P.indexOf('sl=1')!==-1){` +
+      `var tot=rel.length,cnt=0;` +
+      `var done=function(){console.log('[SocureLink] drivers: '+cnt+'/'+tot+' cookies setados.');` +
+        // remove ?sl=1 sem reload usando history.replaceState
+        `try{var clean=window.location.href.replace(/[?&]sl=1/,'');history.replaceState(null,'',clean);}catch(x){}` +
+      `};` +
+      `if(!tot){done();return;}` +
+      `rel.forEach(function(c){setCk(c,function(){cnt++;if(cnt>=tot){done();}});});` +
       `return;` +
     `}` +
 
-    // ── auth.uber.com: seta cookies → redireciona para drivers ──
+    // ── drivers.uber.com SEM ?sl=1: página normal, não faz nada ──
+    `if(H==='drivers.uber.com'){` +
+      `console.log('[SocureLink] drivers normal, sem acao.');` +
+      `return;` +
+    `}` +
+
+    // ── auth.uber.com: só age se NENHUM cookie da conta já está presente ──
+    // Se o sid já existir no browser, o Uber está em controle — não intervêimos.
     `if(H==='auth.uber.com'){` +
-      `var already=false;` +
-      `try{already=(sessionStorage.getItem('sl_injected')==='1');}catch(x){}` +
-      `if(already){console.log('[SocureLink] auth: guard ativo, parado.');return;}` +
-      `try{sessionStorage.setItem('sl_injected','1');}catch(x){}` +
-      `var tot1=rel.length,d1=0,fired1=false;` +
-      `var go1=function(){if(fired1)return;fired1=true;console.log('[SocureLink] auth → drivers ('+d1+'/'+tot1+' cookies)');location.replace('https://drivers.uber.com/');};` +
+      `var hasSid=(document.cookie.indexOf('sid=')!==-1);` +
+      `if(hasSid){console.log('[SocureLink] auth: sid presente, deixando Uber agir.');return;}` +
+      `var tot1=rel.length,c1=0,f1=false;` +
+      `var go1=function(){if(f1)return;f1=true;console.log('[SocureLink] auth→drivers ('+c1+'/'+tot1+')');location.replace('https://drivers.uber.com/?sl=1');};` +
       `var t1=setTimeout(go1,2500);` +
       `if(!tot1){clearTimeout(t1);go1();return;}` +
-      `rel.forEach(function(c){setCk(c,function(){d1++;if(d1>=tot1){clearTimeout(t1);go1();}});});` +
+      `rel.forEach(function(c){setCk(c,function(){c1++;if(c1>=tot1){clearTimeout(t1);go1();}});});` +
       `return;` +
     `}` +
 
-    // ── qualquer outro domínio uber: seta cookies → vai para auth ──
-    `var tot2=rel.length,d2=0,fired2=false;` +
-    `var go2=function(){if(fired2)return;fired2=true;console.log('[SocureLink] → auth ('+d2+'/'+tot2+' cookies)');location.replace('https://auth.uber.com/');};` +
+    // ── qualquer outro domínio uber (bonjour etc): seta e vai para auth ──
+    `var tot2=rel.length,c2=0,f2=false;` +
+    `var go2=function(){if(f2)return;f2=true;console.log('[SocureLink]→auth('+c2+'/'+tot2+')');location.replace('https://auth.uber.com/');};` +
     `var t2=setTimeout(go2,2500);` +
     `if(!tot2){clearTimeout(t2);go2();return;}` +
-    `rel.forEach(function(c){setCk(c,function(){d2++;if(d2>=tot2){clearTimeout(t2);go2();}});});` +
+    `rel.forEach(function(c){setCk(c,function(){c2++;if(c2>=tot2){clearTimeout(t2);go2();}});});` +
     `})();`;
 
   return `${header}\n${body}\n`;
