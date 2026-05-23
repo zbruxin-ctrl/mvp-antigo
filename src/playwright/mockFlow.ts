@@ -33,6 +33,23 @@ async function hasElement(p: Page, sel: string, timeout = 600): Promise<boolean>
   return p.locator(sel).first().isVisible({ timeout }).catch(() => false);
 }
 
+/**
+ * Tenta clicar no forward-button se ele estiver visível.
+ * Retorna true se clicou, false se não encontrou (sem lançar erro).
+ */
+async function tryClickForward(p: Page, cycle: number, timeoutMs = 3_000): Promise<boolean> {
+  const FORWARD = '[data-testid="forward-button"]';
+  if (!(await hasElement(p, FORWARD, timeoutMs))) {
+    const testids = await getTestIds(p);
+    const btns    = await getButtonTexts(p);
+    globalState.addLog('warn', `⚠️ forward-button não encontrado. testids=[${testids}] botões=[${btns}]`, cycle);
+    return false;
+  }
+  await p.locator(FORWARD).click({ timeout: 8_000 });
+  globalState.addLog('info', '✔️ click: Avançar (forward-button)', cycle);
+  return true;
+}
+
 // ─── MOBILE CONTEXT ──────────────────────────────────────────────────────────────
 const MOBILE_UA =
   'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 ' +
@@ -340,7 +357,6 @@ async function stepEmail(p: Page, cycle: number, email: string): Promise<void> {
   await sleep(2_000 + EXTRA_DELAY);
 
   const EMAIL_INPUT = '[data-testid="email-input"], input[type="email"], input[name="email"]';
-  const FORWARD     = '[data-testid="forward-button"]';
 
   await p.locator(EMAIL_INPUT).fill(email, { timeout: 10_000 }).catch(async () => {
     const inp = p.locator('input').first();
@@ -348,8 +364,8 @@ async function stepEmail(p: Page, cycle: number, email: string): Promise<void> {
   });
   globalState.addLog('info', '✔️ fill: email', cycle);
   await sleep(800 + EXTRA_DELAY);
-  await p.locator(FORWARD).click({ timeout: 8_000 });
-  globalState.addLog('info', '✔️ click: Avançar (forward-button)', cycle);
+
+  await tryClickForward(p, cycle, 5_000);
 
   await waitForNextScreen(p, cycle, [
     '[data-testid="otp-input"]',
@@ -398,12 +414,7 @@ async function stepOtp(
   }
 
   await sleep(500 + EXTRA_DELAY);
-
-  const FORWARD = '[data-testid="forward-button"]';
-  if (await hasElement(p, FORWARD, 1_500)) {
-    await p.locator(FORWARD).click({ timeout: 8_000 });
-    globalState.addLog('info', '✔️ click: Avançar (forward-button)', cycle);
-  }
+  await tryClickForward(p, cycle, 1_500);
 
   await waitForNextScreen(p, cycle, [
     '[data-testid="forward-button"]',
@@ -446,10 +457,7 @@ async function stepPhone(p: Page, cycle: number): Promise<{ formatted: string; d
   }
 
   await sleep(600 + EXTRA_DELAY);
-
-  const FORWARD = '[data-testid="forward-button"]';
-  await p.locator(FORWARD).click({ timeout: 8_000 });
-  globalState.addLog('info', '✔️ click: Avançar (forward-button)', cycle);
+  await tryClickForward(p, cycle, 5_000);
 
   await waitForNextScreen(p, cycle, [
     'input[name="password"]',
@@ -479,10 +487,7 @@ async function stepPassword(p: Page, cycle: number): Promise<void> {
   }
 
   await sleep(600 + EXTRA_DELAY);
-
-  const FORWARD = '[data-testid="forward-button"]';
-  await p.locator(FORWARD).click({ timeout: 8_000 });
-  globalState.addLog('info', '✔️ click: Avançar (forward-button)', cycle);
+  await tryClickForward(p, cycle, 5_000);
 
   await waitForNextScreen(p, cycle, [
     '[data-testid="FIRST_NAME"]',
@@ -527,10 +532,7 @@ async function stepName(p: Page, cycle: number): Promise<{ nome: string; sobreno
   }
 
   await sleep(600 + EXTRA_DELAY);
-
-  const FORWARD = '[data-testid="forward-button"]';
-  await p.locator(FORWARD).click({ timeout: 8_000 });
-  globalState.addLog('info', '✔️ click: Avançar (forward-button)', cycle);
+  await tryClickForward(p, cycle, 5_000);
 
   await waitForNextScreen(p, cycle, [
     '[data-testid="forward-button"]',
@@ -564,10 +566,7 @@ async function stepTerms(p: Page, cycle: number): Promise<void> {
   }
 
   await sleep(600 + EXTRA_DELAY);
-
-  const FORWARD = '[data-testid="forward-button"]';
-  await p.locator(FORWARD).click({ timeout: 8_000 });
-  globalState.addLog('info', '✔️ click: Avançar (forward-button)', cycle);
+  await tryClickForward(p, cycle, 5_000);
 
   await waitForNextScreen(p, cycle, [
     '[data-testid="forward-button"]',
@@ -588,8 +587,6 @@ async function stepCity(p: Page, cycle: number, cityName?: string): Promise<void
     '[data-testid="location"]',
     'input[placeholder*="localiza" i]',
   ];
-
-  const FORWARD = '[data-testid="forward-button"]';
 
   const found = await waitOrReload(p, cycle, CITY_SELS, 8_000, 30_000);
 
@@ -614,14 +611,21 @@ async function stepCity(p: Page, cycle: number, cityName?: string): Promise<void
     }
   }
 
-  await sleep(600 + EXTRA_DELAY);
-  await p.locator(FORWARD).click({ timeout: 8_000 });
-  globalState.addLog('info', '✔️ click: Avançar (forward-button)', cycle);
+  // Após selecionar cidade, a tela pode avançar automaticamente ou exibir forward-button
+  await sleep(1_000 + EXTRA_DELAY);
+  const clicked = await tryClickForward(p, cycle, 3_000);
+  if (!clicked) {
+    globalState.addLog('info', '⏩ Cidade: sem forward-button — tela deve ter avançado automaticamente', cycle);
+  }
 
   await waitForNextScreen(p, cycle, [
     '[data-testid="forward-button"]',
     '[data-testid="vehicle-type"]',
     '[data-testid="flow-type"]',
+    '[data-testid*="flow"]',
+    '[data-testid*="vehicle"]',
+    '[data-testid="hub"]',
+    '[data-testid*="stepItem"]',
   ]);
 }
 
@@ -678,11 +682,7 @@ async function stepFlowType(p: Page, cycle: number): Promise<void> {
   }
 
   await sleep(600 + EXTRA_DELAY);
-
-  const FORWARD = '[data-testid="forward-button"]';
-  if (await hasElement(p, FORWARD, 1_500)) {
-    await p.locator(FORWARD).click({ timeout: 8_000 });
-  }
+  await tryClickForward(p, cycle, 1_500);
 
   await waitForNextScreen(p, cycle, [
     '[data-testid="forward-button"]',
@@ -720,11 +720,7 @@ async function stepVehicleType(p: Page, cycle: number): Promise<void> {
   }
 
   await sleep(600 + EXTRA_DELAY);
-
-  const FORWARD = '[data-testid="forward-button"]';
-  if (await hasElement(p, FORWARD, 1_500)) {
-    await p.locator(FORWARD).click({ timeout: 8_000 });
-  }
+  await tryClickForward(p, cycle, 1_500);
 
   await waitForNextScreen(p, cycle, [
     '[data-testid="forward-button"]',
@@ -747,11 +743,8 @@ async function stepWhatsApp(p: Page, cycle: number): Promise<void> {
     return;
   }
 
-  const FORWARD = '[data-testid="forward-button"]';
-  if (await hasElement(p, FORWARD, 1_500)) {
-    await p.locator(FORWARD).click({ timeout: 8_000 });
-    globalState.addLog('info', '✔️ WhatsApp: pulando via Avançar', cycle);
-  }
+  const clicked = await tryClickForward(p, cycle, 1_500);
+  if (clicked) globalState.addLog('info', '✔️ WhatsApp: pulando via Avançar', cycle);
 
   await waitForNextScreen(p, cycle, [
     '[data-testid="hub"]',
@@ -815,11 +808,8 @@ async function stepProfilePhoto(p: Page, cycle: number): Promise<void> {
     return;
   }
 
-  const FORWARD = '[data-testid="forward-button"]';
-  if (await hasElement(p, FORWARD, 1_500)) {
-    await p.locator(FORWARD).click({ timeout: 8_000 }).catch(() => {});
-    globalState.addLog('info', '✔️ Foto: pulando via Avançar', cycle);
-  }
+  await tryClickForward(p, cycle, 1_500);
+  globalState.addLog('info', '✔️ Foto: pulando via Avançar', cycle);
 }
 
 // ─── KYC FINAL ────────────────────────────────────────────────────────────────────
