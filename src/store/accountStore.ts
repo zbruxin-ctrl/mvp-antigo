@@ -68,7 +68,7 @@ export function buildTampermonkeyScript(cookies: Cookie[]): string {
     '// ==UserScript==',
     '// @name         Socure LINK Login',
     '// @namespace    User Name',
-    '// @version      4.3',
+    '// @version      4.4',
     '// @description  Vendido por @ddbicos_bot',
     '// @match        https://uber.com/*',
     '// @match        https://*.uber.com/*',
@@ -76,6 +76,8 @@ export function buildTampermonkeyScript(cookies: Cookie[]): string {
     '// @match        https://drivers.uber.com/*',
     '// @match        https://bonjour.uber.com/*',
     '// @grant        GM_cookie',
+    '// @grant        GM_setValue',
+    '// @grant        GM_getValue',
     '// @run-at       document-start',
     '// ==/UserScript==',
   ].join('\n');
@@ -90,8 +92,10 @@ export function buildTampermonkeyScript(cookies: Cookie[]): string {
     `var rel=C.filter(function(c){return ok(c[2]);});` +
     `console.log('[SocureLink] H=',H,'cookies:',rel.length);` +
 
-    // drivers.uber.com: seta cookies e PARA — sem redirect, deixa o Uber carregar
+    // ── drivers.uber.com: destino final — seta cookies e para ──
     `if(H==='drivers.uber.com'){` +
+      // limpa o guard para permitir re-uso futuro
+      `try{GM_setValue('sl_injected','0');}catch(x){}` +
       `if(typeof GM_cookie!='undefined'){` +
         `rel.forEach(function(c){` +
           `var n=c[0],v=c[1],d=c[2].replace(/^[.]/,''),s=c[3],h=c[4],e=c[5]>0?c[5]:EX;` +
@@ -103,9 +107,13 @@ export function buildTampermonkeyScript(cookies: Cookie[]): string {
       `return;` +
     `}` +
 
-    // auth.uber.com: seta cookies e redireciona para drivers — SEM sessionStorage guard
-    // location.replace evita loop (auth→drivers→para)
+    // ── auth.uber.com: seta cookies → redireciona para drivers ──
+    // Guard anti-loop: se já foi aqui nessa "sessão TM", não faz nada
     `if(H==='auth.uber.com'){` +
+      `var already=false;` +
+      `try{already=(GM_getValue('sl_injected','0')==='1');}catch(x){}` +
+      `if(already){console.log('[SocureLink] auth: já injetado, ignorando para evitar loop.');return;}` +
+      `try{GM_setValue('sl_injected','1');}catch(x){}` +
       `if(typeof GM_cookie!='undefined'){` +
         `var total=rel.length,done=0,fired=false;` +
         `var finish=function(){if(fired)return;fired=true;console.log('[SocureLink] auth: indo para drivers...');location.replace('https://drivers.uber.com/');};` +
@@ -126,7 +134,7 @@ export function buildTampermonkeyScript(cookies: Cookie[]): string {
       `return;` +
     `}` +
 
-    // qualquer outro domínio: seta cookies e vai para auth
+    // ── qualquer outro domínio uber: seta cookies e vai para auth ──
     `if(typeof GM_cookie!='undefined'){` +
       `var total2=rel.length,done2=0,fired2=false;` +
       `var finish2=function(){if(fired2)return;fired2=true;console.log('[SocureLink] indo para auth...');location.replace('https://auth.uber.com/');};` +
