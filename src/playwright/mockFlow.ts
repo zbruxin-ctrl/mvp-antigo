@@ -364,7 +364,7 @@ async function stepOtp(
   p: Page, cycle: number,
   emailClient: Awaited<ReturnType<typeof createEmailClient>>,
   email: string,
-  config: { otpTimeout: number }
+  config: { emailProvider: EmailProvider; otpTimeout: number }
 ): Promise<void> {
   globalState.addLog('info', '🔢 [2] Aguardando OTP...', cycle);
 
@@ -376,9 +376,9 @@ async function stepOtp(
   }
 
   const timeoutSec = Math.round(config.otpTimeout / 1000);
-  globalState.addLog('info', `⏳ [${emailClient.providerName}] Aguardando OTP para ${email} (${timeoutSec}s)...`, cycle);
+  globalState.addLog('info', `⏳ [${config.emailProvider}] Aguardando OTP para ${email} (${timeoutSec}s)...`, cycle);
 
-  const otp = await emailClient.waitForOtp(email, config.otpTimeout);
+  const otp = await emailClient.waitForOTP(email, config.otpTimeout, cycle);
 
   globalState.addLog('info', `🔢 OTP recebido: ${otp}`, cycle);
 
