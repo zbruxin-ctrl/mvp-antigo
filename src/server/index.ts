@@ -260,8 +260,9 @@ app.get('/api/accounts',     requireAuth, (_req, res) => {
 });
 
 // ── GET /api/accounts/:id/script ─────────────────────────────
-// Serve o userscript Tampermonkey da conta como arquivo .user.js para download/instalação.
-// Regenera o script a partir dos cookies atuais antes de servir.
+// Retorna o userscript Tampermonkey como texto puro para o frontend
+// copiar direto para o clipboard (sem Content-Disposition attachment
+// que causaria diálogo de download em vez de permitir o fetch/clipboard).
 app.get('/api/accounts/:id/script', requireAuth, (req: Request, res: Response) => {
   const account = accountStore.regenScript(req.params.id);
   if (!account) {
@@ -270,10 +271,8 @@ app.get('/api/accounts/:id/script', requireAuth, (req: Request, res: Response) =
   }
 
   const script = account.tampermonkeyScript ?? '';
-  const safeName = (account.email ?? account.id).replace(/[^a-z0-9@._-]/gi, '_');
 
-  res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
-  res.setHeader('Content-Disposition', `attachment; filename="${safeName}.user.js"`);
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
   res.send(script);
 });
 
