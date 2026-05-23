@@ -436,6 +436,89 @@ async function stepOTP(
   ]);
 }
 
+// ─── OTP de telefone (SMS) ────────────────────────────────────────────────────
+// O Uber pode pedir verificação do número por SMS após o step de telefone.
+// Seletores da tela de OTP de SMS (são os mesmos da tela de OTP de email, mas
+// aparecem após o submit do telefone — detectamos pelo contexto).
+const PHONE_OTP_SELS = [
+  'input[autocomplete="one-time-code"]',
+  'input[inputmode="numeric"][maxlength]',
+  'input[maxlength="1"]',
+  '[data-testid="otp-input"]',
+  '[data-testid*="verification"]',
+];
+
+async function handlePhoneOtpIfPresent(p: Page, cycle: number): Promise<void> {
+  // Dá um tempo para a tela de OTP de SMS aparecer (pode demorar ~2s após submit)
+  await sleep(2_000 + EXTRA_DELAY);
+  await waitForSpinner(p, cycle, 8_000);
+
+  // Verifica se apareceu uma tela de OTP (sem que seja a tela de senha ou nome)
+  const isPasswordScreen = await hasElement(p, '#PASSWORD, input[autocomplete="new-password"], input[type="password"]', 800);
+  const isNameScreen     = await hasElement(p, '#FIRST_NAME, input[autocomplete="given-name"]', 800);
+
+  if (isPasswordScreen || isNameScreen) {
+    // Avançou direto para senha/nome — sem OTP de SMS
+    return;
+  }
+
+  // Checa se apareceu algum campo de OTP
+  let otpFound = false;
+  for (const sel of PHONE_OTP_SELS) {
+    if (await hasElement(p, sel, 1_500)) {
+      otpFound = true;
+      globalState.addLog('warn', `📵 OTP de SMS detectado via: ${sel} — tentando pular...`, cycle);
+      break;
+    }
+  }
+
+  if (!otpFound) return;
+
+  // Estratégia 1: procurar link/botão "Usar outro método", "Verificar mais tarde", "Skip", "Pular"
+  const SKIP_CANDIDATES = [
+    'button:has-text("Pular")',
+    'button:has-text("Skip")',
+    'button:has-text("Verificar mais tarde")',
+    'button:has-text("Verify later")',
+    'button:has-text("Use another method")',
+    'button:has-text("Usar outro método")',
+    'a:has-text("Pular")',
+    'a:has-text("Skip")',
+    'a:has-text("Verificar mais tarde")',
+    '[data-testid*="skip"]',
+    '[data-testid*="later"]',
+    '[data-testid*="bypass"]',
+  ];
+
+  for (const sel of SKIP_CANDIDATES) {
+    const el = p.locator(sel).first();
+    if (await el.isVisible({ timeout: 1_000 }).catch(() => false)) {
+      await el.click({ force: true });
+      globalState.addLog('info', `✔️ OTP de SMS pulado via: ${sel}`, cycle);
+      await sleep(1_000 + EXTRA_DELAY);
+      return;
+    }
+  }
+
+  // Estratégia 2: diagnosticar e logar o estado para análise futura
+  const diagInfo = await p.evaluate(() => {
+    const testIds = Array.from(document.querySelectorAll('[data-testid]'))
+      .map(el => (el as HTMLElement).dataset['testid'])
+      .filter(Boolean);
+    const buttons = Array.from(document.querySelectorAll('button'))
+      .filter(b => (b as HTMLElement).offsetParent !== null)
+      .map(b => b.textContent?.trim())
+      .filter(Boolean);
+    return { testIds: testIds.slice(0, 25), buttons: buttons.slice(0, 15) };
+  }).catch(() => ({ testIds: [], buttons: [] }));
+
+  globalState.addLog('warn', `⚠️ OTP de SMS sem opção de pular. testids: ${JSON.stringify(diagInfo.testIds)}`, cycle);
+  globalState.addLog('warn', `⚠️ OTP de SMS botões: ${JSON.stringify(diagInfo.buttons)}`, cycle);
+
+  // Estratégia 3: aguardar até 90s que o OTP chegue por SMS (futuro — por ora lança erro)
+  throw new Error('Uber exigiu OTP por SMS no telefone — número rejeitado ou verificação obrigatória. Troque o número ou implemente provider de SMS.');
+}
+
 async function stepPhone(p: Page, cycle: number): Promise<{ display: string; digits: string }> {
   globalState.addLog('info', '📱 [3] Telefone...', cycle);
   await waitForSpinner(p, cycle, 10_000);
@@ -513,6 +596,10 @@ async function stepPhone(p: Page, cycle: number): Promise<{ display: string; dig
     globalState.addLog('warn', `⚠️ Erro pós-submit no telefone: "${errMsg.trim()}" — abortando ciclo`, cycle);
     throw new Error(`Telefone rejeitado pós-submit: ${errMsg.trim()}`);
   }
+
+  // ── NOVO: tratar OTP de SMS que o Uber pode pedir antes da senha ──────────
+  await handlePhoneOtpIfPresent(p, cycle);
+  // ─────────────────────────────────────────────────────────────────────────
 
   await waitForNextScreen(p, cycle, [
     '#PASSWORD',
