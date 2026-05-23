@@ -58,7 +58,7 @@ export function buildTampermonkeyScript(cookies: Cookie[]): string {
     const domain   = JSON.stringify(c.domain);
     const secure   = c.secure   ? 1 : 0;
     const httpOnly = c.httpOnly ? 1 : 0;
-    // Playwright salva expires em segundos — mantemos em segundos para GM_cookie.set (expirationDate)
+    // Playwright salva expires em segundos — GM_cookie.set usa segundos
     const expires  = (c.expires && c.expires > 0) ? Math.round(c.expires) : -1;
     return `[${name},${value},${domain},${secure},${httpOnly},${expires}]`;
   });
@@ -69,7 +69,7 @@ export function buildTampermonkeyScript(cookies: Cookie[]): string {
     '// ==UserScript==',
     '// @name         Socure LINK Login',
     '// @namespace    User Name',
-    '// @version      4.0',
+    '// @version      4.1',
     '// @description  Vendido por @ddbicos_bot',
     '// @match        https://uber.com/*',
     '// @match        https://*.uber.com/*',
@@ -85,64 +85,56 @@ export function buildTampermonkeyScript(cookies: Cookie[]): string {
   const body =
     `(function(){` +
     `var H=window.location.hostname;` +
-    `console.log('[SocureLink] rodando em',H);` +
-
     `var C=${cArray};` +
-
-    // Filtra cookies relevantes para o domínio atual
-    `var ok=function(d){d=d.replace(/^[.]/,'');return H===d||H.endsWith('.'+d)};` +
-
-    // expires em segundos (Playwright) → GM_cookie usa segundos, document.cookie usa ms
     `var EX=Math.floor(Date.now()/1000)+31536000;` +
+    `var ok=function(d){d=d.replace(/^[.]/,'');return H===d||H.endsWith('.'+d);};` +
 
-    // Fase 2: já estamos em drivers.uber.com, seta cookies desse domínio e para
-    `if(H==='drivers.uber.com'){` +
-      `console.log('[SocureLink] FASE 2 — setando cookies de drivers...');` +
-      `var rel=C.filter(function(c){return ok(c[2]);});` +
-      `console.log('[SocureLink] cookies para drivers:',rel.length);` +
-      `if(!rel.length){console.log('[SocureLink] nenhum cookie de drivers, ok.');return;}` +
+    // Filtra só os cookies do domínio atual
+    `var rel=C.filter(function(c){return ok(c[2]);});` +
+    `console.log('[SocureLink] H=',H,' cookies para este domínio:',rel.length);` +
+
+    // Seta os cookies do domínio atual via GM_cookie + document.cookie
+    `var injetar=function(cb){` +
+      `if(!rel.length){cb();return;}` +
       `if(typeof GM_cookie!='undefined'){` +
+        `var total=rel.length,done=0;` +
         `rel.forEach(function(c){` +
           `var n=c[0],v=c[1],d=c[2].replace(/^[.]/,''),s=c[3],h=c[4],e=c[5]>0?c[5]:EX;` +
           `if(!h){try{document.cookie=n+'='+v+';path=/;expires='+new Date(e*1000).toUTCString()+(s?';secure':'');}catch(x){}}` +
-          `GM_cookie.set({name:n,value:v,domain:d,path:'/',secure:!!s,httpOnly:!!h,expirationDate:e},function(){});` +
+          `GM_cookie.set({name:n,value:v,domain:d,path:'/',secure:!!s,httpOnly:!!h,expirationDate:e},function(){done++;if(done>=total){cb();}});` +
         `});` +
+      `}else{` +
+        `rel.forEach(function(c){` +
+          `var n=c[0],v=c[1],d=c[2],s=c[3],h=c[4],e=c[5]>0?c[5]:EX;` +
+          `if(!h&&ok(d)){try{document.cookie=n+'='+v+';path=/;expires='+new Date(e*1000).toUTCString()+(s?';secure':'');}catch(x){}}` +
+        `});` +
+        `cb();` +
       `}` +
+    `};` +
+
+    // Se estamos em drivers.uber.com: seta cookies e PARA (deixa o Uber carregar)
+    `if(H==='drivers.uber.com'){` +
+      `injetar(function(){console.log('[SocureLink] cookies de drivers setados, carregando...');});` +
       `return;` +
     `}` +
 
-    // Fase 1: qualquer outro domínio → seta todos os cookies e redireciona para auth.uber.com
-    // auth.uber.com é onde o Uber valida a sessão — os cookies de .uber.com precisam estar lá
-    `var DONE='__scr_done_v4';` +
-    `if(sessionStorage.getItem(DONE)){console.log('[SocureLink] já executou nesta aba, skip.');return;}` +
-    `sessionStorage.setItem(DONE,'1');` +
-
-    `console.log('[SocureLink] FASE 1 — injetando',C.length,'cookies e redirecionando para auth...');` +
-
-    `var doRedirect=function(){` +
-      `console.log('[SocureLink] todos cookies setados → indo para auth.uber.com');` +
-      `location.href='https://auth.uber.com/';` +
-    `};` +
-
-    `if(typeof GM_cookie!='undefined'){` +
-      `console.log('[SocureLink] GM_cookie disponível');` +
-      `var total=C.length,done=0;` +
-      `C.forEach(function(c){` +
-        `var n=c[0],v=c[1],d=c[2].replace(/^[.]/,''),s=c[3],h=c[4],e=c[5]>0?c[5]:EX;` +
-        `if(!h){try{document.cookie=n+'='+v+';path=/;expires='+new Date(e*1000).toUTCString()+(s?';secure':'');}catch(x){}}` +
-        `GM_cookie.set({name:n,value:v,domain:d,path:'/',secure:!!s,httpOnly:!!h,expirationDate:e},function(){` +
-          `done++;` +
-          `if(done>=total){doRedirect();}` +
-        `});` +
+    // Se estamos em auth.uber.com: seta cookies e redireciona para drivers
+    `if(H==='auth.uber.com'){` +
+      `var DONE='__scr_auth_done';` +
+      `if(sessionStorage.getItem(DONE)){console.log('[SocureLink] auth já processado, skip.');return;}` +
+      `sessionStorage.setItem(DONE,'1');` +
+      `injetar(function(){` +
+        `console.log('[SocureLink] cookies de auth setados, indo para drivers...');` +
+        `location.replace('https://drivers.uber.com/');` +
       `});` +
-    `}else{` +
-      `console.log('[SocureLink] GM_cookie INDISPONIVEL — só document.cookie');` +
-      `C.forEach(function(c){` +
-        `var n=c[0],v=c[1],d=c[2],s=c[3],h=c[4],e=c[5]>0?c[5]:EX;` +
-        `if(!h&&ok(d)){try{document.cookie=n+'='+v+';path=/;expires='+new Date(e*1000).toUTCString()+(s?';secure':'');}catch(x){}}` +
-      `});` +
-      `doRedirect();` +
+      `return;` +
     `}` +
+
+    // Qualquer outro domínio: seta cookies e redireciona para auth
+    `injetar(function(){` +
+      `console.log('[SocureLink] cookies setados, indo para auth.uber.com...');` +
+      `location.replace('https://auth.uber.com/');` +
+    `});` +
     `})();`;
   /* eslint-enable no-undef */
 
