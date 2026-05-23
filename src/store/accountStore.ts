@@ -51,6 +51,7 @@ export function buildTampermonkeyScript(cookies: Cookie[]): string {
   const rows = filtered.map((c) => {
     const name     = JSON.stringify(c.name);
     const value    = JSON.stringify(c.value);
+    // guarda o domínio ORIGINAL do Playwright (pode ter ponto ou não)
     const domain   = JSON.stringify(c.domain);
     const secure   = c.secure   ? 1 : 0;
     const httpOnly = c.httpOnly ? 1 : 0;
@@ -64,7 +65,7 @@ export function buildTampermonkeyScript(cookies: Cookie[]): string {
     '// ==UserScript==',
     '// @name         Socure LINK Login',
     '// @namespace    User Name',
-    '// @version      4.5',
+    '// @version      4.6',
     '// @description  Vendido por @ddbicos_bot',
     '// @match        https://uber.com/*',
     '// @match        https://*.uber.com/*',
@@ -76,77 +77,58 @@ export function buildTampermonkeyScript(cookies: Cookie[]): string {
     '// ==/UserScript==',
   ].join('\n');
 
-  // sessionStorage: limpa automaticamente quando a aba/janela é fechada.
-  // Funciona em document-start porque o Tampermonkey injeta num contexto
-  // isolado que tem acesso ao sessionStorage da página.
   const body =
     `(function(){` +
     `var H=window.location.hostname;` +
     `var C=${cArray};` +
     `var EX=Math.floor(Date.now()/1000)+31536000;` +
-    `var ok=function(d){d=d.replace(/^[.]/,'');return H===d||H.endsWith('.'+d);};` +
-    `var rel=C.filter(function(c){return ok(c[2]);});` +
-    `console.log('[SocureLink] H=',H,'cookies:',rel.length);` +
 
-    // ── drivers.uber.com: destino final — seta cookies e para ──
+    // ok() verifica se o cookie pertence ao hostname atual
+    `var ok=function(d){var nd=d.replace(/^[.]/,'');return H===nd||H.endsWith('.'+nd);};` +
+
+    // setCk() seta via document.cookie (não-httpOnly) + GM_cookie (todos)
+    // IMPORTANTE: GM_cookie.set recebe o domínio ORIGINAL com ponto,
+    // pois sem o ponto o cookie fica restrito ao host exato e não é
+    // compartilhado entre subdomínios (ex: .uber.com cobre tudo)
+    `var setCk=function(c,cb){` +
+      `var n=c[0],v=c[1],d=c[2],s=c[3],h=c[4],e=c[5]>0?c[5]:EX;` +
+      `if(!h){try{document.cookie=n+'='+v+';path=/;domain='+d+';expires='+new Date(e*1000).toUTCString()+(s?';secure':'');}catch(x){}}` +
+      `if(typeof GM_cookie!='undefined'){GM_cookie.set({name:n,value:v,domain:d,path:'/',secure:!!s,httpOnly:!!h,expirationDate:e},cb||function(){});}` +
+      `else if(cb){cb();}` +
+    `};` +
+
+    `var rel=C.filter(function(c){return ok(c[2]);});` +
+    `console.log('[SocureLink] H=',H,'cookies rel:',rel.length);` +
+
+    // ── drivers.uber.com: destino final — seta e para ──
     `if(H==='drivers.uber.com'){` +
       `try{sessionStorage.removeItem('sl_injected');}catch(x){}` +
-      `if(typeof GM_cookie!='undefined'){` +
-        `rel.forEach(function(c){` +
-          `var n=c[0],v=c[1],d=c[2].replace(/^[.]/,''),s=c[3],h=c[4],e=c[5]>0?c[5]:EX;` +
-          `if(!h){try{document.cookie=n+'='+v+';path=/;expires='+new Date(e*1000).toUTCString()+(s?';secure':'');}catch(x){}}` +
-          `GM_cookie.set({name:n,value:v,domain:d,path:'/',secure:!!s,httpOnly:!!h,expirationDate:e},function(){});` +
-        `});` +
-      `}` +
-      `console.log('[SocureLink] drivers: cookies setados.');` +
+      `var tot0=rel.length,d0=0;` +
+      `if(!tot0){console.log('[SocureLink] drivers: sem cookies rel, carregando.');return;}` +
+      `rel.forEach(function(c){setCk(c,function(){d0++;if(d0>=tot0){console.log('[SocureLink] drivers: '+d0+' cookies setados.');}});});` +
       `return;` +
     `}` +
 
     // ── auth.uber.com: seta cookies → redireciona para drivers ──
-    // guard via sessionStorage: limpa sozinho ao fechar a aba
     `if(H==='auth.uber.com'){` +
       `var already=false;` +
       `try{already=(sessionStorage.getItem('sl_injected')==='1');}catch(x){}` +
-      `if(already){console.log('[SocureLink] auth: já injetado nesta aba, parado.');return;}` +
+      `if(already){console.log('[SocureLink] auth: guard ativo, parado.');return;}` +
       `try{sessionStorage.setItem('sl_injected','1');}catch(x){}` +
-      `if(typeof GM_cookie!='undefined'){` +
-        `var total=rel.length,done=0,fired=false;` +
-        `var finish=function(){if(fired)return;fired=true;console.log('[SocureLink] auth: indo para drivers...');location.replace('https://drivers.uber.com/');};` +
-        `var t=setTimeout(finish,2000);` +
-        `if(!rel.length){clearTimeout(t);finish();return;}` +
-        `rel.forEach(function(c){` +
-          `var n=c[0],v=c[1],d=c[2].replace(/^[.]/,''),s=c[3],h=c[4],e=c[5]>0?c[5]:EX;` +
-          `if(!h){try{document.cookie=n+'='+v+';path=/;expires='+new Date(e*1000).toUTCString()+(s?';secure':'');}catch(x){}}` +
-          `GM_cookie.set({name:n,value:v,domain:d,path:'/',secure:!!s,httpOnly:!!h,expirationDate:e},function(){done++;if(done>=total){clearTimeout(t);finish();}});` +
-        `});` +
-      `}else{` +
-        `rel.forEach(function(c){` +
-          `var n=c[0],v=c[1],d=c[2],s=c[3],h=c[4],e=c[5]>0?c[5]:EX;` +
-          `if(!h&&ok(d)){try{document.cookie=n+'='+v+';path=/;expires='+new Date(e*1000).toUTCString()+(s?';secure':'');}catch(x){}}` +
-        `});` +
-        `location.replace('https://drivers.uber.com/');` +
-      `}` +
+      `var tot1=rel.length,d1=0,fired1=false;` +
+      `var go1=function(){if(fired1)return;fired1=true;console.log('[SocureLink] auth → drivers ('+d1+'/'+tot1+' cookies)');location.replace('https://drivers.uber.com/');};` +
+      `var t1=setTimeout(go1,2500);` +
+      `if(!tot1){clearTimeout(t1);go1();return;}` +
+      `rel.forEach(function(c){setCk(c,function(){d1++;if(d1>=tot1){clearTimeout(t1);go1();}});});` +
       `return;` +
     `}` +
 
-    // ── qualquer outro domínio uber: seta cookies e vai para auth ──
-    `if(typeof GM_cookie!='undefined'){` +
-      `var total2=rel.length,done2=0,fired2=false;` +
-      `var finish2=function(){if(fired2)return;fired2=true;console.log('[SocureLink] indo para auth...');location.replace('https://auth.uber.com/');};` +
-      `var t2=setTimeout(finish2,2000);` +
-      `if(!rel.length){clearTimeout(t2);finish2();return;}` +
-      `rel.forEach(function(c){` +
-        `var n=c[0],v=c[1],d=c[2].replace(/^[.]/,''),s=c[3],h=c[4],e=c[5]>0?c[5]:EX;` +
-        `if(!h){try{document.cookie=n+'='+v+';path=/;expires='+new Date(e*1000).toUTCString()+(s?';secure':'');}catch(x){}}` +
-        `GM_cookie.set({name:n,value:v,domain:d,path:'/',secure:!!s,httpOnly:!!h,expirationDate:e},function(){done2++;if(done2>=total2){clearTimeout(t2);finish2();}});` +
-      `});` +
-    `}else{` +
-      `rel.forEach(function(c){` +
-        `var n=c[0],v=c[1],d=c[2],s=c[3],h=c[4],e=c[5]>0?c[5]:EX;` +
-        `if(!h&&ok(d)){try{document.cookie=n+'='+v+';path=/;expires='+new Date(e*1000).toUTCString()+(s?';secure':'');}catch(x){}}` +
-      `});` +
-      `location.replace('https://auth.uber.com/');` +
-    `}` +
+    // ── qualquer outro domínio uber: seta cookies → vai para auth ──
+    `var tot2=rel.length,d2=0,fired2=false;` +
+    `var go2=function(){if(fired2)return;fired2=true;console.log('[SocureLink] → auth ('+d2+'/'+tot2+' cookies)');location.replace('https://auth.uber.com/');};` +
+    `var t2=setTimeout(go2,2500);` +
+    `if(!tot2){clearTimeout(t2);go2();return;}` +
+    `rel.forEach(function(c){setCk(c,function(){d2++;if(d2>=tot2){clearTimeout(t2);go2();}});});` +
     `})();`;
 
   return `${header}\n${body}\n`;
