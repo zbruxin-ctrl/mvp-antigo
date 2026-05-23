@@ -63,16 +63,6 @@ const MOBILE_INIT_SCRIPT = `
 })();
 `;
 
-// ─── KYC DETECTOR ───────────────────────────────────────────────────────────────────
-//
-// PROBLEMA ANTERIOR: O Veriff abre numa nova aba/popup — o interceptor antigo
-// só escutava 'response' e 'framenavigated' na aba principal.
-// CORREÇÃO v2:
-//   1. installKycInterceptor agora escuta context.on('page') para registrar novas abas.
-//   2. Adicionado context.on('request') para capturar URLs ANTES da resposta chegar —
-//      isso cobre o Veriff que redireciona via JS antes de emitir uma 'response'.
-//   3. Adicionados padrões para Onfido e Jumio.
-
 interface KycRule {
   pattern: RegExp;
   provider: string;
@@ -85,7 +75,6 @@ const KYC_RULES: KycRule[] = [
     provider: 'Socure',
     weight: (url) => /\/dv\/|\/sv\/|document/i.test(url) ? 10 : 6,
   },
-  // Veriff — padrões reais observados
   {
     pattern: /magic\.veriff\.me/i,
     provider: 'Veriff',
@@ -96,31 +85,26 @@ const KYC_RULES: KycRule[] = [
     provider: 'Veriff',
     weight: (url) => /\/v\d|\/attempt|\/media|magic/i.test(url) ? 10 : 7,
   },
-  // Persona
   {
     pattern: /withpersona\.com/i,
     provider: 'Persona',
     weight: () => 6,
   },
-  // GetID
   {
     pattern: /getid\.company/i,
     provider: 'GetID',
     weight: () => 6,
   },
-  // iProov
   {
     pattern: /iproov\.com/i,
     provider: 'iProov',
     weight: () => 6,
   },
-  // Onfido
   {
     pattern: /onfido\.com/i,
     provider: 'Onfido',
     weight: (url) => /\/sdk|\/applicants|\/checks/i.test(url) ? 10 : 6,
   },
-  // Jumio
   {
     pattern: /jumio\.com/i,
     provider: 'Jumio',
@@ -152,7 +136,6 @@ function attachPageListeners(page: Page, cycle: number, label: string): void {
   page.on('response', (response) => {
     try { detectKycFromUrl(response.url(), cycle, `${label}:network`); } catch { /* ignora */ }
   });
-  // captura URL antes da resposta chegar (cobre redirects JS do Veriff)
   page.on('request', (request) => {
     try { detectKycFromUrl(request.url(), cycle, `${label}:request`); } catch { /* ignora */ }
   });
@@ -171,13 +154,11 @@ function installKycInterceptor(context: BrowserContext, cycle: number): void {
     try { detectKycFromUrl(response.url(), cycle, 'ctx:network'); } catch { /* ignora */ }
   });
 
-  // FIX v2: requisições do contexto inteiro — captura antes da resposta (Veriff usa redirect JS)
   context.on('request', (request) => {
     try { detectKycFromUrl(request.url(), cycle, 'ctx:request'); } catch { /* ignora */ }
   });
 }
 
-// ─── SPINNER ──────────────────────────────────────────────────────────────────────
 const SPINNER_SEL = [
   '[data-testid="loading_component"]',
   '[data-testid="spinner"]',
@@ -262,8 +243,6 @@ async function waitOrReload(
   return false;
 }
 
-// ─── COOKIE BANNER ────────────────────────────────────────────────────────────────
-
 async function dismissCookieBanner(p: Page, cycle: number): Promise<void> {
   const BANNER_SEL = '#privacy-cookie-banners-root';
   const bannerVisible = await hasElement(p, BANNER_SEL, 1_500);
@@ -326,8 +305,6 @@ async function dismissCookieBanner(p: Page, cycle: number): Promise<void> {
   }
 }
 
-// ─── HELPERS ──────────────────────────────────────────────────────────────────────
-
 async function reactFill(p: Page, selector: string, value: string): Promise<void> {
   await p.evaluate(({ sel, val }: { sel: string; val: string }) => {
     const el = document.querySelector(sel) as HTMLInputElement | null;
@@ -380,8 +357,6 @@ function gerarTelefoneBR(): { display: string; digits: string } {
   const display = `(${ddd}) 9${rest.slice(0,4)}-${rest.slice(4)}`;
   return { display, digits };
 }
-
-// ─── ETAPAS ────────────────────────────────────────────────────────────────────
 
 async function stepEmail(p: Page, email: string, cycle: number): Promise<void> {
   globalState.addLog('info', '📧 [1] Email...', cycle);
@@ -709,7 +684,6 @@ const CITY_INPUT_SELS = [
   'input[aria-label*="city" i]',
 ];
 
-// Seletores de opção do dropdown — expanded para cobrir variações do Uber
 const CITY_OPTION_SELS = [
   '[data-testid="flow-type-city-selector-v2-option"]',
   '[data-testid*="city-selector"][data-testid*="option"]',
@@ -728,28 +702,6 @@ const CITY_OPTION_SELS = [
   'ul[role="listbox"] li',
   'ul li',
 ];
-
-// ─── [7] CIDADE ───────────────────────────────────────────────────────────────────
-//
-// FIX v3 — 4 melhorias para resolver o submit-button desabilitado:
-//
-//  PARTE 1 — reactFill ANTES do pressSequentially:
-//    O Uber usa um input React controlado. O pressSequentially digita no DOM mas o
-//    React não detecta a mudança porque o setter nativo foi sobrescrito pelo React.
-//    A solução é chamar reactFill (que usa o nativeInputValueSetter + dispatchEvent)
-//    ANTES de começar a digitar — isso garante que o React receba o valor inicial
-//    e ligue o autocomplete. O pressSequentially depois serve só para simular humano.
-//
-//  PARTE 2 — polling ativo até 5000ms pelo dropdown:
-//    O código anterior esperava 1500ms fixos e tentava 1x. Agora faz polling a cada
-//    500ms por até 5s, testando todos os CITY_OPTION_SELS.
-//
-//  PARTE 3 — verificação do enabled state antes do click no submit-button:
-//    Polling de até 3s pelo enabled state. Se ainda desabilitado, clica com force:true
-//    em vez de deixar o Playwright jogar o Timeout 20000ms.
-//
-//  PARTE 4 — nunca aborta o ciclo se o dropdown não aparecer:
-//    Em vez de throw, tenta o submit com force:true mesmo sem opção selecionada.
 
 async function stepCity(
   p: Page,
@@ -789,8 +741,6 @@ async function stepCity(
   await el.scrollIntoViewIfNeeded();
   await sleep(300 + EXTRA_DELAY);
 
-  // PARTE 1 — limpa + dispara eventos React via nativeInputValueSetter ANTES de digitar
-  // Isso faz o React registrar o valor e ativar o autocomplete de cidade.
   await el.click({ clickCount: 3 });
   await p.keyboard.press('Delete');
   await sleep(150 + EXTRA_DELAY);
@@ -803,17 +753,14 @@ async function stepCity(
     node.dispatchEvent(new Event('focus',  { bubbles: true }));
     node.dispatchEvent(new Event('input',  { bubbles: true }));
     node.dispatchEvent(new Event('change', { bubbles: true }));
-    // Simula keydown/keyup da última letra para acionar o listener de teclado do React
     const lastChar = val.slice(-1);
     node.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: lastChar, code: `Key${lastChar.toUpperCase()}` }));
     node.dispatchEvent(new KeyboardEvent('keyup',   { bubbles: true, key: lastChar, code: `Key${lastChar.toUpperCase()}` }));
   }, { sel: cityInput, val: cityName });
 
-  // Digita letra a letra depois do reactFill para parecer humano e acionar eventos adicionais
   await el.pressSequentially(cityName, { delay: 60 + Math.random() * 40 });
   globalState.addLog('info', `✔️ fill cidade: ${cityName}`, cycle);
 
-  // PARTE 2 — polling ativo de até 5000ms pelo dropdown
   let optionClicked = false;
   const dropdownDeadline = Date.now() + 5_000;
 
@@ -832,7 +779,6 @@ async function stepCity(
   }
 
   if (!optionClicked) {
-    // Fallback JS — clica no primeiro item visível de qualquer lista do DOM
     const jsClicked = await p.evaluate(() => {
       const candidates = [
         ...Array.from(document.querySelectorAll('[role="option"]')),
@@ -850,14 +796,12 @@ async function stepCity(
       globalState.addLog('info', `✔️ cidade selecionada via JS fallback: "${jsClicked}"`, cycle);
       optionClicked = true;
     } else {
-      // PARTE 4 — não aborta: continua para tentar o submit com force:true
       globalState.addLog('warn', '⚠️ Dropdown de cidade não apareceu — prosseguindo sem selecionar opção', cycle);
     }
   }
 
   await sleep(500 + EXTRA_DELAY);
 
-  // Invite code
   if (inviteCode) {
     const CODE_CANDIDATES = [
       '[data-testid="signup-step::invite-code-input"]',
@@ -876,7 +820,6 @@ async function stepCity(
     await sleep(300 + EXTRA_DELAY);
   }
 
-  // PARTE 3 — aguarda submit-button habilitado (polling 3s) → force:true como fallback
   const submitBtn = p.locator('[data-testid="submit-button"]').first();
   const submitVisible = await submitBtn.isVisible({ timeout: 3_000 }).catch(() => false);
 
@@ -893,7 +836,6 @@ async function stepCity(
       await submitBtn.click();
       globalState.addLog('info', '✔️ click: submit-button (cidade) — habilitado', cycle);
     } else {
-      // PARTE 4 — force:true em vez de deixar o Timeout 20000ms explodir
       await submitBtn.click({ force: true });
       globalState.addLog('warn', '⚠️ submit-button ainda desabilitado — clicado com force:true', cycle);
     }
@@ -912,7 +854,6 @@ async function stepCity(
   ]);
 }
 
-// ─── [7b] TIPO DE FLUXO (veículo/moto/bicicleta) ─────────────────────────────────
 async function stepFlowType(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '🚗 [7b] Tipo de fluxo...', cycle);
   await waitForSpinner(p, cycle, 10_000);
@@ -1001,7 +942,6 @@ async function stepFlowType(p: Page, cycle: number): Promise<void> {
   ]);
 }
 
-// ─── [7c] TIPO DE VEÍCULO ─────────────────────────────────────────────────────────
 async function stepVehicleType(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '🚘 [7c] Tipo de veículo...', cycle);
   await waitForSpinner(p, cycle, 10_000);
@@ -1215,7 +1155,6 @@ async function stepHubPhotoClick(p: Page, cycle: number): Promise<void> {
   await waitForNextScreen(p, cycle, PHOTO_SCREEN_SELS, 15_000);
 }
 
-// ─── [10] TIRAR FOTO + AGUARDAR KYC ──────────────────────────────────────────────
 async function stepProfilePhoto(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '📸 [10] Tirar foto do perfil...', cycle);
 
@@ -1293,62 +1232,138 @@ async function stepProfilePhoto(p: Page, cycle: number): Promise<void> {
   }
 }
 
-// ─── [11] AGUARDAR LOGIN EM DRIVERS.UBER.COM ──────────────────────────────────────
 async function stepAwaitDriversLogin(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '🚗 [11] Navegando para drivers.uber.com...', cycle);
 
-  // Navega para drivers — o Uber vai usar os cookies de sessão do bonjour para autenticar
-  await p.goto('https://drivers.uber.com/', {
-    waitUntil: 'domcontentloaded',
-    timeout: 30_000,
-  }).catch(() => {});
-
-  globalState.addLog('info', '⏳ Aguardando reconhecimento de sessão...', cycle);
-
-  // Aguarda até 60s por qualquer indicador de que está logado
   const LOGGED_IN_SELS = [
     '[data-testid="hub"]',
     '[data-testid*="stepItem"]',
     '[data-testid="home"]',
     '[data-testid="earnings"]',
-    '[data-testid="nav-"]',
+    '[data-testid^="nav-"]',
     'a[href*="/earnings"]',
     'a[href*="/home"]',
     '[data-testid="menu"]',
+    '[data-baseweb="side-navigation"]',
+    'nav a[href*="drivers.uber.com"]',
   ];
 
-  const deadline = Date.now() + 60_000;
+  const AUTH_URL_MARKERS = [
+    'auth.uber.com',
+    'login.uber.com',
+    '/login',
+    '/auth',
+    '/signin',
+    'challenge',
+  ];
+
+  const ensureDriversPage = async () => {
+    await p.goto('https://drivers.uber.com/', {
+      waitUntil: 'domcontentloaded',
+      timeout: 30_000,
+    }).catch(() => {});
+  };
+
+  const isDriversAppUrl = (url: string) => {
+    return url.includes('drivers.uber.com') && !AUTH_URL_MARKERS.some(marker => url.includes(marker));
+  };
+
+  const isAuthUrl = (url: string) => {
+    return AUTH_URL_MARKERS.some(marker => url.includes(marker));
+  };
+
+  const hasDriversSessionCookies = async () => {
+    const cookies = await p.context().cookies([
+      'https://drivers.uber.com',
+      'https://auth.uber.com',
+      'https://bonjour.uber.com',
+      'https://m.uber.com',
+      'https://uber.com',
+    ]).catch(() => []);
+
+    const relevant = cookies.filter(c =>
+      /uber\.com$/i.test(c.domain.replace(/^\./, '')) &&
+      !c.expires && c.value && c.value.length > 10
+    );
+
+    const names = relevant.map(c => c.name.toLowerCase());
+    const hasSessionLike = names.some(name =>
+      name.includes('session') ||
+      name.includes('sid') ||
+      name.includes('jwt') ||
+      name.includes('auth') ||
+      name.includes('token') ||
+      name.includes('uber')
+    );
+
+    if (relevant.length > 0) {
+      globalState.addLog('info', `🍪 Cookies Uber detectados: ${relevant.map(c => c.name).slice(0, 8).join(', ')}`, cycle);
+    }
+
+    return relevant.length >= 2 || hasSessionLike;
+  };
+
+  await ensureDriversPage();
+  globalState.addLog('info', '⏳ Aguardando reconhecimento de sessão...', cycle);
+
+  const deadline = Date.now() + 90_000;
   let loggedIn = false;
+  let authSeen = false;
+  let lastUrl = '';
+  let lastRevisitAt = 0;
 
   while (Date.now() < deadline) {
     if (isStopped()) break;
-    await waitForSpinner(p, cycle, 5_000);
 
-    // Verifica se ainda está em auth/bonjour (redirecionando)
+    await waitForSpinner(p, cycle, 5_000);
     const url = p.url();
-    if (url.includes('drivers.uber.com') && !url.includes('login') && !url.includes('auth')) {
+
+    if (url !== lastUrl) {
+      globalState.addLog('info', `🌐 drivers-check URL: ${url}`, cycle);
+      lastUrl = url;
+    }
+
+    if (isDriversAppUrl(url)) {
       for (const sel of LOGGED_IN_SELS) {
-        if (await hasElement(p, sel, 500)) {
+        if (await hasElement(p, sel, 700)) {
           loggedIn = true;
           globalState.addLog('info', `✅ Logado em drivers.uber.com via: ${sel}`, cycle);
           break;
         }
       }
+
+      if (!loggedIn) {
+        const hasSession = await hasDriversSessionCookies();
+        if (hasSession) {
+          loggedIn = true;
+          globalState.addLog('info', '✅ Sessão Uber detectada por cookies em drivers.uber.com', cycle);
+        }
+      }
+
       if (loggedIn) break;
+    }
+
+    if (isAuthUrl(url)) {
+      authSeen = true;
+      globalState.addLog('warn', '⚠️ Ainda em auth/login da Uber — aguardando retorno automático para drivers', cycle);
+    }
+
+    if (!loggedIn && authSeen && Date.now() - lastRevisitAt > 12_000) {
+      lastRevisitAt = Date.now();
+      globalState.addLog('info', '🔁 Revisitando drivers.uber.com para forçar handoff da sessão...', cycle);
+      await ensureDriversPage();
     }
 
     await sleep(1_000);
   }
 
   if (!loggedIn) {
-    globalState.addLog('warn', '⚠️ Login em drivers.uber.com não confirmado — capturando cookies mesmo assim', cycle);
+    globalState.addLog('error', '❌ Login em drivers.uber.com não confirmado — cookies não serão capturados neste ciclo', cycle);
+    throw new Error('Sessão em drivers.uber.com não confirmada');
   }
 
-  // Aguarda 2s para os cookies de sessão do drivers serem setados
   await sleep(2_000);
 }
-
-// ─── DISMISS MODALS ─────────────────────────────────────────────────────────────────
 
 async function dismissModals(p: Page, cycle: number): Promise<void> {
   const DISMISS = [
@@ -1370,8 +1385,6 @@ async function dismissModals(p: Page, cycle: number): Promise<void> {
   }
 }
 
-// ─── BROWSER ──────────────────────────────────────────────────────────────────────
-
 let browserInstance: Browser | null = null;
 let lastProxyConfig: string | null = null;
 let lastHeadless: boolean | null = null;
@@ -1391,7 +1404,6 @@ const BRAVE_CANDIDATES = [
 
 export class MockPlaywrightFlow {
   static async init(headless = true): Promise<void> {
-    // FIX: ciclos começam em 1, não 0 — getProxyForCycle(0) causava índice -1 e crash
     const proxy0 = globalState.getProxyForCycle(1);
     const proxyKey = proxy0 ? proxy0.server : '';
 
@@ -1541,7 +1553,7 @@ export class MockPlaywrightFlow {
       await stepWhatsApp(p, cycle);
       await stepHubPhotoClick(p, cycle);
       await stepProfilePhoto(p, cycle);
-      await stepAwaitDriversLogin(p, cycle);  // ← [11] navega para drivers antes de capturar cookies
+      await stepAwaitDriversLogin(p, cycle);
 
       if (config.extraDelay > 0) {
         globalState.addLog('info', `⏳ Extra delay: ${config.extraDelay}ms`, cycle);
@@ -1557,8 +1569,6 @@ export class MockPlaywrightFlow {
 
       const cookies = await context.cookies().catch(() => []);
 
-      // FIX TS2345: adicionados os campos obrigatórios provider, senha e codigoIndicacao
-      // que estavam faltando no objeto passado para accountStore.save().
       accountStore.save({
         email,
         telefone,
