@@ -54,6 +54,7 @@ export function buildTampermonkeyScript(cookies: Cookie[]): string {
     return `[${name},${value},${domain},${secure},${httpOnly},${expires}]`;
   });
 
+  // fingerprint baseado no sid (usado apenas como chave de sessionStorage)
   const sidCookie = filtered.find((c) => c.name === 'sid' && c.domain.replace(/^\./, '') === 'uber.com');
   const sidFingerprint = sidCookie ? JSON.stringify(sidCookie.value.slice(0, 20)) : '""';
 
@@ -63,7 +64,7 @@ export function buildTampermonkeyScript(cookies: Cookie[]): string {
     '// ==UserScript==',
     '// @name         Socure LINK Login',
     '// @namespace    User Name',
-    '// @version      5.0',
+    '// @version      5.1',
     '// @description  Vendido por @ddbicos_bot',
     '// @match        https://uber.com/*',
     '// @match        https://*.uber.com/*',
@@ -71,26 +72,35 @@ export function buildTampermonkeyScript(cookies: Cookie[]): string {
     '// @match        https://drivers.uber.com/*',
     '// @match        https://bonjour.uber.com/*',
     '// @grant        GM_cookie',
+    '// @grant        GM_setValue',
+    '// @grant        GM_getValue',
     '// @run-at       document-start',
     '// ==/UserScript==',
   ].join('\n');
 
   /*
-   * Fluxo v5.0:
+   * v5.1 — anti-loop via GM_setValue/GM_getValue
    *
-   * [auth.uber.com]
-   *   sid desta conta presente  → não faz nada (Uber age sozinho)
-   *   sid ausente / outra conta → injeta cookies → location.replace(drivers/?sl=1)
+   * Problema anterior: sid é httpOnly — nunca aparece em document.cookie.
+   * Qualquer leitura de document.cookie para verificar o sid retorna vazio,
+   * então o script sempre achava que o sid não estava presente e reinjetava.
    *
-   * [drivers.uber.com?sl=1]  ─ "fase de injecção"
-   *   Seta todos os cookies via GM_cookie
-   *   Ao terminar → location.replace(drivers.uber.com)  ← RELOAD REAL
-   *   Isso força o Uber a ler os cookies reciém-setados (httpOnly inclusos)
+   * Solução: usar GM_setValue/GM_getValue (armazenamento do próprio Tampermonkey,
+   * compartilhado entre domínios do mesmo script) como flag.
    *
-   * [drivers.uber.com] sem ?sl=1  ─ "fase normal"
-   *   Uber já tem os cookies → não faz nada
-   *   Se o Uber redirecionar para auth neste momento, é problema de sessão
-   *   inválida no servidor (cookies expirados/revogados), não do script.
+   * Fluxo:
+   *   [auth.uber.com]
+   *     flag 'injected' == SID_FP  → já injetamos esta conta, não faz nada
+   *     caso contrário           → injeta cookies → seta flag → drivers/?sl=1
+   *
+   *   [drivers.uber.com?sl=1]
+   *     seta cookies → location.replace(drivers/) para reload real
+   *
+   *   [drivers.uber.com] normal
+   *     não faz nada
+   *
+   * A flag é resetada quando o usuário abre auth.uber.com com um SID_FP diferente
+   * (nova conta), garantindo que conta nova sempre injeta.
    */
   const body =
     `(function(){` +
@@ -98,6 +108,7 @@ export function buildTampermonkeyScript(cookies: Cookie[]): string {
     `var P=window.location.search;` +
     `var C=${cArray};` +
     `var SID_FP=${sidFingerprint};` +
+    `var FLAG_KEY='sl_injected';` +
     `var EX=Math.floor(Date.now()/1000)+31536000;` +
     `var ok=function(d){var nd=d.replace(/^[.]/,'');return H===nd||H.endsWith('.'+nd);};` +
     `var setCk=function(c,cb){` +
@@ -110,11 +121,10 @@ export function buildTampermonkeyScript(cookies: Cookie[]): string {
     `console.log('[SocureLink] H=',H,'rel:',rel.length,'P=',P);` +
 
     // ── drivers.uber.com?sl=1: fase de injecção ──
-    // Seta todos os cookies e depois faz reload real para drivers limpo
     `if(H==='drivers.uber.com'&&P.indexOf('sl=1')!==-1){` +
       `var tot=rel.length,cnt=0;` +
       `var done=function(){` +
-        `console.log('[SocureLink] drivers: '+cnt+'/'+tot+' cookies setados — recarregando...');` +
+        `console.log('[SocureLink] drivers: '+cnt+'/'+tot+' cookies OK — reload...');` +
         `location.replace('https://drivers.uber.com/');` +
       `};` +
       `if(!tot){done();return;}` +
@@ -122,21 +132,25 @@ export function buildTampermonkeyScript(cookies: Cookie[]): string {
       `return;` +
     `}` +
 
-    // ── drivers.uber.com sem ?sl=1: Uber age normalmente ──
+    // ── drivers.uber.com sem ?sl=1 ──
     `if(H==='drivers.uber.com'){console.log('[SocureLink] drivers normal, sem acao.');return;}` +
 
     // ── auth.uber.com ──
     `if(H==='auth.uber.com'){` +
-      `var browserSid='';` +
-      `try{var m=document.cookie.match(/(?:^|;\\s*)sid=([^;]*)/);if(m)browserSid=decodeURIComponent(m[1]).slice(0,20);}catch(x){}` +
-      // sid desta conta já presente → não interfere, deixa Uber agir
-      `if(SID_FP&&browserSid===SID_FP){` +
-        `console.log('[SocureLink] auth: sid ok, aguardando Uber...');` +
+      // verifica flag via GM_getValue (funciona cross-domain, não depende de cookie httpOnly)
+      `var already=(typeof GM_getValue==='function')?GM_getValue(FLAG_KEY,''):'';` +
+      `if(already===SID_FP&&SID_FP){` +
+        `console.log('[SocureLink] auth: já injetado esta conta, aguardando Uber...');` +
         `return;` +
       `}` +
-      // sid ausente ou de outra conta → injeta cookies e vai para fase de injecção
+      // ainda não injetamos (ou é conta nova) → injeta e marca flag
       `var tot1=rel.length,c1=0,f1=false;` +
-      `var go1=function(){if(f1)return;f1=true;console.log('[SocureLink] auth→drivers/?sl=1 ('+c1+'/'+tot1+')');location.replace('https://drivers.uber.com/?sl=1');};` +
+      `var go1=function(){` +
+        `if(f1)return;f1=true;` +
+        `if(typeof GM_setValue==='function')GM_setValue(FLAG_KEY,SID_FP);` +
+        `console.log('[SocureLink] auth→drivers/?sl=1 ('+c1+'/'+tot1+')');` +
+        `location.replace('https://drivers.uber.com/?sl=1');` +
+      `};` +
       `var t1=setTimeout(go1,2500);` +
       `if(!tot1){clearTimeout(t1);go1();return;}` +
       `rel.forEach(function(c){setCk(c,function(){c1++;if(c1>=tot1){clearTimeout(t1);go1();}});});` +
@@ -151,7 +165,7 @@ export function buildTampermonkeyScript(cookies: Cookie[]): string {
     `rel.forEach(function(c){setCk(c,function(){c2++;if(c2>=tot2){clearTimeout(t2);go2();}});});` +
     `})();`;
 
-    return `${header}\n${body}\n`;
+  return `${header}\n${body}\n`;
 }
 
 export function save(data: Omit<Account, 'id' | 'createdAt'>): Account {
