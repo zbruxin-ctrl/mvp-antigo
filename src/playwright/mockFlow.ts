@@ -27,9 +27,6 @@ async function hasElement(p: Page, sel: string, timeout = 600): Promise<boolean>
   return p.locator(sel).first().isVisible({ timeout }).catch(() => false);
 }
 
-/**
- * Aguarda o forward-button ficar visível E habilitado, depois clica.
- */
 async function tryClickForward(p: Page, cycle: number, visibilityTimeoutMs = 3_000): Promise<boolean> {
   const FORWARD = '[data-testid="forward-button"]';
 
@@ -255,7 +252,7 @@ function randomBrazilPhone(): { formatted: string; digits: string } {
 
 const PASSWORD = 'Secure@2024!';
 
-// ─── HELPERS ─────────────────────────────────────────────────────────────────────
+// ─── HELPERS ────────────────────────────────────────────────────────────────────
 
 async function getTestIds(p: Page): Promise<string> {
   try {
@@ -273,7 +270,6 @@ async function getButtonTexts(p: Page): Promise<string> {
   } catch { return '(erro)'; }
 }
 
-// findAsync: substitui Array.find com callback async (Array.find nao funciona com async)
 async function findAsync(sels: string[], check: (sel: string) => Promise<boolean>): Promise<string | undefined> {
   for (const sel of sels) {
     if (await check(sel)) return sel;
@@ -281,10 +277,6 @@ async function findAsync(sels: string[], check: (sel: string) => Promise<boolean
   return undefined;
 }
 
-/**
- * Aguarda a URL mudar para fora de um path esperado (máx maxMs).
- * Usado para garantir que a página realmente navegou antes de continuar.
- */
 async function waitForUrlChange(p: Page, cycle: number, currentUrlContains: string, maxMs = 15_000): Promise<boolean> {
   const start = Date.now();
   while (Date.now() - start < maxMs) {
@@ -300,7 +292,37 @@ async function waitForUrlChange(p: Page, cycle: number, currentUrlContains: stri
   return false;
 }
 
-// ─── STEPS ───────────────────────────────────────────────────────────────────────
+/**
+ * Verifica se um checkbox está marcado no DOM (checked ou aria-checked=true).
+ * Tenta via input[type=checkbox] dentro do container do seletor clicado,
+ * ou pelo próprio estado do elemento com role=checkbox.
+ */
+async function isCheckboxChecked(p: Page, clickedSel: string): Promise<boolean> {
+  try {
+    return await p.evaluate((sel: string) => {
+      const el = document.querySelector(sel);
+      if (!el) return false;
+      // Caso 1: é um input[type=checkbox] diretamente
+      if ((el as HTMLInputElement).type === 'checkbox') return (el as HTMLInputElement).checked;
+      // Caso 2: label — procura input dentro ou associado
+      if (el.tagName === 'LABEL') {
+        const input = el.querySelector('input[type="checkbox"]') ||
+          document.getElementById((el as HTMLLabelElement).htmlFor ?? '') as HTMLInputElement | null;
+        if (input) return (input as HTMLInputElement).checked;
+      }
+      // Caso 3: role=checkbox
+      const ariaChecked = el.getAttribute('aria-checked');
+      if (ariaChecked !== null) return ariaChecked === 'true';
+      // Caso 4: qualquer input checkbox na tela
+      const anyCheckbox = document.querySelector('input[type="checkbox"]') as HTMLInputElement | null;
+      return anyCheckbox ? anyCheckbox.checked : false;
+    }, clickedSel);
+  } catch {
+    return false;
+  }
+}
+
+// ─── STEPS ─────────────────────────────────────────────────────────────────────
 
 async function stepEmail(p: Page, cycle: number, email: string): Promise<void> {
   globalState.addLog('info', '📧 [1] Email...', cycle);
@@ -436,22 +458,43 @@ async function stepTerms(p: Page, cycle: number): Promise<void> {
     'input[type="checkbox"]', '[data-testid*="checkbox"]', '[role="checkbox"]',
   ];
 
-  let checkboxClicked = false;
+  let checkedSel: string | undefined;
+
   for (const sel of CHECKBOX_CANDIDATES) {
     if (await hasElement(p, sel, 1_000)) {
       await p.locator(sel).first().click({ force: true, timeout: 8_000 });
       globalState.addLog('info', `✔️ checkbox clicado via: ${sel}`, cycle);
-      checkboxClicked = true;
+      checkedSel = sel;
       break;
     }
   }
 
-  // Aguarda o botão habilitar após o checkbox antes de clicar
-  if (checkboxClicked) {
-    await sleep(1_200 + EXTRA_DELAY);
+  if (checkedSel) {
+    // FIX: aguarda até 10s para o checkbox ficar marcado no DOM antes de clicar Avançar
+    // O Uber só aceita o submit se o checkbox estiver checked no estado interno
+    const checkDeadline = Date.now() + 10_000;
+    let confirmed = false;
+    while (Date.now() < checkDeadline) {
+      if (await isCheckboxChecked(p, checkedSel)) {
+        confirmed = true;
+        break;
+      }
+      await sleep(300);
+    }
+    if (confirmed) {
+      globalState.addLog('info', '✔️ Checkbox confirmado como marcado no DOM', cycle);
+    } else {
+      // Tenta clicar de novo se não ficou marcado
+      globalState.addLog('warn', '⚠️ Checkbox não marcado após 10s — tentando novamente', cycle);
+      await p.locator(checkedSel).first().click({ force: true, timeout: 5_000 }).catch(() => {});
+      await sleep(800);
+    }
   } else {
     await sleep(800 + EXTRA_DELAY);
   }
+
+  // Aguarda mais 500ms após confirmação para o Uber sincronizar estado
+  await sleep(500);
 
   await tryClickForward(p, cycle, 5_000);
   await waitForNextScreen(p, cycle, [
@@ -463,6 +506,14 @@ async function stepTerms(p: Page, cycle: number): Promise<void> {
 
 async function stepCity(p: Page, cycle: number, cityName?: string): Promise<void> {
   globalState.addLog('info', '🏢 [7] Cidade...', cycle);
+
+  // FIX: aguarda até a página ter conteúdo (evita blank page após stepTerms inválido)
+  const PAGE_HAS_CONTENT = '[data-testid], input, button';
+  const contentDeadline = Date.now() + 10_000;
+  while (Date.now() < contentDeadline) {
+    if (await hasElement(p, PAGE_HAS_CONTENT, 600)) break;
+    await sleep(500);
+  }
 
   const CITY_SELS = [
     '[data-testid="flow-type-city-selector-v2-input"]',
@@ -497,8 +548,6 @@ async function stepCity(p: Page, cycle: number, cityName?: string): Promise<void
 
   await sleep(1_000 + EXTRA_DELAY);
 
-  // FIX: tenta clicar no botão "Avançar" visível na página (texto), não no forward-button data-testid
-  // O forward-button some após a cidade ser selecionada e o Uber avança automaticamente via JS
   const ADVANCE_BTN = 'button:has-text("Avançar"), button:has-text("Next"), button:has-text("Continue")';
   if (await hasElement(p, ADVANCE_BTN, 1_500)) {
     await p.locator(ADVANCE_BTN).first().click({ timeout: 5_000 }).catch(() => {});
@@ -510,8 +559,7 @@ async function stepCity(p: Page, cycle: number, cityName?: string): Promise<void
     }
   }
 
-  // FIX: aguarda a URL sair de "city" ou "city-select" antes de continuar
-  // Evita que os próximos steps rodem em cima da tela de cidade
+  // Aguarda URL sair de "city" antes de continuar
   const urlChanged = await waitForUrlChange(p, cycle, 'city', 15_000);
   if (!urlChanged) {
     globalState.addLog('warn', '⚠️ Cidade: URL não mudou — tentando Avançar novamente', cycle);
@@ -526,7 +574,6 @@ async function stepCity(p: Page, cycle: number, cityName?: string): Promise<void
 async function stepFlowType(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '🚗 [7b] Tipo de fluxo...', cycle);
 
-  // FIX: seletores precisos — sem *car* (bate em carbonInput da tela de cidade)
   const FLOW_SELS = [
     '[data-testid="flow-type-car"]',
     '[data-testid="flow-type-DRIVER"]',
@@ -537,8 +584,7 @@ async function stepFlowType(p: Page, cycle: number): Promise<void> {
     '[data-testid^="flow-type-"]',
   ];
 
-  const SCREEN_INDICATOR = FLOW_SELS.join(', ');
-  if (!(await hasElement(p, SCREEN_INDICATOR, 3_000))) {
+  if (!(await hasElement(p, FLOW_SELS.join(', '), 3_000))) {
     globalState.addLog('info', '⏩ Tela de tipo de fluxo não encontrada — pulando', cycle);
     return;
   }
@@ -558,7 +604,7 @@ async function stepFlowType(p: Page, cycle: number): Promise<void> {
   }
   await sleep(600 + EXTRA_DELAY);
   await tryClickForward(p, cycle, 1_500);
-  await waitForNextScreen(p, cycle, ['[data-testid="forward-button"]','[data-testid="vehicle-type"]','[data-testid^="vehicle-"]']);
+  await waitForNextScreen(p, cycle, ['[data-testid="forward-button"]','[data-testid="vehicle-type"]','[data-testid^="vehicle-type-"]']);
 }
 
 async function stepVehicleType(p: Page, cycle: number): Promise<void> {
@@ -625,7 +671,6 @@ async function stepProfilePhoto(p: Page, cycle: number): Promise<void> {
     'button:has-text("Take photo")',
     'input[type="file"][accept*="image"]',
   ];
-  // findAsync: Array.find não funciona com callback async
   const found = await findAsync(PHOTO_SELS, sel => hasElement(p, sel, 600));
   if (!found) {
     globalState.addLog('info', '⏩ Tela de foto não encontrada — pulando', cycle);
@@ -635,7 +680,7 @@ async function stepProfilePhoto(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '✔️ Foto: pulando via Avançar', cycle);
 }
 
-// ─── KYC FINAL ───────────────────────────────────────────────────────────────────
+// ─── KYC FINAL ──────────────────────────────────────────────────────────────────
 
 async function waitKycFinal(p: Page, cycle: number): Promise<void> {
   const KYC_ENTRY_SELS = [
