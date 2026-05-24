@@ -29,6 +29,29 @@ function humanDelay(baseMs: number): number {
   return Math.round(baseMs - jitter + Math.random() * jitter * 2);
 }
 
+/**
+ * Digita um texto caractere a caractere simulando ritmo humano.
+ * - Clica no campo antes de digitar
+ * - Usa pressSequentially() com delay por tecla (60–180ms)
+ * - Pausa breve antes e depois
+ * - NÃO usa fill() para evitar detecção de automação
+ */
+async function humanType(p: Page, selector: string, text: string, label = ''): Promise<void> {
+  const loc = p.locator(selector).first();
+  // foca o campo com click
+  await loc.click({ timeout: 8_000 });
+  await sleep(humanDelay(300));
+  // limpa valor atual sem disparo sintético
+  await loc.selectText().catch(() => {});
+  await p.keyboard.press('Backspace');
+  await sleep(humanDelay(200));
+  // digita char a char
+  const delay = () => Math.floor(60 + Math.random() * 120); // 60–180ms por tecla
+  await loc.pressSequentially(text, { delay: delay() });
+  await sleep(humanDelay(400));
+  if (label) globalState.addLog('info', `✔️ typed [${label}]: ${text.length} chars`, 0);
+}
+
 async function hasElement(p: Page, sel: string, timeout = 600): Promise<boolean> {
   return p.locator(sel).first().isVisible({ timeout }).catch(() => false);
 }
@@ -299,10 +322,6 @@ async function waitForUrlChange(p: Page, cycle: number, currentUrlContains: stri
   return false;
 }
 
-/**
- * Aguarda um testid desaparecer do DOM (React desmontou o componente anterior).
- * Usado após transições de tela para garantir que o DOM foi atualizado.
- */
 async function waitForTestIdGone(p: Page, testid: string, maxMs = 10_000): Promise<void> {
   const sel = `[data-testid="${testid}"]`;
   const start = Date.now();
@@ -311,13 +330,9 @@ async function waitForTestIdGone(p: Page, testid: string, maxMs = 10_000): Promi
     if (!present) return;
     await sleep(300);
   }
-  // Não desapareceu — loga mas não bloqueia
   globalState.addLog('warn', `⚠️ [DOM] ${testid} ainda presente após ${maxMs}ms`, 0);
 }
 
-/**
- * Verifica se há algum checkbox marcado na página.
- */
 async function isAnyCheckboxChecked(p: Page): Promise<boolean> {
   try {
     return await p.evaluate(() => {
@@ -338,12 +353,25 @@ async function stepEmail(p: Page, cycle: number, email: string): Promise<void> {
   globalState.addLog('info', '📧 [1] Email...', cycle);
   await dismissCookieBanner(p, cycle);
   await sleep(humanDelay(2_500));
-  const EMAIL_INPUT = '[data-testid="email-input"], input[type="email"], input[name="email"]';
-  await p.locator(EMAIL_INPUT).fill(email, { timeout: 10_000 }).catch(async () => {
-    await p.locator('input').first().fill(email, { timeout: 10_000 });
-  });
-  globalState.addLog('info', '✔️ fill: email', cycle);
-  await sleep(humanDelay(1_200));
+
+  const EMAIL_CANDIDATES = [
+    '[data-testid="email-input"]',
+    'input[type="email"]',
+    'input[name="email"]',
+  ];
+  let typed = false;
+  for (const sel of EMAIL_CANDIDATES) {
+    if (await hasElement(p, sel, 1_200)) {
+      await humanType(p, sel, email, 'email');
+      typed = true;
+      break;
+    }
+  }
+  if (!typed) {
+    await humanType(p, 'input', email, 'email-fallback');
+  }
+  globalState.addLog('info', '✔️ typed: email', cycle);
+  await sleep(humanDelay(800));
   await tryClickForward(p, cycle, 5_000);
   await waitForNextScreen(p, cycle, [
     '[data-testid="otp-input"]', 'input[name="otp"]',
@@ -360,18 +388,24 @@ async function stepOtp(p: Page, cycle: number, emailClient: Awaited<ReturnType<t
   const otp = await emailClient.waitForOTP(email, config.otpTimeout, cycle);
   globalState.addLog('info', `🔢 OTP recebido: ${otp}`, cycle);
   await sleep(humanDelay(800));
+
   const OTP_INPUT = '[data-testid="otp-input"], input[name="otp"], input[inputmode="numeric"]';
   const inputs = await p.locator(OTP_INPUT).all();
   if (inputs.length > 1) {
+    // inputs separados (1 dígito cada) — pressSequentially por input
     for (let i = 0; i < Math.min(inputs.length, otp.length); i++) {
-      await inputs[i]!.fill(otp[i]!);
-      await sleep(humanDelay(200));
+      await inputs[i]!.click();
+      await sleep(humanDelay(150));
+      await inputs[i]!.pressSequentially(otp[i]!, { delay: humanDelay(80) });
+      await sleep(humanDelay(150));
     }
     globalState.addLog('info', '✔️ OTP preenchido (inputs separados)', cycle);
   } else {
-    await p.locator(OTP_INPUT).first().fill(otp, { timeout: 8_000 });
+    // input único — digita tudo de uma vez com humanType
+    await humanType(p, OTP_INPUT, otp, 'otp');
     globalState.addLog('info', '✔️ OTP preenchido (input único)', cycle);
   }
+
   await sleep(humanDelay(1_000));
   await tryClickForward(p, cycle, 1_500);
   await waitForNextScreen(p, cycle, [
@@ -385,24 +419,26 @@ async function stepPhone(p: Page, cycle: number): Promise<{ formatted: string; d
   const phone = randomBrazilPhone();
   globalState.addLog('info', `📞 Telefone gerado: ${phone.formatted} (enviando: ${phone.digits})`, cycle);
   await sleep(humanDelay(800));
+
   const PHONE_CANDIDATES = [
     '[data-testid="PHONE_NUMBER"]', '#PHONE_NUMBER',
     'input[name="phone"]', 'input[type="tel"]',
     'input[placeholder*="telefone" i]', 'input[placeholder*="celular" i]', 'input[placeholder*="phone" i]',
   ];
-  let filled = false;
+  let typed = false;
   for (const sel of PHONE_CANDIDATES) {
     if (await hasElement(p, sel, 800)) {
-      await p.locator(sel).first().fill(phone.digits, { timeout: 8_000 });
-      globalState.addLog('info', `✔️ fill telefone via: ${sel}`, cycle);
-      filled = true;
+      await humanType(p, sel, phone.digits, 'telefone');
+      globalState.addLog('info', `✔️ typed telefone via: ${sel}`, cycle);
+      typed = true;
       break;
     }
   }
-  if (!filled) {
-    await p.locator('input').first().fill(phone.digits, { timeout: 8_000 });
-    globalState.addLog('info', '✔️ fill telefone via: input genérico', cycle);
+  if (!typed) {
+    await humanType(p, 'input', phone.digits, 'telefone-fallback');
+    globalState.addLog('info', '✔️ typed telefone via: input genérico', cycle);
   }
+
   await sleep(humanDelay(1_200));
   await tryClickForward(p, cycle, 5_000);
   await waitForNextScreen(p, cycle, [
@@ -415,16 +451,18 @@ async function stepPhone(p: Page, cycle: number): Promise<{ formatted: string; d
 async function stepPassword(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '🔒 [4] Senha...', cycle);
   await sleep(humanDelay(800));
+
   const PWD_CANDIDATES = [
     'input[name="password"]', '[data-testid="password-input"]', 'input[type="password"]',
   ];
   for (const sel of PWD_CANDIDATES) {
     if (await hasElement(p, sel, 800)) {
-      await p.locator(sel).first().fill(PASSWORD, { timeout: 8_000 });
-      globalState.addLog('info', '✔️ fill [password]: senha digitada', cycle);
+      await humanType(p, sel, PASSWORD, 'senha');
+      globalState.addLog('info', '✔️ typed [password]: senha digitada', cycle);
       break;
     }
   }
+
   await sleep(humanDelay(1_200));
   await tryClickForward(p, cycle, 5_000);
   await waitForNextScreen(p, cycle, [
@@ -438,23 +476,26 @@ async function stepName(p: Page, cycle: number): Promise<{ nome: string; sobreno
   await sleep(humanDelay(800));
   const nome      = pick(FIRST_NAMES);
   const sobrenome = pick(LAST_NAMES);
+
   const FIRST_CANDIDATES = ['[data-testid="FIRST_NAME"]', '#FIRST_NAME', 'input[name="firstName"]', 'input[placeholder*="primeiro" i]', 'input[placeholder*="first" i]'];
   const LAST_CANDIDATES  = ['[data-testid="LAST_NAME"]',  '#LAST_NAME',  'input[name="lastName"]',  'input[placeholder*="sobrenome" i]', 'input[placeholder*="last" i]'];
+
   for (const sel of FIRST_CANDIDATES) {
     if (await hasElement(p, sel, 800)) {
-      await p.locator(sel).first().fill(nome, { timeout: 8_000 });
-      globalState.addLog('info', '✔️ fill [#FIRST_NAME]: primeiro nome', cycle);
+      await humanType(p, sel, nome, 'nome');
+      globalState.addLog('info', '✔️ typed [#FIRST_NAME]: primeiro nome', cycle);
       break;
     }
   }
-  await sleep(humanDelay(600));
+  await sleep(humanDelay(700));
   for (const sel of LAST_CANDIDATES) {
     if (await hasElement(p, sel, 800)) {
-      await p.locator(sel).first().fill(sobrenome, { timeout: 8_000 });
-      globalState.addLog('info', '✔️ fill [#LAST_NAME]: sobrenome', cycle);
+      await humanType(p, sel, sobrenome, 'sobrenome');
+      globalState.addLog('info', '✔️ typed [#LAST_NAME]: sobrenome', cycle);
       break;
     }
   }
+
   await sleep(humanDelay(1_200));
   await tryClickForward(p, cycle, 5_000);
   await waitForNextScreen(p, cycle, [
@@ -553,8 +594,8 @@ async function stepCity(p: Page, cycle: number, cityName?: string): Promise<void
   const targetCity = cityName ?? 'São Paulo';
   const activeSel = await findAsync(CITY_SELS, sel => hasElement(p, sel, 800));
   if (activeSel) {
-    await p.locator(activeSel).first().fill(targetCity, { timeout: 8_000 });
-    globalState.addLog('info', `✔️ fill cidade: ${targetCity}`, cycle);
+    await humanType(p, activeSel, targetCity, 'cidade');
+    globalState.addLog('info', `✔️ typed cidade: ${targetCity}`, cycle);
     await sleep(humanDelay(1_200));
     const option = p.locator(`[role="option"]:has-text("${targetCity}")`).first();
     if (await option.isVisible({ timeout: 3_000 }).catch(() => false)) {
@@ -575,7 +616,6 @@ async function stepCity(p: Page, cycle: number, cityName?: string): Promise<void
     if (!fwClicked) globalState.addLog('info', '⏩ Cidade: sem forward-button — tela avançou automaticamente', cycle);
   }
 
-  // 1) Aguarda URL sair de "city"
   const urlChanged = await waitForUrlChange(p, cycle, 'city', 15_000);
   if (!urlChanged) {
     globalState.addLog('warn', '⚠️ Cidade: URL não mudou — tentando Avançar novamente', cycle);
@@ -583,10 +623,7 @@ async function stepCity(p: Page, cycle: number, cityName?: string): Promise<void
     await waitForUrlChange(p, cycle, 'city', 10_000);
   }
 
-  // 2) FIX: aguarda React desmontar o componente da cidade (signup-step-city-select)
-  //    antes de continuar para stepFlowType — evita o próximo step ler DOM antigo
   await waitForTestIdGone(p, 'signup-step-city-select', 12_000);
-  // Pausa extra para React montar o próximo componente
   await sleep(humanDelay(1_200));
 
   globalState.addLog('info', `✔️ Cidade concluída. testids: ${await getTestIds(p)}`, cycle);
