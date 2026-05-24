@@ -43,7 +43,6 @@ async function tryClickForward(p: Page, cycle: number, visibilityTimeoutMs = 3_0
     return false;
   }
 
-  // Aguarda ficar enabled (máx 8s)
   const enabledDeadline = Date.now() + 8_000;
   while (Date.now() < enabledDeadline) {
     const enabled = await p.locator(FORWARD).first().isEnabled({ timeout: 500 }).catch(() => false);
@@ -51,7 +50,6 @@ async function tryClickForward(p: Page, cycle: number, visibilityTimeoutMs = 3_0
     await sleep(300);
   }
 
-  // Pausa humana antes de clicar (simula usuário lendo e movendo o dedo)
   await sleep(humanDelay(600));
 
   try {
@@ -302,17 +300,29 @@ async function waitForUrlChange(p: Page, cycle: number, currentUrlContains: stri
 }
 
 /**
+ * Aguarda um testid desaparecer do DOM (React desmontou o componente anterior).
+ * Usado após transições de tela para garantir que o DOM foi atualizado.
+ */
+async function waitForTestIdGone(p: Page, testid: string, maxMs = 10_000): Promise<void> {
+  const sel = `[data-testid="${testid}"]`;
+  const start = Date.now();
+  while (Date.now() - start < maxMs) {
+    const present = await hasElement(p, sel, 400);
+    if (!present) return;
+    await sleep(300);
+  }
+  // Não desapareceu — loga mas não bloqueia
+  globalState.addLog('warn', `⚠️ [DOM] ${testid} ainda presente após ${maxMs}ms`, 0);
+}
+
+/**
  * Verifica se há algum checkbox marcado na página.
- * Estratégia robusta: procura qualquer input[type=checkbox] checked
- * OU role=checkbox com aria-checked=true — independente do seletor clicado.
  */
 async function isAnyCheckboxChecked(p: Page): Promise<boolean> {
   try {
     return await p.evaluate(() => {
-      // input[type=checkbox] nativo checked
       const inputs = Array.from(document.querySelectorAll('input[type="checkbox"]')) as HTMLInputElement[];
       if (inputs.some(i => i.checked)) return true;
-      // role=checkbox com aria-checked
       const roles = Array.from(document.querySelectorAll('[role="checkbox"]'));
       if (roles.some(r => r.getAttribute('aria-checked') === 'true')) return true;
       return false;
@@ -475,21 +485,15 @@ async function stepTerms(p: Page, cycle: number): Promise<void> {
   }
 
   if (clicked) {
-    // FIX: busca qualquer checkbox marcado na página (não depende do seletor da label)
     const checkDeadline = Date.now() + 12_000;
     let confirmed = false;
     while (Date.now() < checkDeadline) {
-      if (await isAnyCheckboxChecked(p)) {
-        confirmed = true;
-        break;
-      }
+      if (await isAnyCheckboxChecked(p)) { confirmed = true; break; }
       await sleep(400);
     }
-
     if (confirmed) {
       globalState.addLog('info', '✔️ Checkbox confirmado como marcado no DOM', cycle);
     } else {
-      // Tenta um segundo click se não ficou marcado
       globalState.addLog('warn', '⚠️ Checkbox não marcado após 12s — tentando novamente', cycle);
       for (const sel of CHECKBOX_CANDIDATES) {
         if (await hasElement(p, sel, 600)) {
@@ -498,7 +502,6 @@ async function stepTerms(p: Page, cycle: number): Promise<void> {
         }
       }
       await sleep(humanDelay(1_000));
-      // Verifica de novo — se ainda falhar, loga mas não bloqueia
       if (await isAnyCheckboxChecked(p)) {
         globalState.addLog('info', '✔️ Checkbox marcado na segunda tentativa', cycle);
       } else {
@@ -509,9 +512,7 @@ async function stepTerms(p: Page, cycle: number): Promise<void> {
     await sleep(humanDelay(1_000));
   }
 
-  // Pausa pós-checkbox — simula usuário lendo o restante dos termos
   await sleep(humanDelay(1_500));
-
   await tryClickForward(p, cycle, 5_000);
   await waitForNextScreen(p, cycle, [
     '[data-testid="forward-button"]', '[data-testid="city-input"]',
@@ -523,7 +524,6 @@ async function stepTerms(p: Page, cycle: number): Promise<void> {
 async function stepCity(p: Page, cycle: number, cityName?: string): Promise<void> {
   globalState.addLog('info', '🏢 [7] Cidade...', cycle);
 
-  // Aguarda página ter conteúdo real (evita blank page após stepTerms inválido)
   const PAGE_HAS_CONTENT = '[data-testid], input, button';
   const contentDeadline = Date.now() + 10_000;
   while (Date.now() < contentDeadline) {
@@ -572,12 +572,10 @@ async function stepCity(p: Page, cycle: number, cityName?: string): Promise<void
     globalState.addLog('info', '✔️ Cidade: clicou botão Avançar por texto', cycle);
   } else {
     const fwClicked = await tryClickForward(p, cycle, 1_500);
-    if (!fwClicked) {
-      globalState.addLog('info', '⏩ Cidade: sem forward-button — tela avançou automaticamente', cycle);
-    }
+    if (!fwClicked) globalState.addLog('info', '⏩ Cidade: sem forward-button — tela avançou automaticamente', cycle);
   }
 
-  // Aguarda URL sair de "city"
+  // 1) Aguarda URL sair de "city"
   const urlChanged = await waitForUrlChange(p, cycle, 'city', 15_000);
   if (!urlChanged) {
     globalState.addLog('warn', '⚠️ Cidade: URL não mudou — tentando Avançar novamente', cycle);
@@ -585,7 +583,12 @@ async function stepCity(p: Page, cycle: number, cityName?: string): Promise<void
     await waitForUrlChange(p, cycle, 'city', 10_000);
   }
 
-  await sleep(humanDelay(800));
+  // 2) FIX: aguarda React desmontar o componente da cidade (signup-step-city-select)
+  //    antes de continuar para stepFlowType — evita o próximo step ler DOM antigo
+  await waitForTestIdGone(p, 'signup-step-city-select', 12_000);
+  // Pausa extra para React montar o próximo componente
+  await sleep(humanDelay(1_200));
+
   globalState.addLog('info', `✔️ Cidade concluída. testids: ${await getTestIds(p)}`, cycle);
 }
 
@@ -720,14 +723,8 @@ async function waitKycFinal(p: Page, cycle: number): Promise<void> {
   let kycScreenFound = false;
   while (Date.now() < kycScreenDeadline) {
     if (isStopped()) break;
-    if (await hasElement(p, joinedSel, 1_000)) {
-      kycScreenFound = true;
-      break;
-    }
-    if (globalState.getKycSignals(cycle).length > 0) {
-      kycScreenFound = true;
-      break;
-    }
+    if (await hasElement(p, joinedSel, 1_000)) { kycScreenFound = true; break; }
+    if (globalState.getKycSignals(cycle).length > 0) { kycScreenFound = true; break; }
     await sleep(800);
   }
 
