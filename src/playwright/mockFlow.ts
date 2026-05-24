@@ -23,6 +23,12 @@ async function sleep(ms: number): Promise<void> {
   }
 }
 
+/** Delay humano: base ± até 40% de jitter aleatório */
+function humanDelay(baseMs: number): number {
+  const jitter = baseMs * 0.4;
+  return Math.round(baseMs - jitter + Math.random() * jitter * 2);
+}
+
 async function hasElement(p: Page, sel: string, timeout = 600): Promise<boolean> {
   return p.locator(sel).first().isVisible({ timeout }).catch(() => false);
 }
@@ -45,6 +51,9 @@ async function tryClickForward(p: Page, cycle: number, visibilityTimeoutMs = 3_0
     await sleep(300);
   }
 
+  // Pausa humana antes de clicar (simula usuário lendo e movendo o dedo)
+  await sleep(humanDelay(600));
+
   try {
     await p.locator(FORWARD).click({ timeout: 5_000 });
     globalState.addLog('info', '✔️ click: Avançar (forward-button)', cycle);
@@ -56,7 +65,7 @@ async function tryClickForward(p: Page, cycle: number, visibilityTimeoutMs = 3_0
   }
 }
 
-// ─── MOBILE CONTEXT ──────────────────────────────────────────────────────────────
+// ─── MOBILE CONTEXT ────────────────────────────────────────────────────────────
 const MOBILE_UA =
   'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 ' +
   '(KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1';
@@ -146,10 +155,10 @@ async function waitForSpinner(p: Page, cycle: number, maxMs = 30_000): Promise<v
   while (Date.now() - start < maxMs) {
     if (!(await hasElement(p, SPINNER_SEL, 400))) {
       globalState.addLog('info', '✔️ Spinner sumiu', cycle);
-      await sleep(600 + EXTRA_DELAY);
+      await sleep(humanDelay(800));
       return;
     }
-    await sleep(400 + EXTRA_DELAY);
+    await sleep(400);
   }
   globalState.addLog('warn', '⚠️ Spinner timeout — continuando mesmo assim', cycle);
 }
@@ -162,12 +171,12 @@ async function waitForNextScreen(p: Page, cycle: number, selectors: string[], ma
     for (const sel of selectors) {
       if (await hasElement(p, sel, 400)) {
         globalState.addLog('info', '✔️ Próxima tela detectada', cycle);
-        await sleep(400 + EXTRA_DELAY);
+        await sleep(humanDelay(600));
         return;
       }
     }
     await waitForSpinner(p, cycle, 5_000);
-    await sleep(500 + EXTRA_DELAY);
+    await sleep(500);
   }
   globalState.addLog('warn', '⚠️ Timeout aguardando próxima tela — continuando mesmo assim', cycle);
 }
@@ -179,12 +188,12 @@ async function waitOrReload(p: Page, cycle: number, selectors: string[], quickMs
     for (const sel of selectors) {
       if (await hasElement(p, sel, 400)) return true;
     }
-    await sleep(500 + EXTRA_DELAY);
+    await sleep(500);
   }
   globalState.addLog('warn', '⚠️ Tela presa no spinner — recarregando página...', cycle);
   await p.reload({ waitUntil: 'domcontentloaded', timeout: 20_000 }).catch(() => {});
   globalState.addLog('info', '🔄 Página recarregada', cycle);
-  await sleep(1_500 + EXTRA_DELAY);
+  await sleep(humanDelay(2_000));
   const start2 = Date.now();
   while (Date.now() - start2 < afterReloadMs) {
     if (isStopped()) throw new Error('Parado pelo usuário');
@@ -195,7 +204,7 @@ async function waitOrReload(p: Page, cycle: number, selectors: string[], quickMs
       }
     }
     await waitForSpinner(p, cycle, 5_000);
-    await sleep(500 + EXTRA_DELAY);
+    await sleep(500);
   }
   globalState.addLog('warn', '⚠️ Tela não apareceu nem após reload — continuando mesmo assim', cycle);
   return false;
@@ -230,10 +239,10 @@ async function dismissCookieBanner(p: Page, cycle: number): Promise<void> {
     const removed = await p.evaluate((s: string) => { const el = document.querySelector(s); if (el) { el.remove(); return true; } return false; }, BANNER_SEL);
     globalState.addLog(removed ? 'info' : 'warn', removed ? '✔️ Cookie banner removido via JS' : '⚠️ Cookie banner não removido', cycle);
   }
-  await sleep(400 + EXTRA_DELAY);
+  await sleep(humanDelay(600));
 }
 
-// ─── FAKE DATA ────────────────────────────────────────────────────────────────────
+// ─── FAKE DATA ──────────────────────────────────────────────────────────────────
 
 const FIRST_NAMES = ['Ana','Bruno','Carlos','Daniela','Eduardo','Fernanda','Gabriel','Helena','Igor','Juliana','Kevin','Larissa','Marcos','Natalia','Otavio','Patricia','Rafael','Sabrina','Thiago','Valentina','William','Xavier','Yasmin','Zelia','Adriana','Beatriz','Caio','Diana','Elias','Fabio','Giovana','Hugo','Isabela','Joao','Kaio','Leticia','Murilo','Nina','Oscar','Paula','Rodrigo','Silvia','Tiago','Ursula','Vitor','Wanda','Ximena','Yago'];
 const LAST_NAMES  = ['Silva','Santos','Oliveira','Souza','Rodrigues','Ferreira','Alves','Pereira','Lima','Gomes','Costa','Ribeiro','Martins','Carvalho','Almeida','Lopes','Sousa','Fernandes','Vieira','Barbosa','Rocha','Dias','Nascimento','Andrade','Moreira','Nunes','Marques','Machado','Mendes','Freitas','Cardoso','Ramos','Moraes','Teixeira','Monteiro','Araujo','Xavier','Castro','Correia','Campos'];
@@ -293,47 +302,38 @@ async function waitForUrlChange(p: Page, cycle: number, currentUrlContains: stri
 }
 
 /**
- * Verifica se um checkbox está marcado no DOM (checked ou aria-checked=true).
- * Tenta via input[type=checkbox] dentro do container do seletor clicado,
- * ou pelo próprio estado do elemento com role=checkbox.
+ * Verifica se há algum checkbox marcado na página.
+ * Estratégia robusta: procura qualquer input[type=checkbox] checked
+ * OU role=checkbox com aria-checked=true — independente do seletor clicado.
  */
-async function isCheckboxChecked(p: Page, clickedSel: string): Promise<boolean> {
+async function isAnyCheckboxChecked(p: Page): Promise<boolean> {
   try {
-    return await p.evaluate((sel: string) => {
-      const el = document.querySelector(sel);
-      if (!el) return false;
-      // Caso 1: é um input[type=checkbox] diretamente
-      if ((el as HTMLInputElement).type === 'checkbox') return (el as HTMLInputElement).checked;
-      // Caso 2: label — procura input dentro ou associado
-      if (el.tagName === 'LABEL') {
-        const input = el.querySelector('input[type="checkbox"]') ||
-          document.getElementById((el as HTMLLabelElement).htmlFor ?? '') as HTMLInputElement | null;
-        if (input) return (input as HTMLInputElement).checked;
-      }
-      // Caso 3: role=checkbox
-      const ariaChecked = el.getAttribute('aria-checked');
-      if (ariaChecked !== null) return ariaChecked === 'true';
-      // Caso 4: qualquer input checkbox na tela
-      const anyCheckbox = document.querySelector('input[type="checkbox"]') as HTMLInputElement | null;
-      return anyCheckbox ? anyCheckbox.checked : false;
-    }, clickedSel);
+    return await p.evaluate(() => {
+      // input[type=checkbox] nativo checked
+      const inputs = Array.from(document.querySelectorAll('input[type="checkbox"]')) as HTMLInputElement[];
+      if (inputs.some(i => i.checked)) return true;
+      // role=checkbox com aria-checked
+      const roles = Array.from(document.querySelectorAll('[role="checkbox"]'));
+      if (roles.some(r => r.getAttribute('aria-checked') === 'true')) return true;
+      return false;
+    });
   } catch {
     return false;
   }
 }
 
-// ─── STEPS ─────────────────────────────────────────────────────────────────────
+// ─── STEPS ──────────────────────────────────────────────────────────────────────
 
 async function stepEmail(p: Page, cycle: number, email: string): Promise<void> {
   globalState.addLog('info', '📧 [1] Email...', cycle);
   await dismissCookieBanner(p, cycle);
-  await sleep(2_000 + EXTRA_DELAY);
+  await sleep(humanDelay(2_500));
   const EMAIL_INPUT = '[data-testid="email-input"], input[type="email"], input[name="email"]';
   await p.locator(EMAIL_INPUT).fill(email, { timeout: 10_000 }).catch(async () => {
     await p.locator('input').first().fill(email, { timeout: 10_000 });
   });
   globalState.addLog('info', '✔️ fill: email', cycle);
-  await sleep(800 + EXTRA_DELAY);
+  await sleep(humanDelay(1_200));
   await tryClickForward(p, cycle, 5_000);
   await waitForNextScreen(p, cycle, [
     '[data-testid="otp-input"]', 'input[name="otp"]',
@@ -349,19 +349,20 @@ async function stepOtp(p: Page, cycle: number, emailClient: Awaited<ReturnType<t
   globalState.addLog('info', `⏳ [${config.emailProvider}] Aguardando OTP para ${email} (${timeoutSec}s)...`, cycle);
   const otp = await emailClient.waitForOTP(email, config.otpTimeout, cycle);
   globalState.addLog('info', `🔢 OTP recebido: ${otp}`, cycle);
+  await sleep(humanDelay(800));
   const OTP_INPUT = '[data-testid="otp-input"], input[name="otp"], input[inputmode="numeric"]';
   const inputs = await p.locator(OTP_INPUT).all();
   if (inputs.length > 1) {
     for (let i = 0; i < Math.min(inputs.length, otp.length); i++) {
       await inputs[i]!.fill(otp[i]!);
-      await sleep(120 + EXTRA_DELAY);
+      await sleep(humanDelay(200));
     }
     globalState.addLog('info', '✔️ OTP preenchido (inputs separados)', cycle);
   } else {
     await p.locator(OTP_INPUT).first().fill(otp, { timeout: 8_000 });
     globalState.addLog('info', '✔️ OTP preenchido (input único)', cycle);
   }
-  await sleep(500 + EXTRA_DELAY);
+  await sleep(humanDelay(1_000));
   await tryClickForward(p, cycle, 1_500);
   await waitForNextScreen(p, cycle, [
     '[data-testid="forward-button"]', '[data-testid="password-input"]',
@@ -373,6 +374,7 @@ async function stepPhone(p: Page, cycle: number): Promise<{ formatted: string; d
   globalState.addLog('info', '📱 [3] Telefone...', cycle);
   const phone = randomBrazilPhone();
   globalState.addLog('info', `📞 Telefone gerado: ${phone.formatted} (enviando: ${phone.digits})`, cycle);
+  await sleep(humanDelay(800));
   const PHONE_CANDIDATES = [
     '[data-testid="PHONE_NUMBER"]', '#PHONE_NUMBER',
     'input[name="phone"]', 'input[type="tel"]',
@@ -391,7 +393,7 @@ async function stepPhone(p: Page, cycle: number): Promise<{ formatted: string; d
     await p.locator('input').first().fill(phone.digits, { timeout: 8_000 });
     globalState.addLog('info', '✔️ fill telefone via: input genérico', cycle);
   }
-  await sleep(600 + EXTRA_DELAY);
+  await sleep(humanDelay(1_200));
   await tryClickForward(p, cycle, 5_000);
   await waitForNextScreen(p, cycle, [
     'input[name="password"]', '[data-testid="password-input"]',
@@ -402,6 +404,7 @@ async function stepPhone(p: Page, cycle: number): Promise<{ formatted: string; d
 
 async function stepPassword(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '🔒 [4] Senha...', cycle);
+  await sleep(humanDelay(800));
   const PWD_CANDIDATES = [
     'input[name="password"]', '[data-testid="password-input"]', 'input[type="password"]',
   ];
@@ -412,7 +415,7 @@ async function stepPassword(p: Page, cycle: number): Promise<void> {
       break;
     }
   }
-  await sleep(600 + EXTRA_DELAY);
+  await sleep(humanDelay(1_200));
   await tryClickForward(p, cycle, 5_000);
   await waitForNextScreen(p, cycle, [
     '[data-testid="FIRST_NAME"]', '#FIRST_NAME',
@@ -422,6 +425,7 @@ async function stepPassword(p: Page, cycle: number): Promise<void> {
 
 async function stepName(p: Page, cycle: number): Promise<{ nome: string; sobrenome: string }> {
   globalState.addLog('info', '👤 [5] Nome...', cycle);
+  await sleep(humanDelay(800));
   const nome      = pick(FIRST_NAMES);
   const sobrenome = pick(LAST_NAMES);
   const FIRST_CANDIDATES = ['[data-testid="FIRST_NAME"]', '#FIRST_NAME', 'input[name="firstName"]', 'input[placeholder*="primeiro" i]', 'input[placeholder*="first" i]'];
@@ -433,7 +437,7 @@ async function stepName(p: Page, cycle: number): Promise<{ nome: string; sobreno
       break;
     }
   }
-  await sleep(400 + EXTRA_DELAY);
+  await sleep(humanDelay(600));
   for (const sel of LAST_CANDIDATES) {
     if (await hasElement(p, sel, 800)) {
       await p.locator(sel).first().fill(sobrenome, { timeout: 8_000 });
@@ -441,7 +445,7 @@ async function stepName(p: Page, cycle: number): Promise<{ nome: string; sobreno
       break;
     }
   }
-  await sleep(600 + EXTRA_DELAY);
+  await sleep(humanDelay(1_200));
   await tryClickForward(p, cycle, 5_000);
   await waitForNextScreen(p, cycle, [
     '[data-testid="forward-button"]', 'input[type="checkbox"]',
@@ -452,49 +456,61 @@ async function stepName(p: Page, cycle: number): Promise<{ nome: string; sobreno
 
 async function stepTerms(p: Page, cycle: number): Promise<void> {
   globalState.addLog('info', '📝 [6] Termos...', cycle);
+  await sleep(humanDelay(1_000));
+
   const CHECKBOX_CANDIDATES = [
     'label:has-text("Concordo")', 'label:has-text("Agree")',
     'label:has-text("Aceito")', 'label:has-text("I agree")',
     'input[type="checkbox"]', '[data-testid*="checkbox"]', '[role="checkbox"]',
   ];
 
-  let checkedSel: string | undefined;
-
+  let clicked = false;
   for (const sel of CHECKBOX_CANDIDATES) {
     if (await hasElement(p, sel, 1_000)) {
       await p.locator(sel).first().click({ force: true, timeout: 8_000 });
       globalState.addLog('info', `✔️ checkbox clicado via: ${sel}`, cycle);
-      checkedSel = sel;
+      clicked = true;
       break;
     }
   }
 
-  if (checkedSel) {
-    // FIX: aguarda até 10s para o checkbox ficar marcado no DOM antes de clicar Avançar
-    // O Uber só aceita o submit se o checkbox estiver checked no estado interno
-    const checkDeadline = Date.now() + 10_000;
+  if (clicked) {
+    // FIX: busca qualquer checkbox marcado na página (não depende do seletor da label)
+    const checkDeadline = Date.now() + 12_000;
     let confirmed = false;
     while (Date.now() < checkDeadline) {
-      if (await isCheckboxChecked(p, checkedSel)) {
+      if (await isAnyCheckboxChecked(p)) {
         confirmed = true;
         break;
       }
-      await sleep(300);
+      await sleep(400);
     }
+
     if (confirmed) {
       globalState.addLog('info', '✔️ Checkbox confirmado como marcado no DOM', cycle);
     } else {
-      // Tenta clicar de novo se não ficou marcado
-      globalState.addLog('warn', '⚠️ Checkbox não marcado após 10s — tentando novamente', cycle);
-      await p.locator(checkedSel).first().click({ force: true, timeout: 5_000 }).catch(() => {});
-      await sleep(800);
+      // Tenta um segundo click se não ficou marcado
+      globalState.addLog('warn', '⚠️ Checkbox não marcado após 12s — tentando novamente', cycle);
+      for (const sel of CHECKBOX_CANDIDATES) {
+        if (await hasElement(p, sel, 600)) {
+          await p.locator(sel).first().click({ force: true, timeout: 5_000 }).catch(() => {});
+          break;
+        }
+      }
+      await sleep(humanDelay(1_000));
+      // Verifica de novo — se ainda falhar, loga mas não bloqueia
+      if (await isAnyCheckboxChecked(p)) {
+        globalState.addLog('info', '✔️ Checkbox marcado na segunda tentativa', cycle);
+      } else {
+        globalState.addLog('warn', '⚠️ Checkbox pode não estar marcado — avançando mesmo assim', cycle);
+      }
     }
   } else {
-    await sleep(800 + EXTRA_DELAY);
+    await sleep(humanDelay(1_000));
   }
 
-  // Aguarda mais 500ms após confirmação para o Uber sincronizar estado
-  await sleep(500);
+  // Pausa pós-checkbox — simula usuário lendo o restante dos termos
+  await sleep(humanDelay(1_500));
 
   await tryClickForward(p, cycle, 5_000);
   await waitForNextScreen(p, cycle, [
@@ -507,7 +523,7 @@ async function stepTerms(p: Page, cycle: number): Promise<void> {
 async function stepCity(p: Page, cycle: number, cityName?: string): Promise<void> {
   globalState.addLog('info', '🏢 [7] Cidade...', cycle);
 
-  // FIX: aguarda até a página ter conteúdo (evita blank page após stepTerms inválido)
+  // Aguarda página ter conteúdo real (evita blank page após stepTerms inválido)
   const PAGE_HAS_CONTENT = '[data-testid], input, button';
   const contentDeadline = Date.now() + 10_000;
   while (Date.now() < contentDeadline) {
@@ -533,12 +549,13 @@ async function stepCity(p: Page, cycle: number, cityName?: string): Promise<void
     return;
   }
 
+  await sleep(humanDelay(800));
   const targetCity = cityName ?? 'São Paulo';
   const activeSel = await findAsync(CITY_SELS, sel => hasElement(p, sel, 800));
   if (activeSel) {
     await p.locator(activeSel).first().fill(targetCity, { timeout: 8_000 });
     globalState.addLog('info', `✔️ fill cidade: ${targetCity}`, cycle);
-    await sleep(800 + EXTRA_DELAY);
+    await sleep(humanDelay(1_200));
     const option = p.locator(`[role="option"]:has-text("${targetCity}")`).first();
     if (await option.isVisible({ timeout: 3_000 }).catch(() => false)) {
       await option.click({ timeout: 5_000 });
@@ -546,10 +563,11 @@ async function stepCity(p: Page, cycle: number, cityName?: string): Promise<void
     }
   }
 
-  await sleep(1_000 + EXTRA_DELAY);
+  await sleep(humanDelay(1_000));
 
   const ADVANCE_BTN = 'button:has-text("Avançar"), button:has-text("Next"), button:has-text("Continue")';
   if (await hasElement(p, ADVANCE_BTN, 1_500)) {
+    await sleep(humanDelay(600));
     await p.locator(ADVANCE_BTN).first().click({ timeout: 5_000 }).catch(() => {});
     globalState.addLog('info', '✔️ Cidade: clicou botão Avançar por texto', cycle);
   } else {
@@ -559,7 +577,7 @@ async function stepCity(p: Page, cycle: number, cityName?: string): Promise<void
     }
   }
 
-  // Aguarda URL sair de "city" antes de continuar
+  // Aguarda URL sair de "city"
   const urlChanged = await waitForUrlChange(p, cycle, 'city', 15_000);
   if (!urlChanged) {
     globalState.addLog('warn', '⚠️ Cidade: URL não mudou — tentando Avançar novamente', cycle);
@@ -567,7 +585,7 @@ async function stepCity(p: Page, cycle: number, cityName?: string): Promise<void
     await waitForUrlChange(p, cycle, 'city', 10_000);
   }
 
-  await sleep(800 + EXTRA_DELAY);
+  await sleep(humanDelay(800));
   globalState.addLog('info', `✔️ Cidade concluída. testids: ${await getTestIds(p)}`, cycle);
 }
 
@@ -589,6 +607,7 @@ async function stepFlowType(p: Page, cycle: number): Promise<void> {
     return;
   }
 
+  await sleep(humanDelay(800));
   const CAR_SELS = [
     '[data-testid="flow-type-car"]',
     '[data-testid="flow-type-DRIVER"]',
@@ -602,7 +621,7 @@ async function stepFlowType(p: Page, cycle: number): Promise<void> {
       break;
     }
   }
-  await sleep(600 + EXTRA_DELAY);
+  await sleep(humanDelay(1_000));
   await tryClickForward(p, cycle, 1_500);
   await waitForNextScreen(p, cycle, ['[data-testid="forward-button"]','[data-testid="vehicle-type"]','[data-testid^="vehicle-type-"]']);
 }
@@ -614,6 +633,7 @@ async function stepVehicleType(p: Page, cycle: number): Promise<void> {
     globalState.addLog('info', '⏩ Tela de veículo não encontrada — pulando', cycle);
     return;
   }
+  await sleep(humanDelay(800));
   const UBERX_SELS = ['[data-testid="vehicle-type-uberx"]','button:has-text("UberX")','[data-testid^="vehicle-type-"]'];
   for (const sel of UBERX_SELS) {
     if (await hasElement(p, sel, 800)) {
@@ -622,7 +642,7 @@ async function stepVehicleType(p: Page, cycle: number): Promise<void> {
       break;
     }
   }
-  await sleep(600 + EXTRA_DELAY);
+  await sleep(humanDelay(1_000));
   await tryClickForward(p, cycle, 1_500);
   await waitForNextScreen(p, cycle, ['[data-testid="forward-button"]','[data-testid="whatsapp"]','button:has-text("WhatsApp")']);
 }
@@ -650,9 +670,10 @@ async function stepHubPhotoClick(p: Page, cycle: number): Promise<void> {
   const PHOTO_STEP_SELS = ['[data-testid*="photo" i]','[data-testid*="foto" i]','[data-testid*="picture" i]'];
   for (const sel of PHOTO_STEP_SELS) {
     if (await hasElement(p, sel, 800)) {
+      await sleep(humanDelay(600));
       await p.locator(sel).first().click({ timeout: 5_000 }).catch(() => {});
       globalState.addLog('info', `✔️ Hub: clicou no passo de foto via ${sel}`, cycle);
-      await sleep(800 + EXTRA_DELAY);
+      await sleep(humanDelay(1_000));
       break;
     }
   }
@@ -744,7 +765,7 @@ async function dismissModals(p: Page, cycle: number): Promise<void> {
     if (await hasElement(p, sel, 400)) {
       await p.locator(sel).first().click({ force: true }).catch(() => {});
       globalState.addLog('info', `🚪 modal: ${sel}`, cycle);
-      await sleep(400 + EXTRA_DELAY);
+      await sleep(humanDelay(500));
     }
   }
 }
@@ -841,7 +862,7 @@ export class MockPlaywrightFlow {
       globalState.addLog('info', `🌐 Navegando para ${cadastroUrl}...`, cycle);
       await p.goto(cadastroUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
       globalState.addLog('info', '✔️ Página carregada', cycle);
-      await sleep(1_500 + EXTRA_DELAY);
+      await sleep(humanDelay(2_000));
       await dismissModals(p, cycle);
       await stepEmail(p, cycle, email);
       await stepOtp(p, cycle, emailClient, email, config);
