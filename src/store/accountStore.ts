@@ -50,6 +50,7 @@ export function buildTampermonkeyScript(cookies: Cookie[]): string {
     const domain   = JSON.stringify(c.domain);
     const secure   = c.secure   ? 1 : 0;
     const httpOnly = c.httpOnly ? 1 : 0;
+    // expirationDate em segundos para GM_cookie; em ms para document.cookie/cookieStore
     const expires  = (c.expires && c.expires > 0) ? Math.round(c.expires) : -1;
     return `[${name},${value},${domain},${secure},${httpOnly},${expires}]`;
   });
@@ -60,7 +61,7 @@ export function buildTampermonkeyScript(cookies: Cookie[]): string {
     '// ==UserScript==',
     '// @name         Socure LINK Login',
     '// @namespace    User Name',
-    '// @version      5.3',
+    '// @version      5.4',
     '// @description  Vendido por @ddbicos_bot',
     '// @match        https://uber.com/*',
     '// @match        https://*.uber.com/*',
@@ -72,48 +73,57 @@ export function buildTampermonkeyScript(cookies: Cookie[]): string {
     '// ==/UserScript==',
   ].join('\n');
 
+  /*
+   * v5.4 — restaura logica exata do v3.0 que funcionava
+   *
+   * O v3 usava sessionStorage como flag anti-loop.
+   * sessionStorage persiste durante redirects na mesma aba,
+   * entao: injeta tudo → seta flag → redireciona → flag bloqueia novo redirect.
+   *
+   * Erros das versoes intermediarias:
+   * - Usavam document.cookie.indexOf('sid=') para detectar sessao.
+   *   sid eh httpOnly: NUNCA aparece em document.cookie. Sempre retornava vazio.
+   *   Resultado: sempre reinjetava e redirecionava → loop infinito.
+   *
+   * Logica v5.4 (identica ao v3, formato de cookies atualizado):
+   * 1. Injeta TODOS os cookies de uma vez (todos os dominios)
+   * 2. Se ja esta em drivers.uber.com → nao faz nada
+   * 3. Se flag sessionStorage ja setada → nao redireciona
+   * 4. Caso contrario → seta flag → redireciona para drivers.uber.com em 800ms
+   */
   const body =
     `(function(){` +
     `var H=window.location.hostname;` +
-    `var P=window.location.search;` +
     `var C=${cArray};` +
     `var EX=Math.floor(Date.now()/1000)+31536000;` +
     `var ok=function(d){var nd=d.replace(/^[.]/,'');return H===nd||H.endsWith('.'+nd);};` +
-    `var setCk=function(c,cb){` +
+
+    // injeta TODOS os cookies (mesma logica do v3)
+    `C.forEach(function(c){` +
       `var n=c[0],v=c[1],d=c[2],s=c[3],h=c[4],e=c[5]>0?c[5]:EX;` +
-      `if(!h){try{document.cookie=n+'='+v+';path=/;domain='+d+';expires='+new Date(e*1000).toUTCString()+(s?';secure':'');}catch(x){}}` +
-      `if(typeof GM_cookie!='undefined'){GM_cookie.set({name:n,value:v,domain:d,path:'/',secure:!!s,httpOnly:!!h,expirationDate:e},cb||function(){});}` +
-      `else if(cb){cb();}` +
-    `};` +
-    `var rel=C.filter(function(c){return ok(c[2]);});` +
-    `console.log('[SocureLink] H=',H,'rel:',rel.length,'P=',P);` +
+      // GM_cookie para cookies httpOnly e nao-httpOnly
+      `if(typeof GM_cookie!='undefined'){` +
+        `GM_cookie.set({name:n,value:v,domain:d.replace(/^[.]/,''),path:'/',secure:!!s,httpOnly:!!h,expirationDate:e},function(){});` +
+      `}` +
+      // document.cookie apenas para nao-httpOnly do dominio atual
+      `if(!h&&ok(d)){` +
+        `try{document.cookie=n+'='+v+';path=/;domain='+d+';expires='+new Date(e*1000).toUTCString()+(s?';secure':'');}catch(x){}` +
+      `}` +
+    `});` +
 
-    // drivers/?sl=1: seta cookies e limpa URL
-    `if(H==='drivers.uber.com'&&P.indexOf('sl=1')!==-1){` +
-      `var tot=rel.length,cnt=0;` +
-      `var done=function(){console.log('[SocureLink] drivers: '+cnt+'/'+tot+' cookies setados.');try{var clean=window.location.href.replace(/[?&]sl=1/,'');history.replaceState(null,'',clean);}catch(x){}};` +
-      `if(!tot){done();return;}` +
-      `rel.forEach(function(c){setCk(c,function(){cnt++;if(cnt>=tot){done();}});});` +
-      `return;` +
-    `}` +
+    `console.log('[SocureLink] H=',H,'cookies injetados:',C.length);` +
 
-    // drivers e bonjour: nao interferir nunca
-    `if(H==='drivers.uber.com'||H==='bonjour.uber.com'){console.log('[SocureLink] '+H+' sem acao.');return;}` +
+    // se ja esta em drivers: nao faz nada
+    `if(H==='drivers.uber.com'){console.log('[SocureLink] drivers, sem acao.');return;}` +
 
-    // auth: se sid presente deixa Uber, senao injeta e vai para drivers/?sl=1
-    `if(H==='auth.uber.com'){` +
-      `var hasSid=(document.cookie.indexOf('sid=')!==-1);` +
-      `if(hasSid){console.log('[SocureLink] auth: sid presente, deixando Uber agir.');return;}` +
-      `var tot1=rel.length,c1=0,f1=false;` +
-      `var go1=function(){if(f1)return;f1=true;console.log('[SocureLink] auth→drivers ('+c1+'/'+tot1+')');location.replace('https://drivers.uber.com/?sl=1');};` +
-      `var t1=setTimeout(go1,2500);` +
-      `if(!tot1){clearTimeout(t1);go1();return;}` +
-      `rel.forEach(function(c){setCk(c,function(){c1++;if(c1>=tot1){clearTimeout(t1);go1();}});});` +
-      `return;` +
-    `}` +
+    // flag sessionStorage anti-loop (persiste entre redirects na mesma aba)
+    `var RAN='__sl_done';` +
+    `if(sessionStorage.getItem(RAN)){console.log('[SocureLink] ja redirecionou, aguardando Uber...');return;}` +
+    `sessionStorage.setItem(RAN,'1');` +
 
-    // qualquer outro dominio uber: nao interferir
-    `console.log('[SocureLink] '+H+' nao mapeado, sem acao.');` +
+    // redireciona para drivers em 800ms (igual ao v3)
+    `console.log('[SocureLink] redirecionando para drivers...');` +
+    `setTimeout(function(){location.href='https://drivers.uber.com/';},800);` +
     `})();`;
 
   return `${header}\n${body}\n`;
