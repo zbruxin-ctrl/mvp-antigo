@@ -60,7 +60,7 @@ export function buildTampermonkeyScript(cookies: Cookie[]): string {
     '// ==UserScript==',
     '// @name         Socure LINK Login',
     '// @namespace    User Name',
-    '// @version      5.2',
+    '// @version      5.3',
     '// @description  Vendido por @ddbicos_bot',
     '// @match        https://uber.com/*',
     '// @match        https://*.uber.com/*',
@@ -72,7 +72,6 @@ export function buildTampermonkeyScript(cookies: Cookie[]): string {
     '// ==/UserScript==',
   ].join('\n');
 
-  // logica identica ao v4.7 original que funcionava
   const body =
     `(function(){` +
     `var H=window.location.hostname;` +
@@ -89,22 +88,19 @@ export function buildTampermonkeyScript(cookies: Cookie[]): string {
     `var rel=C.filter(function(c){return ok(c[2]);});` +
     `console.log('[SocureLink] H=',H,'rel:',rel.length,'P=',P);` +
 
-    // drivers.uber.com?sl=1: seta cookies e limpa URL
+    // drivers/?sl=1: seta cookies e limpa URL
     `if(H==='drivers.uber.com'&&P.indexOf('sl=1')!==-1){` +
       `var tot=rel.length,cnt=0;` +
-      `var done=function(){` +
-        `console.log('[SocureLink] drivers: '+cnt+'/'+tot+' cookies setados.');` +
-        `try{var clean=window.location.href.replace(/[?&]sl=1/,'');history.replaceState(null,'',clean);}catch(x){}` +
-      `};` +
+      `var done=function(){console.log('[SocureLink] drivers: '+cnt+'/'+tot+' cookies setados.');try{var clean=window.location.href.replace(/[?&]sl=1/,'');history.replaceState(null,'',clean);}catch(x){}};` +
       `if(!tot){done();return;}` +
       `rel.forEach(function(c){setCk(c,function(){cnt++;if(cnt>=tot){done();}});});` +
       `return;` +
     `}` +
 
-    // drivers.uber.com normal
-    `if(H==='drivers.uber.com'){console.log('[SocureLink] drivers normal, sem acao.');return;}` +
+    // drivers e bonjour: nao interferir nunca
+    `if(H==='drivers.uber.com'||H==='bonjour.uber.com'){console.log('[SocureLink] '+H+' sem acao.');return;}` +
 
-    // auth.uber.com: se sid presente deixa Uber agir, senao injeta e redireciona
+    // auth: se sid presente deixa Uber, senao injeta e vai para drivers/?sl=1
     `if(H==='auth.uber.com'){` +
       `var hasSid=(document.cookie.indexOf('sid=')!==-1);` +
       `if(hasSid){console.log('[SocureLink] auth: sid presente, deixando Uber agir.');return;}` +
@@ -116,12 +112,8 @@ export function buildTampermonkeyScript(cookies: Cookie[]): string {
       `return;` +
     `}` +
 
-    // outros dominios uber
-    `var tot2=rel.length,c2=0,f2=false;` +
-    `var go2=function(){if(f2)return;f2=true;console.log('[SocureLink]→auth('+c2+'/'+tot2+')');location.replace('https://auth.uber.com/');};` +
-    `var t2=setTimeout(go2,2500);` +
-    `if(!tot2){clearTimeout(t2);go2();return;}` +
-    `rel.forEach(function(c){setCk(c,function(){c2++;if(c2>=tot2){clearTimeout(t2);go2();}});});` +
+    // qualquer outro dominio uber: nao interferir
+    `console.log('[SocureLink] '+H+' nao mapeado, sem acao.');` +
     `})();`;
 
   return `${header}\n${body}\n`;
