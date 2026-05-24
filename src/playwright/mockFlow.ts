@@ -29,12 +29,10 @@ async function hasElement(p: Page, sel: string, timeout = 600): Promise<boolean>
 
 /**
  * Aguarda o forward-button ficar visível E habilitado, depois clica.
- * Se não aparecer ou não habilitar dentro do timeout, retorna false sem lançar erro.
  */
 async function tryClickForward(p: Page, cycle: number, visibilityTimeoutMs = 3_000): Promise<boolean> {
   const FORWARD = '[data-testid="forward-button"]';
 
-  // 1. Verifica se existe e está visível
   if (!(await hasElement(p, FORWARD, visibilityTimeoutMs))) {
     const testids = await getTestIds(p);
     const btns = await getButtonTexts(p);
@@ -42,15 +40,14 @@ async function tryClickForward(p: Page, cycle: number, visibilityTimeoutMs = 3_0
     return false;
   }
 
-  // 2. Aguarda ficar enabled (máx 5s após aparecer)
-  const enabledDeadline = Date.now() + 5_000;
+  // Aguarda ficar enabled (máx 8s — checkbox pode demorar para habilitar)
+  const enabledDeadline = Date.now() + 8_000;
   while (Date.now() < enabledDeadline) {
     const enabled = await p.locator(FORWARD).first().isEnabled({ timeout: 500 }).catch(() => false);
     if (enabled) break;
     await sleep(300);
   }
 
-  // 3. Clica com force=false para respeitar o estado disabled
   try {
     await p.locator(FORWARD).click({ timeout: 5_000 });
     globalState.addLog('info', '✔️ click: Avançar (forward-button)', cycle);
@@ -258,6 +255,32 @@ function randomBrazilPhone(): { formatted: string; digits: string } {
 
 const PASSWORD = 'Secure@2024!';
 
+// ─── HELPERS ──────────────────────────────────────────────────────────────────────
+
+async function getTestIds(p: Page): Promise<string> {
+  try {
+    return await p.evaluate(() =>
+      Array.from(document.querySelectorAll('[data-testid]'))
+        .map(e => e.getAttribute('data-testid')).filter(Boolean).slice(0, 20).join(','));
+  } catch { return '(erro)'; }
+}
+
+async function getButtonTexts(p: Page): Promise<string> {
+  try {
+    return await p.evaluate(() =>
+      Array.from(document.querySelectorAll('button'))
+        .map(b => b.textContent?.trim()).filter(Boolean).slice(0, 10).join(','));
+  } catch { return '(erro)'; }
+}
+
+// findAsync: substitui Array.find com callback async (Array.find nao funciona com async)
+async function findAsync(sels: string[], check: (sel: string) => Promise<boolean>): Promise<string | undefined> {
+  for (const sel of sels) {
+    if (await check(sel)) return sel;
+  }
+  return undefined;
+}
+
 // ─── STEPS ────────────────────────────────────────────────────────────────────────
 
 async function stepEmail(p: Page, cycle: number, email: string): Promise<void> {
@@ -393,15 +416,25 @@ async function stepTerms(p: Page, cycle: number): Promise<void> {
     'label:has-text("Aceito")', 'label:has-text("I agree")',
     'input[type="checkbox"]', '[data-testid*="checkbox"]', '[role="checkbox"]',
   ];
+
+  let checkboxClicked = false;
   for (const sel of CHECKBOX_CANDIDATES) {
     if (await hasElement(p, sel, 1_000)) {
       await p.locator(sel).first().click({ force: true, timeout: 8_000 });
       globalState.addLog('info', `✔️ checkbox clicado via: ${sel}`, cycle);
+      checkboxClicked = true;
       break;
     }
   }
-  // Aguarda o forward-button habilitar após o checkbox (o Uber desabilita até marcar)
-  await sleep(800 + EXTRA_DELAY);
+
+  // FIX: aguarda o botão habilitar após o checkbox antes de clicar
+  // O Uber mantém o forward-button disabled até o checkbox estar marcado
+  if (checkboxClicked) {
+    await sleep(1_200 + EXTRA_DELAY);
+  } else {
+    await sleep(800 + EXTRA_DELAY);
+  }
+
   await tryClickForward(p, cycle, 5_000);
   await waitForNextScreen(p, cycle, [
     '[data-testid="forward-button"]', '[data-testid="city-input"]',
@@ -413,7 +446,6 @@ async function stepTerms(p: Page, cycle: number): Promise<void> {
 async function stepCity(p: Page, cycle: number, cityName?: string): Promise<void> {
   globalState.addLog('info', '🏢 [7] Cidade...', cycle);
 
-  // testids reais observados nos logs + candidatos genéricos
   const CITY_SELS = [
     '[data-testid="flow-type-city-selector-v2-input"]',
     '[data-testid="flow-type-city-selector-v2"] input',
@@ -433,21 +465,18 @@ async function stepCity(p: Page, cycle: number, cityName?: string): Promise<void
   }
 
   const targetCity = cityName ?? 'São Paulo';
-  for (const sel of CITY_SELS) {
-    if (await hasElement(p, sel, 800)) {
-      await p.locator(sel).first().fill(targetCity, { timeout: 8_000 });
-      globalState.addLog('info', `✔️ fill cidade: ${targetCity}`, cycle);
-      await sleep(800 + EXTRA_DELAY);
-      const option = p.locator(`[role="option"]:has-text("${targetCity}")`).first();
-      if (await option.isVisible({ timeout: 3_000 }).catch(() => false)) {
-        await option.click({ timeout: 5_000 });
-        globalState.addLog('info', `✔️ Opção de cidade selecionada: ${targetCity}`, cycle);
-      }
-      break;
+  const activeSel = await findAsync(CITY_SELS, sel => hasElement(p, sel, 800));
+  if (activeSel) {
+    await p.locator(activeSel).first().fill(targetCity, { timeout: 8_000 });
+    globalState.addLog('info', `✔️ fill cidade: ${targetCity}`, cycle);
+    await sleep(800 + EXTRA_DELAY);
+    const option = p.locator(`[role="option"]:has-text("${targetCity}")`).first();
+    if (await option.isVisible({ timeout: 3_000 }).catch(() => false)) {
+      await option.click({ timeout: 5_000 });
+      globalState.addLog('info', `✔️ Opção de cidade selecionada: ${targetCity}`, cycle);
     }
   }
 
-  // Após selecionar cidade a tela pode avançar sozinha OU mostrar forward-button
   await sleep(1_000 + EXTRA_DELAY);
   const clicked = await tryClickForward(p, cycle, 3_000);
   if (!clicked) {
@@ -460,22 +489,6 @@ async function stepCity(p: Page, cycle: number, cityName?: string): Promise<void
     '[data-testid="vehicle-type"]', '[data-testid*="vehicle"]',
     '[data-testid="hub"]', '[data-testid*="stepItem"]',
   ]);
-}
-
-async function getTestIds(p: Page): Promise<string> {
-  try {
-    return await p.evaluate(() =>
-      Array.from(document.querySelectorAll('[data-testid]'))
-        .map(e => e.getAttribute('data-testid')).filter(Boolean).slice(0, 20).join(','));
-  } catch { return '(erro)'; }
-}
-
-async function getButtonTexts(p: Page): Promise<string> {
-  try {
-    return await p.evaluate(() =>
-      Array.from(document.querySelectorAll('button'))
-        .map(b => b.textContent?.trim()).filter(Boolean).slice(0, 10).join(','));
-  } catch { return '(erro)'; }
 }
 
 async function stepFlowType(p: Page, cycle: number): Promise<void> {
@@ -555,9 +568,19 @@ async function stepProfilePhoto(p: Page, cycle: number): Promise<void> {
   const buttons = await getButtonTexts(p);
   globalState.addLog('info', `🔍 [foto] testids: [${testids}]`, cycle);
   globalState.addLog('info', `🔍 [foto] botões: [${buttons}]`, cycle);
-  const PHOTO_SELS = ['[data-testid="profile-photo-upload"]','[data-testid="take-photo"]','button:has-text("Tirar foto")','button:has-text("Take photo")','input[type="file"][accept*="image"]'];
-  const found = PHOTO_SELS.find(async sel => await hasElement(p, sel, 600));
-  if (!found) { globalState.addLog('info', '⏩ Tela de foto não encontrada — pulando', cycle); return; }
+  const PHOTO_SELS = [
+    '[data-testid="profile-photo-upload"]',
+    '[data-testid="take-photo"]',
+    'button:has-text("Tirar foto")',
+    'button:has-text("Take photo")',
+    'input[type="file"][accept*="image"]',
+  ];
+  // FIX: Array.find não funciona com callback async — usar findAsync
+  const found = await findAsync(PHOTO_SELS, sel => hasElement(p, sel, 600));
+  if (!found) {
+    globalState.addLog('info', '⏩ Tela de foto não encontrada — pulando', cycle);
+    return;
+  }
   await tryClickForward(p, cycle, 1_500);
   globalState.addLog('info', '✔️ Foto: pulando via Avançar', cycle);
 }
@@ -565,12 +588,42 @@ async function stepProfilePhoto(p: Page, cycle: number): Promise<void> {
 // ─── KYC FINAL ────────────────────────────────────────────────────────────────────
 
 async function waitKycFinal(p: Page, cycle: number): Promise<void> {
+  // FIX: aguarda até 60s pela tela de KYC — a tela pode demorar a aparecer após stepProfilePhoto
   const KYC_ENTRY_SELS = [
-    'iframe[src*="socure"]','iframe[src*="veriff"]','iframe[src*="persona"]',
-    '[data-testid*="kyc"]','[data-testid*="identity"]','[data-testid*="document"]',
-    'button:has-text("Verificar identidade")','button:has-text("Verify identity")','button:has-text("Verify")',
+    'iframe[src*="socure"]', 'iframe[src*="veriff"]', 'iframe[src*="persona"]',
+    '[data-testid*="kyc"]', '[data-testid*="identity"]', '[data-testid*="document"]',
+    'button:has-text("Verificar identidade")', 'button:has-text("Verify identity")',
+    'button:has-text("Verify")', 'button:has-text("Verificar")',
+    // seletores adicionais que o bonjour usa na tela de KYC
+    '[data-testid*="verification"]', '[data-testid*="selfie"]', '[data-testid*="scan"]',
+    'a[href*="socure"]', 'a[href*="veriff"]',
   ];
-  if (!(await hasElement(p, KYC_ENTRY_SELS.join(', '), 3_000))) return;
+
+  const joinedSel = KYC_ENTRY_SELS.join(', ');
+
+  // Espera até 60s pela tela de KYC aparecer (antes era 3s — muito curto)
+  globalState.addLog('info', '🔍 [KYC] Aguardando tela de verificação...', cycle);
+  const kycScreenDeadline = Date.now() + 60_000;
+  let kycScreenFound = false;
+  while (Date.now() < kycScreenDeadline) {
+    if (isStopped()) break;
+    if (await hasElement(p, joinedSel, 1_000)) {
+      kycScreenFound = true;
+      break;
+    }
+    // também detecta por sinais de rede já capturados pelos listeners
+    if (globalState.getKycSignals(cycle).length > 0) {
+      kycScreenFound = true;
+      break;
+    }
+    await sleep(800);
+  }
+
+  if (!kycScreenFound) {
+    globalState.addLog('warn', '⚠️ [KYC] Tela de verificação não apareceu neste ciclo', cycle);
+    return;
+  }
+
   globalState.addLog('kyc', '🔍 [KYC] Tela de verificação detectada — aguardando sinais...', cycle);
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
@@ -578,6 +631,7 @@ async function waitKycFinal(p: Page, cycle: number): Promise<void> {
     if (globalState.getKycSignals(cycle).length > 0) break;
     await new Promise<void>(r => setTimeout(r, 500));
   }
+
   const finalSignals = globalState.getKycSignals(cycle);
   if (finalSignals.length === 0) {
     globalState.addLog('warn', '⚠️ [KYC] Nenhum provedor detectado neste ciclo', cycle);
